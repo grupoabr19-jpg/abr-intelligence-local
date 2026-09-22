@@ -1,0 +1,24 @@
+{
+  "files.exclude": {
+    "archive": true,
+    "data/input": true,
+    "**/__pycache__": true,
+    "**/*.pyc": true
+  },
+  "search.exclude": {
+    "archive": true,
+    "data/input": true,
+    "docs/reference": true,
+    "**/__pycache__": true
+  },
+  "typescript.validate.enable": false,
+  "javascript.validate.enable": false,
+  "python.analysis.exclude": [
+    "archive",
+    "data/input",
+    "docs/reference"
+  ],
+  "python.analysis.extraPaths": [
+    "."
+  ]
+}

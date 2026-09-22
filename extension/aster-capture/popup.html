@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ABR Intelligence</title>
+  <style>
+    body { width: 320px; margin: 0; padding: 16px; font: 13px Arial, sans-serif; color: #142758; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    label { display: block; margin: 8px 0 4px; font-weight: 700; }
+    input { width: 100%; box-sizing: border-box; padding: 7px; border: 1px solid #ccd4e5; border-radius: 6px; }
+    button { width: 100%; margin-top: 14px; padding: 9px; border: 0; border-radius: 6px; background: #f18800; color: white; font-weight: 700; cursor: pointer; }
+    .hint { color: #5c6784; line-height: 1.35; margin: 8px 0 0; }
+    .ok { color: #16803c; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>ABR Intelligence — Captura Aster</h1>
+  <label><input id="enabled" type="checkbox"> Ativar captura nesta sessão</label>
+  <label for="ingestUrl">URL de ingestão</label>
+  <input id="ingestUrl" placeholder="https://.../functions/v1/abr-collector-ingest">
+  <label for="collectorKey">Chave do coletor</label>
+  <input id="collectorKey" type="password" placeholder="ASTER_COLLECTOR_INGEST_KEY">
+  <label for="fonteId">ID da fonte Aster</label>
+  <input id="fonteId" placeholder="UUID de fontes_dados">
+  <label for="entidade">Entidade</label>
+  <input id="entidade" value="aster_relatorio">
+  <button id="save">Salvar e ativar</button>
+  <p class="hint">A extensão só observa respostas JSON do domínio Aster. Ela não lê senha, cookies ou arquivos binários.</p>
+  <div id="status" class="ok"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

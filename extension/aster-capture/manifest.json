@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "ABR Intelligence — Captura Aster",
+  "version": "1.0.0",
+  "description": "Captura respostas JSON somente do portal Aster e envia lotes ao ABR Intelligence.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://aster.gruposps.com.br/*"],
+  "action": {
+    "default_title": "ABR Intelligence — Aster",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://aster.gruposps.com.br/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page-hook.js"],
+      "matches": ["https://aster.gruposps.com.br/*"]
+    }
+  ]
+}

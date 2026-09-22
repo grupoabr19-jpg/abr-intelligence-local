@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: abr-intelligence-api
+    runtime: python
+    region: oregon
+    plan: starter
+    buildCommand: pip install -r requirements.txt && python -m playwright install chromium
+    startCommand: uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: HEADLESS
+        value: "true"
+      - key: ABR_API_KEY
+        sync: false
+      - key: DATABASE_URL_POOLER
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: ABR_INGEST_URL
+        sync: false
+      - key: ABR_COLLECTOR_KEY
+        sync: false
+      - key: ABR_ASTER_FONTE_ID
+        sync: false
+      - key: ABR_ASTER_ENTIDADE
+        value: aster_relatorio
+      - key: ASTER_BASE_URL
+        value: https://aster.gruposps.com.br/Login/abr
+      - key: ASTER_LOGIN_EMAIL
+        sync: false
+      - key: ASTER_LOGIN_PASSWORD
+        sync: false
