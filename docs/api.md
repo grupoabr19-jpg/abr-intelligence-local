@@ -117,12 +117,15 @@ Com regiao de varejo ou DDD do atacado quando o mapa consegue classificar.
 
 ## Deploy no Render
 
-O arquivo [render.yaml](../render.yaml) cria um Web Service Python com:
+O arquivo [render.yaml](../render.yaml) cria um Web Service Docker.
 
 ```text
-buildCommand: pip install -r requirements.txt && python -m playwright install chromium
-startCommand: uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT
+runtime: docker
+dockerfilePath: ./Dockerfile
+healthCheckPath: /health
 ```
+
+O [Dockerfile](../Dockerfile) usa a imagem oficial do Playwright para Python, ja com Chromium e dependencias de sistema.
 
 Configure os secrets no Render, sem versionar valores reais:
 
@@ -136,4 +139,19 @@ ABR_COLLECTOR_KEY=
 ABR_ASTER_FONTE_ID=
 ASTER_LOGIN_EMAIL=
 ASTER_LOGIN_PASSWORD=
+```
+
+Variaveis com valor fixo no Blueprint:
+
+```env
+HEADLESS=true
+ABR_ASTER_ENTIDADE=aster_relatorio
+ASTER_BASE_URL=https://aster.gruposps.com.br/Login/abr
+```
+
+Depois do deploy, confira:
+
+```text
+https://<servico-render>.onrender.com/health
+https://<servico-render>.onrender.com/docs
 ```

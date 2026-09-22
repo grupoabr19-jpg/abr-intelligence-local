@@ -51,3 +51,15 @@ Este workflow substitui a prioridade anterior de financeiro/contas a receber.
 2. Explorar relatorios de estoque com outros IDs e registrar se o bloqueio e permissao ou parametro.
 3. Procurar relatorios de compras no menu/modulo de compras.
 4. Separar claramente pedido vs faturamento dentro do `D0A4D301`.
+
+## API / Deploy
+
+O backend de extracao roda como API FastAPI em container Docker no Render.
+
+Arquivos:
+
+```text
+Dockerfile
+render.yaml
+docs/api.md
+```
