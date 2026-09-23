@@ -60,6 +60,25 @@ def static_param_overrides(static_fields: tuple[StaticFieldBinding, ...]) -> dic
     return overrides
 
 
+def query_selector_field_names(binding: StaticFieldBinding) -> list[str]:
+    field_names = [binding.hidden_input_id, binding.name, f"@{binding.name.title()}"]
+    normalized = f"{binding.name} {binding.hidden_input_id or ''}".lower()
+    if binding.hidden_input_id == "_FAMILIA":
+        field_names.append("@Familia")
+    if "filial" in normalized:
+        field_names.extend(["Filial", "_FILIAL", "@Filial"])
+    return list(dict.fromkeys(name for name in field_names if name))
+
+
+def should_use_query_popup(binding: StaticFieldBinding) -> bool:
+    normalized = f"{binding.name} {binding.hidden_input_id or ''}".lower()
+    return binding.hidden_input_id == "_FAMILIA" or "filial" in normalized
+
+
+def should_force_query_field_value(binding: StaticFieldBinding) -> bool:
+    return binding.hidden_input_id == "_FAMILIA"
+
+
 def post_ingest(env: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
     request = urllib.request.Request(
         env["ABR_INGEST_URL"],
@@ -201,10 +220,7 @@ async def choose_dropdown_value(page, input_index: int, value: str) -> str:
 
 
 async def set_query_field_value(page, input_index: int, binding: StaticFieldBinding) -> str:
-    field_names = [binding.hidden_input_id, f"@{binding.name.title()}"]
-    if binding.hidden_input_id == "_FAMILIA":
-        field_names.append("@Familia")
-    field_names = [name for name in field_names if name]
+    field_names = query_selector_field_names(binding)
     result = await page.evaluate(
         """({ inputIndex, value, fieldNames }) => {
           const setNativeValue = (element, nextValue) => {
@@ -288,9 +304,15 @@ async def choose_query_field_popup_value(page, input_index: int, binding: Static
           if (!target) return false
           target.scrollIntoView({ block: 'center', inline: 'center' })
           const clickable = target.closest('[role="combobox"], .ant-select, .MuiAutocomplete-root, div') || target
-          clickable.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
-          clickable.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }))
-          clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+          const rect = target.getBoundingClientRect()
+          const x = Math.max(1, Math.min(window.innerWidth - 1, rect.left + rect.width / 2))
+          const y = Math.max(1, Math.min(window.innerHeight - 1, rect.top + rect.height / 2))
+          for (const element of [target, clickable]) {
+            element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }))
+            element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }))
+            element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }))
+            element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }))
+          }
           if (isVisible(target)) target.focus()
           return true
         }""",
@@ -355,8 +377,15 @@ async def choose_query_field_popup_value(page, input_index: int, binding: Static
         value,
     )
     await page.wait_for_timeout(700)
+    if clicked:
+        try:
+            await page.keyboard.press("Escape")
+        except Exception:
+            pass
 
-    direct = await set_query_field_value(page, input_index, binding)
+    direct = "direct_query_field:skipped"
+    if should_force_query_field_value(binding):
+        direct = await set_query_field_value(page, input_index, binding)
     return f"query_popup:opened={opened}:searched={searched}:clicked={clicked}:{direct}"
 
 
@@ -391,7 +420,7 @@ async def fill_report_filters(
 
             for binding in static_fields:
                 field_index = right_inputs[binding.input_position]["index"]
-                if binding.hidden_input_id == "_FAMILIA":
+                if should_use_query_popup(binding):
                     method = await choose_query_field_popup_value(page, field_index, binding)
                 else:
                     method = await choose_dropdown_value(page, field_index, binding.value)

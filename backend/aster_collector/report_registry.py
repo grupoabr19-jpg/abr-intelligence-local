@@ -46,7 +46,7 @@ REPORTS: dict[str, ReportConfig] = {
         name="ABR - Analise de Vendas por Item",
         entity="aster_report_d0a4d301",
         automation_status="validated",
-        static_fields=(StaticFieldBinding("Filial", 1, "Todos", "Filial"),),
+        static_fields=(StaticFieldBinding("Filial", 1, "Todos", "_FILIAL"),),
         date_fields=(
             DateFieldBinding("Data de", 2, "DATADE"),
             DateFieldBinding("Data ate", 3, "DATAATE"),
@@ -70,12 +70,12 @@ REPORTS: dict[str, ReportConfig] = {
         area="comercial_vendas",
         name="ABR - Vendas Por Indicacao",
         entity="aster_report_ab439998",
-        automation_status="validated_empty",
+        automation_status="validated",
         date_fields=(
             DateFieldBinding("Data De", 0, "DATADE"),
             DateFieldBinding("Data Ate", 1, "DATAAT"),
         ),
-        notes="Executa com datas e Confirmar, mas o periodo validado retornou Nenhum registro encontrado.",
+        notes="Executa com datas; 2026 validado sem registros e 2025 retornou dados pontuais.",
     ),
     "027051BD": ReportConfig(
         query_id="027051BD",
