@@ -55,36 +55,25 @@ select {
   position: relative;
 }
 
-.topbar::after {
-  content: "";
-  position: absolute;
-  inset: auto -4% -52px 38%;
-  height: 112px;
-  border-top: 6px solid rgba(241, 136, 0, 0.78);
-  transform: skewX(-22deg);
-  pointer-events: none;
-}
-
 .brand-block {
   display: flex;
   align-items: center;
-  gap: 18px;
   min-width: 0;
   position: relative;
   z-index: 1;
 }
 
 .brand-mark {
-  width: 112px;
-  height: 68px;
+  width: clamp(124px, 15vw, 210px);
+  height: 74px;
   display: grid;
-  place-items: center;
+  place-items: end;
   flex: 0 0 auto;
 }
 
 .brand-mark img {
-  max-width: 112px;
-  max-height: 68px;
+  max-width: 100%;
+  max-height: 74px;
   display: block;
 }
 
@@ -131,6 +120,21 @@ h1 {
   justify-content: flex-end;
   position: relative;
   z-index: 1;
+}
+
+.header-controls {
+  display: grid;
+  justify-items: end;
+  gap: 9px;
+}
+
+.front-switch,
+.header-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .status-pill,
@@ -193,6 +197,17 @@ h1 {
   flex: 0 1 240px;
 }
 
+.date-control {
+  flex: 0 0 178px;
+}
+
+.date-control span {
+  color: #526079;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .control input,
 .control select {
   min-width: 0;
@@ -204,6 +219,26 @@ h1 {
 
 .control input {
   width: 100%;
+}
+
+.filter-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 14px;
+  color: #ffffff;
+  background: var(--abr-blue);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.filter-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
 }
 
 .notice {
@@ -526,19 +561,35 @@ tbody tr:hover {
 
   .brand-block {
     align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .header-controls {
+    justify-items: start;
+  }
+
+  .front-switch,
+  .header-status {
+    justify-content: flex-start;
   }
 
   .brand-mark {
-    width: 92px;
-    height: 56px;
-    place-items: start;
+    width: 118px;
+    height: 52px;
+    place-items: end;
   }
 
   .brand-mark img {
-    max-width: 92px;
-    max-height: 56px;
+    max-height: 52px;
+  }
+
+  .date-control {
+    flex: 1 1 150px;
   }
 
   .kpi-grid,

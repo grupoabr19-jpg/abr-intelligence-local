@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hmac
+from datetime import date
 from pathlib import Path
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -123,8 +124,13 @@ async def get_intelligence_domains() -> dict:
     tags=["dashboard"],
     dependencies=[Depends(require_dashboard_read_key)],
 )
-async def get_internal_dashboard() -> dict:
-    return internal_dashboard_summary()
+async def get_internal_dashboard(
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+) -> dict:
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=422, detail="date_from must be before or equal to date_to.")
+    return internal_dashboard_summary(date_from=date_from, date_to=date_to)
 
 
 @app.post(

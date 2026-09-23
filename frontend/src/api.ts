@@ -23,6 +23,10 @@ export type Requirement = {
 export type DashboardSummary = {
   domain: string
   generated_from: string
+  date_range?: {
+    date_from: string | null
+    date_to: string | null
+  }
   kpis: Record<string, number>
   reports: Report[]
   reports_by_status: Array<{ status: string; total: number }>
@@ -60,8 +64,12 @@ export class DashboardAuthError extends Error {
   }
 }
 
-export async function fetchInternalDashboard(): Promise<DashboardSummary> {
-  const response = await fetch(`${API_BASE_URL}/v1/dashboard/internal`, {
+export async function fetchInternalDashboard(filters?: { dateFrom?: string; dateTo?: string }): Promise<DashboardSummary> {
+  const params = new URLSearchParams()
+  if (filters?.dateFrom) params.set('date_from', filters.dateFrom)
+  if (filters?.dateTo) params.set('date_to', filters.dateTo)
+  const query = params.toString()
+  const response = await fetch(`${API_BASE_URL}/v1/dashboard/internal${query ? `?${query}` : ''}`, {
     credentials: 'include',
   })
 

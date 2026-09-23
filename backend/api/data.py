@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -68,7 +69,51 @@ def list_domains() -> dict[str, Any]:
     return {"domains": list_intelligence_domains()}
 
 
-def internal_dashboard_summary() -> dict[str, Any]:
+def parse_payload_date(payload: dict[str, Any]) -> date | None:
+    for key in (
+        "DATA",
+        "Data",
+        "Data Venda",
+        "Data Pedido",
+        "Data Emissao",
+        "Data Emissão",
+        "Data Lcto",
+        "Data Lancamento",
+        "Data de Lançamento",
+        "Data de Lancamento",
+        "DocDate",
+        "DATADE",
+        "DATAATE",
+    ):
+        value = payload.get(key)
+        if not value:
+            continue
+        text = str(value).strip()
+        candidates = (
+            (text, "%Y-%m-%dT%H:%M:%S.%fZ"),
+            (text[:19], "%Y-%m-%dT%H:%M:%S"),
+            (text[:10], "%Y-%m-%d"),
+            (text[:10], "%d/%m/%Y"),
+        )
+        for candidate, fmt in candidates:
+            try:
+                return datetime.strptime(candidate, fmt).date()
+            except ValueError:
+                continue
+    return None
+
+
+def in_date_range(value: date | None, date_from: date | None, date_to: date | None) -> bool:
+    if value is None:
+        return date_from is None and date_to is None
+    if date_from and value < date_from:
+        return False
+    if date_to and value > date_to:
+        return False
+    return True
+
+
+def internal_dashboard_summary(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any]:
     reports = list_reports()
     requirements = list_requirements()
     warnings: list[str] = []
@@ -89,14 +134,22 @@ def internal_dashboard_summary() -> dict[str, Any]:
         env = load_env()
         with connect_database(env) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
+                history_query = """
                     select entidade, sync_id, status, registros_lidos, registros_inseridos, iniciado_em
                     from public.historico_importacoes
-                    order by iniciado_em desc
-                    limit 12
-                    """
-                )
+                """
+                history_params: list[Any] = []
+                clauses = []
+                if date_from:
+                    clauses.append("iniciado_em::date >= %s")
+                    history_params.append(date_from)
+                if date_to:
+                    clauses.append("iniciado_em::date <= %s")
+                    history_params.append(date_to)
+                if clauses:
+                    history_query += " where " + " and ".join(clauses)
+                history_query += " order by iniciado_em desc limit 12"
+                cur.execute(history_query, history_params)
                 history = [
                     {
                         "entidade": row[0],
@@ -127,13 +180,17 @@ def internal_dashboard_summary() -> dict[str, Any]:
 
     regions: list[dict[str, Any]] = []
     try:
-        regions = sales_regions_summary()
+        regions = sales_regions_summary(date_from=date_from, date_to=date_to)
     except BaseException as exc:
         warnings.append(f"Resumo de regioes indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
 
     return {
         "domain": "internal",
         "generated_from": "backend",
+        "date_range": {
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+        },
         "kpis": {
             "reports_total": len(reports),
             "reports_validated": status_counts.get("validated", 0),
@@ -156,7 +213,7 @@ def internal_dashboard_summary() -> dict[str, Any]:
     }
 
 
-def sales_regions_summary() -> list[dict[str, Any]]:
+def sales_regions_summary(date_from: date | None = None, date_to: date | None = None) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str], dict[str, Any]] = defaultdict(
         lambda: {"linhas": 0, "valor_total": Decimal("0"), "criterios": defaultdict(int)}
     )
@@ -173,6 +230,8 @@ def sales_regions_summary() -> list[dict[str, Any]]:
             rows = [row[0] for row in cur.fetchall()]
 
     for payload in rows:
+        if not in_date_range(parse_payload_date(payload), date_from, date_to):
+            continue
         classification = classify_sale(
             city=payload.get("Cidade"),
             seller=payload.get("Vendedor"),

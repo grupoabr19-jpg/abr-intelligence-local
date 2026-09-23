@@ -5,6 +5,7 @@ import {
   AreaChart as AreaIcon,
   BarChart3,
   Boxes,
+  CalendarDays,
   CheckCircle2,
   CircleDollarSign,
   Database,
@@ -43,6 +44,8 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 const COLORS = ['#253575', '#F18800', '#12805C', '#B42318', '#6B7280', '#3B82F6']
+const DEFAULT_DATE_FROM = '2026-01-01'
+const DEFAULT_DATE_TO = new Date().toISOString().slice(0, 10)
 
 type Tab = 'overview' | 'sales' | 'stock' | 'operations' | 'sources'
 
@@ -67,6 +70,8 @@ function App() {
   const [tab, setTab] = useState<Tab>('overview')
   const [statusFilter, setStatusFilter] = useState('todos')
   const [areaFilter, setAreaFilter] = useState('todas')
+  const [dateFrom, setDateFrom] = useState(DEFAULT_DATE_FROM)
+  const [dateTo, setDateTo] = useState(DEFAULT_DATE_TO)
   const [search, setSearch] = useState('')
   const [needsLogin, setNeedsLogin] = useState(false)
   const [password, setPassword] = useState('')
@@ -77,7 +82,7 @@ function App() {
     setLoading(true)
     setError(null)
     try {
-      setSummary(await fetchInternalDashboard())
+      setSummary(await fetchInternalDashboard({ dateFrom, dateTo }))
       setNeedsLogin(false)
     } catch (err) {
       if (err instanceof DashboardAuthError) {
@@ -88,6 +93,11 @@ function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const submitFilters = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    void load()
   }
 
   const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
@@ -146,9 +156,6 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-block">
-          <div className="brand-mark">
-            <img src={abrLogoWhite} alt="Grupo ABR" />
-          </div>
           <div>
             <span className="eyebrow">ABR Intelligence</span>
             <h1>Inteligencia de Mercado</h1>
@@ -156,23 +163,42 @@ function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <span className="front-pill active">Interna</span>
-          <span className="front-pill">Externa</span>
-          <span className="status-pill">
-            <ShieldCheck size={15} />
-            Backend trata os dados
-          </span>
-          <button className="icon-button" onClick={load} disabled={loading} title="Atualizar">
-            <RefreshCw size={17} className={loading ? 'spin' : ''} />
-          </button>
+          <div className="brand-mark">
+            <img src={abrLogoWhite} alt="Grupo ABR" />
+          </div>
+          <div className="header-controls">
+            <div className="front-switch" aria-label="Frentes da inteligencia de mercado">
+              <span className="front-pill active">Interna</span>
+              <span className="front-pill">Externa</span>
+            </div>
+            <div className="header-status">
+              <span className="status-pill">
+                <ShieldCheck size={15} />
+                Backend trata os dados
+              </span>
+              <button className="icon-button" onClick={load} disabled={loading} title="Atualizar">
+                <RefreshCw size={17} className={loading ? 'spin' : ''} />
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
-      <section className="toolbar" aria-label="Filtros do dashboard">
+      <form className="toolbar" aria-label="Filtros do dashboard" onSubmit={submitFilters}>
         <div className="control search-control">
           <Search size={16} />
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar relatorio, area ou entidade" />
         </div>
+        <label className="control date-control">
+          <CalendarDays size={16} />
+          <span>De</span>
+          <input type="date" value={dateFrom} max={dateTo} onChange={(event) => setDateFrom(event.target.value)} />
+        </label>
+        <label className="control date-control">
+          <CalendarDays size={16} />
+          <span>Ate</span>
+          <input type="date" value={dateTo} min={dateFrom} onChange={(event) => setDateTo(event.target.value)} />
+        </label>
         <label className="control">
           <Filter size={16} />
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
@@ -193,7 +219,11 @@ function App() {
             ))}
           </select>
         </label>
-      </section>
+        <button className="filter-button" type="submit" disabled={loading}>
+          <RefreshCw size={16} className={loading ? 'spin' : ''} />
+          Aplicar
+        </button>
+      </form>
 
       {error && (
         <section className="notice error">
