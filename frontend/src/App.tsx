@@ -343,7 +343,7 @@ function App() {
                 formatNumber(item.linhas),
                 money(item.valor_total),
               ])}
-              empty="Sem resumo regional disponivel."
+              empty="Resumo regional sera carregado na proxima otimizacao da aba de vendas."
             />
           </Panel>
           <Panel title="Fontes comerciais" icon={<Database size={17} />}>

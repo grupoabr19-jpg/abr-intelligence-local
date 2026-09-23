@@ -113,7 +113,12 @@ def in_date_range(value: date | None, date_from: date | None, date_to: date | No
     return True
 
 
-def internal_dashboard_summary(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any]:
+def internal_dashboard_summary(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    *,
+    include_sales_regions: bool = False,
+) -> dict[str, Any]:
     reports = list_reports()
     requirements = list_requirements()
     warnings: list[str] = []
@@ -179,10 +184,11 @@ def internal_dashboard_summary(date_from: date | None = None, date_to: date | No
         warnings.append(f"Banco indisponivel para resumo ao vivo: {type(exc).__name__}: {str(exc)[:160]}")
 
     regions: list[dict[str, Any]] = []
-    try:
-        regions = sales_regions_summary(date_from=date_from, date_to=date_to)
-    except BaseException as exc:
-        warnings.append(f"Resumo de regioes indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+    if include_sales_regions:
+        try:
+            regions = sales_regions_summary(date_from=date_from, date_to=date_to)
+        except BaseException as exc:
+            warnings.append(f"Resumo de regioes indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
 
     return {
         "domain": "internal",
@@ -220,26 +226,46 @@ def sales_regions_summary(date_from: date | None = None, date_to: date | None = 
     env = load_env()
     with connect_database(env) as conn:
         with conn.cursor() as cur:
+            where_clauses = ["entidade = 'aster_report_d0a4d301'"]
+            params: list[Any] = []
+            parsed_sale_date = """
+                case
+                  when payload_original->>'Data Venda' ~ '^\\d{2}/\\d{2}/\\d{4}$'
+                    then to_date(payload_original->>'Data Venda', 'DD/MM/YYYY')
+                  when payload_original->>'Data Venda' ~ '^\\d{4}-\\d{2}-\\d{2}'
+                    then left(payload_original->>'Data Venda', 10)::date
+                  else null
+                end
+            """
+            if date_from:
+                where_clauses.append(f"({parsed_sale_date}) >= %s")
+                params.append(date_from)
+            if date_to:
+                where_clauses.append(f"({parsed_sale_date}) <= %s")
+                params.append(date_to)
             cur.execute(
-                """
-                select payload_original
+                f"""
+                select
+                  payload_original->>'Cidade' as cidade,
+                  payload_original->>'Vendedor' as vendedor,
+                  payload_original->>'Segmento' as segmento,
+                  payload_original->>'Valor Total' as valor_total
                 from public.staging_dados
-                where entidade = 'aster_report_d0a4d301'
-                """
+                where {" and ".join(where_clauses)}
+                """,
+                params,
             )
-            rows = [row[0] for row in cur.fetchall()]
+            rows = cur.fetchall()
 
-    for payload in rows:
-        if not in_date_range(parse_payload_date(payload), date_from, date_to):
-            continue
+    for city, seller, segment, total_value in rows:
         classification = classify_sale(
-            city=payload.get("Cidade"),
-            seller=payload.get("Vendedor"),
-            segment=payload.get("Segmento"),
+            city=city,
+            seller=seller,
+            segment=segment,
         )
         key = (classification.canal, classification.regiao or "sem_regiao")
         groups[key]["linhas"] += 1
-        groups[key]["valor_total"] += parse_decimal(payload.get("Valor Total"))
+        groups[key]["valor_total"] += parse_decimal(total_value)
         groups[key]["criterios"][classification.criterio] += 1
 
     return [

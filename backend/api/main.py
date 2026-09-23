@@ -127,10 +127,15 @@ async def get_intelligence_domains() -> dict:
 async def get_internal_dashboard(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    include_sales_regions: bool = Query(default=False),
 ) -> dict:
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before or equal to date_to.")
-    return internal_dashboard_summary(date_from=date_from, date_to=date_to)
+    return internal_dashboard_summary(
+        date_from=date_from,
+        date_to=date_to,
+        include_sales_regions=include_sales_regions,
+    )
 
 
 @app.post(
