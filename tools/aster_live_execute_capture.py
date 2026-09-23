@@ -13,6 +13,7 @@ from playwright.async_api import Request, Response, async_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from backend.aster_collector.browser_capture import try_login
 from backend.aster_collector.manual_auth import has_auth_tokens, save_current_aster_session
 from backend.aster_collector.settings import get_settings
 
@@ -84,6 +85,21 @@ async def wait_for_login(page, timeout_seconds: int) -> dict[str, Any]:
     return last_session
 
 
+async def ensure_login(page, settings, timeout_seconds: int) -> dict[str, Any]:
+    session = await wait_for_login(page, 8)
+    if session.get("hasAsterAuthTokens"):
+        return session
+
+    if settings.aster_login_email and settings.aster_login_password:
+        await try_login(page, settings)
+        session = await wait_for_login(page, 20)
+        if session.get("hasAsterAuthTokens"):
+            return session
+
+    print("Login automatico nao confirmou tokens; faca login manualmente nesta janela.")
+    return await wait_for_login(page, timeout_seconds)
+
+
 async def main_async(query_id: str = DEFAULT_QUERY_ID, timeout_seconds: int = 600) -> dict[str, Any]:
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     settings = get_settings()
@@ -136,7 +152,7 @@ async def main_async(query_id: str = DEFAULT_QUERY_ID, timeout_seconds: int = 60
         page.on("response", lambda response: asyncio.create_task(on_response(response)))
 
         await page.goto(str(settings.aster_base_url), wait_until="domcontentloaded")
-        session = await wait_for_login(page, timeout_seconds)
+        session = await ensure_login(page, settings, timeout_seconds)
         if not session.get("hasAsterAuthTokens"):
             await context.close()
             await browser.close()

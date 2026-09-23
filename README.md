@@ -12,6 +12,15 @@ ABR Intelligence e uma plataforma de inteligencia comercial, operacional e de me
 
 Leia tambem [docs/program-overview.md](docs/program-overview.md) para a explicacao funcional do produto e dos modulos esperados.
 
+## Dominios de Inteligencia
+
+O projeto fica separado em dois dominios documentados em [docs/intelligence-domains.md](docs/intelligence-domains.md):
+
+- **Inteligencia Interna**: Aster, planilhas operacionais, regioes comerciais, staging e bases derivadas de vendas, pedidos, estoque, margem, clientes e logistica.
+- **Inteligencia Externa**: mercado nacional e internacional do aco, cotacoes, cambio, commodities, sucata, frete e demais indicadores externos.
+
+O trabalho feito ate aqui pertence a **Inteligencia Interna**. A proxima fase de captacao de mercado deve entrar em coletores e endpoints separados.
+
 ## Arquitetura
 
 A organizacao atual esta documentada em [docs/architecture.md](docs/architecture.md).
@@ -47,7 +56,7 @@ Smoke test local:
 .\.venv\Scripts\python.exe tools\smoke_test.py --json
 ```
 
-## Ingestao Aster
+## Inteligencia Interna: Aster e Planilhas
 
 O passo a passo para configurar a ingestao do coletor Python/extensao Aster esta em [docs/ingestion-setup.md](docs/ingestion-setup.md).
 

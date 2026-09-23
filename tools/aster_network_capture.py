@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import sys
@@ -11,12 +12,13 @@ from playwright.async_api import Request, Response, async_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from backend.aster_collector.manual_auth import restore_aster_session
+from backend.aster_collector.browser_capture import try_login
+from backend.aster_collector.manual_auth import has_auth_tokens, restore_aster_session, save_current_aster_session
 from backend.aster_collector.settings import get_settings
 
 
 EVIDENCE_DIR = ROOT / "docs" / "evidence"
-TARGET_URL = "https://aster.gruposps.com.br/ExecuteReport/D0A4D301/c2840840-b5ef-11f1-9bfe-c7e922c97658"
+DEFAULT_TARGET_PATH = "/ExecuteReport/D0A4D301"
 SENSITIVE_HEADER_PARTS = ("authorization", "token", "cookie", "password", "sktid")
 
 
@@ -58,13 +60,54 @@ async def response_preview(response: Response) -> Any:
         return None
 
 
-async def main_async() -> dict[str, Any]:
+async def wait_for_login(page, timeout_seconds: int) -> dict[str, Any]:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_session: dict[str, Any] = {}
+    while asyncio.get_running_loop().time() < deadline:
+        last_session = await save_current_aster_session(page)
+        raw_persist = last_session.get("sessionStorage", {}).get("persist:SPS_AHS")
+        if has_auth_tokens(raw_persist):
+            return last_session
+        await page.wait_for_timeout(2_000)
+    return last_session
+
+
+async def ensure_login(page, settings, timeout_seconds: int) -> dict[str, Any]:
+    session = await wait_for_login(page, 8)
+    if session.get("hasAsterAuthTokens"):
+        return session
+
+    if settings.aster_login_email and settings.aster_login_password:
+        await try_login(page, settings)
+        session = await wait_for_login(page, 20)
+        if session.get("hasAsterAuthTokens"):
+            return session
+
+    print("Login automatico nao confirmou tokens; faca login manualmente nesta janela.")
+    return await wait_for_login(page, timeout_seconds)
+
+
+def target_url_from_path(target_path: str) -> str:
+    if target_path.startswith("http://") or target_path.startswith("https://"):
+        return target_path
+    return "https://aster.gruposps.com.br/" + target_path.lstrip("/")
+
+
+async def main_async(
+    target_path: str,
+    timeout_seconds: int,
+    output_prefix: str,
+    *,
+    fresh_session: bool,
+    manual_navigation: bool,
+) -> dict[str, Any]:
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     settings = get_settings()
+    target_url = target_url_from_path(target_path)
     events: list[dict[str, Any]] = []
 
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=settings.headless)
+        browser = await playwright.chromium.launch(headless=False, slow_mo=150)
         context = await browser.new_context()
         page = await context.new_page()
         page.set_default_timeout(settings.browser_timeout_ms)
@@ -86,13 +129,34 @@ async def main_async() -> dict[str, Any]:
 
         page.on("response", lambda response: asyncio.create_task(on_response(response)))
 
-        restored = await restore_aster_session(page)
-        await page.goto(TARGET_URL, wait_until="domcontentloaded")
-        await page.wait_for_timeout(15_000)
+        restored = False if fresh_session else await restore_aster_session(page)
+        await page.goto(str(settings.aster_base_url), wait_until="domcontentloaded")
+        session = await ensure_login(page, settings, timeout_seconds)
+        if not session.get("hasAsterAuthTokens"):
+            await context.close()
+            await browser.close()
+            return {
+                "restored": restored,
+                "target": target_url,
+                "final_url": page.url,
+                "event_count": len(events),
+                "events": events,
+                "warning": "Timeout antes de detectar tokens do Aster.",
+            }
+
+        if manual_navigation:
+            print()
+            print("Aster aberto com captura de rede ativa.")
+            print("Navegue pelo menu ate a tela desejada e execute/pesquise/lista o que precisar.")
+            print("O capturador encerrara automaticamente ao final do timeout.")
+            print()
+        else:
+            await page.goto(target_url, wait_until="domcontentloaded")
+        await page.wait_for_timeout(timeout_seconds * 1000)
 
         result = {
             "restored": restored,
-            "target": TARGET_URL,
+            "target": target_url,
             "final_url": page.url,
             "event_count": len(events),
             "events": events,
@@ -101,15 +165,20 @@ async def main_async() -> dict[str, Any]:
         await context.close()
         await browser.close()
 
-    (EVIDENCE_DIR / "aster_network_capture.json").write_text(
+    output_json = EVIDENCE_DIR / f"{output_prefix}.json"
+    output_md = EVIDENCE_DIR / f"{output_prefix}.md"
+    result["output_json"] = str(output_json.relative_to(ROOT))
+    result["output_md"] = str(output_md.relative_to(ROOT))
+
+    output_json.write_text(
         json.dumps(result, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    write_markdown(result)
+    write_markdown(result, output_md)
     return result
 
 
-def write_markdown(result: dict[str, Any]) -> None:
+def write_markdown(result: dict[str, Any], output_md: Path) -> None:
     lines = [
         "# Aster Network Capture",
         "",
@@ -125,18 +194,34 @@ def write_markdown(result: dict[str, Any]) -> None:
         auth = item.get("requestHeaders", {}).get("authorization")
         if isinstance(auth, dict):
             lines.append(f"  - authorization length: `{auth.get('length')}`")
-    (EVIDENCE_DIR / "aster_network_capture.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    output_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> None:
-    result = asyncio.run(main_async())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--target-path", default=DEFAULT_TARGET_PATH)
+    parser.add_argument("--timeout-seconds", type=int, default=15)
+    parser.add_argument("--output-prefix", default="aster_network_capture")
+    parser.add_argument("--fresh-session", action="store_true", help="Nao restaura sessao salva; inicia login limpo.")
+    parser.add_argument("--manual-navigation", action="store_true", help="Nao abre target direto; usuario navega pelo menu.")
+    args = parser.parse_args()
+
+    result = asyncio.run(
+        main_async(
+            target_path=args.target_path,
+            timeout_seconds=args.timeout_seconds,
+            output_prefix=args.output_prefix,
+            fresh_session=args.fresh_session,
+            manual_navigation=args.manual_navigation,
+        )
+    )
     print(
         json.dumps(
             {
                 "restored": result["restored"],
                 "event_count": result["event_count"],
-                "output_json": "docs/evidence/aster_network_capture.json",
-                "output_md": "docs/evidence/aster_network_capture.md",
+                "output_json": result["output_json"],
+                "output_md": result["output_md"],
             },
             ensure_ascii=False,
             indent=2,

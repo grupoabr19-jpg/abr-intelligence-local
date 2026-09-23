@@ -1,12 +1,30 @@
 from __future__ import annotations
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.config import get_api_settings
-from backend.api.data import list_reports, sales_regions_summary
+from backend.api.data import (
+    internal_dashboard_summary,
+    list_domains,
+    list_reports,
+    list_requirements,
+    sales_regions_summary,
+)
 from backend.api.jobs import job_manager
-from backend.api.models import ExtractionRequest, ExtractionResponse, JobRecord, ReportInfo, SalesRegionRow
+from backend.api.models import (
+    DataRequirementsResponse,
+    ExtractionRequest,
+    ExtractionResponse,
+    IntelligenceDomainsResponse,
+    JobRecord,
+    LocalSpreadsheetInspectionRequest,
+    LocalSpreadsheetInspectionResponse,
+    ReportInfo,
+    SalesRegionRow,
+)
 from backend.api.security import require_api_key
+from backend.aster_collector.local_spreadsheets import inspect_local_spreadsheet_sources
 
 
 settings = get_api_settings()
@@ -14,6 +32,18 @@ app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     description="API para disparar extrações autorizadas do Aster e consultar dados classificados do ABR Intelligence.",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:4173",
+        "http://localhost:4173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -23,8 +53,48 @@ async def health() -> dict[str, str]:
 
 
 @app.get("/v1/aster/reports", response_model=list[ReportInfo], tags=["aster"], dependencies=[Depends(require_api_key)])
-async def get_aster_reports() -> list[dict[str, str]]:
+async def get_aster_reports() -> list[dict]:
     return list_reports()
+
+
+@app.get(
+    "/v1/aster/requirements",
+    response_model=DataRequirementsResponse,
+    tags=["aster"],
+    dependencies=[Depends(require_api_key)],
+)
+async def get_aster_requirements() -> dict:
+    return list_requirements()
+
+
+@app.get(
+    "/v1/intelligence/domains",
+    response_model=IntelligenceDomainsResponse,
+    tags=["intelligence"],
+    dependencies=[Depends(require_api_key)],
+)
+async def get_intelligence_domains() -> dict:
+    return list_domains()
+
+
+@app.get(
+    "/v1/dashboard/internal",
+    response_model=dict,
+    tags=["dashboard"],
+    dependencies=[Depends(require_api_key)],
+)
+async def get_internal_dashboard() -> dict:
+    return internal_dashboard_summary()
+
+
+@app.post(
+    "/v1/spreadsheets/local/inspect",
+    response_model=LocalSpreadsheetInspectionResponse,
+    tags=["spreadsheets"],
+    dependencies=[Depends(require_api_key)],
+)
+async def inspect_local_spreadsheets(request: LocalSpreadsheetInspectionRequest) -> dict:
+    return inspect_local_spreadsheet_sources(input_dir=request.input_dir)
 
 
 @app.post(

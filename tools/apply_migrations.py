@@ -40,13 +40,28 @@ def pooler_candidates_from_direct_url(database_url: str) -> list[tuple[str, str]
     return candidates
 
 
+def project_ref_from_url(value: str) -> str | None:
+    parsed = urlparse(value)
+    host = parsed.hostname or ""
+    if host.startswith("db."):
+        return host.split(".")[1]
+    if ".pooler.supabase.com" in host and parsed.username and parsed.username.startswith("postgres."):
+        return parsed.username.split(".", 1)[1]
+    return None
+
+
 def connect_database(env: dict[str, str]) -> psycopg.Connection:
     database_url = env.get("DATABASE_URL", "")
     database_url_pooler = env.get("DATABASE_URL_POOLER", "")
 
     candidates: list[tuple[str, str]] = []
     if database_url_pooler:
-        candidates.append(("DATABASE_URL_POOLER", database_url_pooler))
+        pooler_ref = project_ref_from_url(database_url_pooler)
+        direct_ref = project_ref_from_url(database_url)
+        if direct_ref and pooler_ref and direct_ref != pooler_ref:
+            print("skip DATABASE_URL_POOLER: project-ref diferente do DATABASE_URL")
+        else:
+            candidates.append(("DATABASE_URL_POOLER", database_url_pooler))
 
     parsed = urlparse(database_url)
     if parsed.hostname and ".pooler.supabase.com" in parsed.hostname:

@@ -44,7 +44,67 @@ class ReportInfo(BaseModel):
     name: str
     entity: str
     automation_status: str
+    deliverables: list[str] = Field(default_factory=list)
     notes: str
+
+
+class DataRequirementInfo(BaseModel):
+    key: str
+    title: str
+    priority: str
+    refresh: str
+    grain: str
+    objective: str
+    fields: list[str]
+    known_sources: list[str]
+    gaps: list[str]
+
+
+class ExternalSpreadsheetSourceInfo(BaseModel):
+    key: str
+    title: str
+    folder_url: str
+    selection_rule: str
+    latest_file_id: str
+    latest_file_name: str
+    latest_modified_time: str
+    local_path: str
+    likely_coverage: list[str]
+    notes: str
+
+
+class DataRequirementsResponse(BaseModel):
+    requirements: list[DataRequirementInfo]
+    external_spreadsheet_sources: list[ExternalSpreadsheetSourceInfo] = Field(default_factory=list)
+    extraction_rules: list[str]
+
+
+class LocalSpreadsheetInspectionRequest(BaseModel):
+    input_dir: str = Field(default="Planilhas", description="Workspace-relative directory containing .xlsx files.")
+
+
+class LocalSpreadsheetInspectionResponse(BaseModel):
+    files: int
+    input_dir: str
+    output_json: str
+    output_md: str
+    warning: str | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class IntelligenceDomainInfo(BaseModel):
+    key: str
+    title: str
+    description: str
+    status: str
+    sources: list[str]
+    current_scope: list[str]
+    next_scope: list[str]
+    boundaries: list[str]
+
+
+class IntelligenceDomainsResponse(BaseModel):
+    domains: list[IntelligenceDomainInfo]
 
 
 class SalesRegionRow(BaseModel):

@@ -22,20 +22,44 @@ docs/aster-training-matrix.md
 | Comercial executivo | `0F75E84D` | Resumo Comercial | Indicadores consolidados por periodo | Automatizado e validado |
 | Comercial / clientes | `027051BD` | Segmentacao de Lead | Base comercial/clientes/leads | Automatizado e validado; 9.568 linhas |
 | Preco / cliente | `CAF55C1D` | Ultimo preco de venda | Historico de preco por cliente/item | Automatizado e validado; 50 linhas |
-| Estoque | `804C04C1` | Estoque | Posicao de estoque por familia | Probe retornou `PageNotAuthorized` no perfil atual |
-| Estoque | `6630A54D` | Estoque Disponivel | Saldo disponivel por familia | Requer familia |
-| Estoque | `DBF2AB0E` | Estoque WMS | Estoque WMS por familia | Requer familia |
-| Estoque / produto | `6AD70B15` | Estrutura de Produto | Estrutura/BOM por item | Treinado com item real; precisa item com estrutura cadastrada |
+| Estoque | `804C04C1` | Estoque | Posicao de estoque por familia | Automatizado e validado por execute direto |
+| Estoque | `6630A54D` | Estoque Disponivel | Saldo disponivel por familia | Automatizado e validado com familia agregada |
+| Estoque | `DBF2AB0E` | Estoque WMS | Estoque WMS por familia | Automatizado e validado por execute direto |
+| Estoque / produto | `6AD70B15` | Estrutura de Produto | Estrutura/BOM por item | Executa, mas sem registros uteis no cenario atual |
 | Compras | - | - | Compras/pedidos de compra | Ainda nao apareceu nos 13 relatorios capturados; precisa explorar modulo/permissao |
 | Comercial / indicacao | `AB439998` | ABR - Vendas Por Indicacao | Vendas por indicacao no periodo | Executa, mas sem `body.data` em setembro/2026 |
 | Transporte | `C1A4D279` | Ocorrencias | Ocorrencias por data/rota/minuta | Requer data de entrega |
+| Planilha local | `drive:gestao_producao_latest` | Gestao da Producao | Pedido, item, carteira, producao/PCP, NF, picking, frete e transportadora | Arquivo local em `Planilhas/Gestão da Produção.xlsx` |
+| Planilha local | `drive:margem_resumo_latest` | Margem GABR | Margem, custo, preco medio, tabela de preco e atributos operacionais de produto | Arquivo local em `Planilhas/Margem_GABR_20260916.xlsx` |
+
+## Escopo Completo Solicitado
+
+O treinamento do robo deve cobrir estas bases em formato granular, sem totais ou subtotais misturados:
+
+| Base | Frequencia desejada | Fontes Aster conhecidas | Situacao |
+|---|---|---|---|
+| Vendas e faturamento por item | diaria | `D0A4D301`, `0F75E84D`, `CAF55C1D`, `drive:margem_resumo_latest` | Base principal validada; planilha de margem complementa custo, margem, preco e metas. |
+| Cotacoes e orcamentos | diaria | - | Pendente descobrir relatorio, modulo, tabela ou exportacao equivalente. |
+| Pedidos e carteira | diaria | `D0A4D301`, `drive:gestao_producao_latest` | Planilha local cobre pedido/item/status/carteira/producao; usar para separar pedido vs faturamento. |
+| Estoque por produto/unidade | diaria | `804C04C1`, `6630A54D`, `DBF2AB0E`, `A6B5B978` | Estoque principal validado em tres relatorios; `A6B5B978` validado vazio. |
+| Compras por fornecedor/produto | diaria ou semanal | - | Pendente explorar modulo de compras ou solicitar permissao/relatorio. |
+| Cadastro de produtos | semanal/mensal | `6AD70B15`, `drive:gestao_producao_latest`, `drive:margem_resumo_latest` | Planilhas locais trazem item, familia, grupo, qualidade, tabela de preco e atributos operacionais; NCM completo ainda depende do Aster/vendas. |
+| Cadastro de clientes | semanal/mensal | `027051BD`, `D0A4D301` | Base de segmentacao validada; validar campos cadastrais completos. |
+| Devolucoes e cancelamentos | diaria | `D0A4D301` | Confirmar status/motivos ou relatorio proprio. |
+| Financeiro e recebiveis | diaria | `37D9E431` | Prioridade secundaria; manter para cruzar venda, prazo e qualidade financeira. |
+| Logistica e frete | diaria | `C1A4D279`, `D0A4D301`, `drive:gestao_producao_latest` | Planilha local traz transportadora, valor frete, romaneio e datas logisticas; rota/distancia ainda pendente. |
+
+As regras e campos completos ficam codificados em `backend/aster_collector/data_requirements.py` e sao publicados em `docs/aster-training-matrix.md` e no endpoint `/v1/aster/requirements`.
 
 ## Lacunas
 
-- **Pedidos:** `D0A4D301` traz campos comerciais e fiscais, mas ainda precisamos confirmar se representa pedido, faturamento ou ambos conforme o campo `Tipo`/nota/documento.
-- **Estoque:** `804C04C1` bloqueou por permissao; `6630A54D`, `DBF2AB0E` e `A6B5B978` ainda precisam de treino/permite acesso.
+- **Cotacoes/orcamentos:** ainda nao apareceu fonte explicita para demanda antes do pedido/faturamento; as planilhas locais nao trouxeram coluna clara de orcamento/cotacao.
+- **Pedidos:** `Gestão da Produção.xlsx` cobre pedido, item, status, data de entrega, draft, NF, picking e producao; usar como fonte principal de carteira.
+- **Estoque:** `804C04C1`, `6630A54D` e `DBF2AB0E` estao validados; `A6B5B978` executa vazio.
 - **Compras:** nenhum relatorio claro de compras apareceu nos 13 relatorios capturados. Precisa explorar o modulo `Compras` ou pedir permissao/relatorio.
-- **Producao:** nenhum relatorio explicitamente de producao apareceu; `6AD70B15` pode ajudar com estrutura de produto/BOM.
+- **Produtos:** planilhas locais cobrem cadastro operacional/preco; NCM aparece em `D0A4D301`, mas ainda falta cadastro mestre completo.
+- **Devolucoes/cancelamentos:** confirmar motivo e status em relatorio proprio ou campo equivalente.
+- **Financeiro/logistica:** manter como prioridade secundaria, mas dentro do escopo solicitado.
 
 ## Estrategia do Robo
 
@@ -43,8 +67,9 @@ docs/aster-training-matrix.md
 2. Classificar vendas por `varejo` e `atacado`, separados por regiao, usando a planilha `Regioes de atendimento`.
 3. Usar `027051BD` para base de clientes/leads e apoio a segmentacao comercial.
 4. Usar `CAF55C1D` para enriquecer preco por cliente/item.
-5. Resolver acesso/alternativa para estoque.
-6. Explorar compras somente se nao exigir permissao individual; se exigir, documentar como bloqueio.
+5. Usar as planilhas locais como camada complementar para carteira, frete, producao, preco e margem.
+6. Procurar fontes de cotacao/orcamento e compras apenas se forem exigidas fora do escopo atual disponivel.
+7. Se um campo solicitado nao existir, registrar equivalente, modulo/tabela, relatorio disponivel ou necessidade de consulta especifica.
 
 ## Registro Operacional
 
@@ -62,8 +87,10 @@ Status atual:
 - `027051BD`: validado sem filtro; carga real de 9.568 linhas.
 - `CAF55C1D`: validado; carga real de 50 linhas.
 - `37D9E431`: fora da prioridade atual.
-- `804C04C1`: bloqueado por permissao (`PageNotAuthorized`) no perfil atual.
-- `AB439998`, `6AD70B15`, `A6B5B978`, `6630A54D`, `DBF2AB0E`: seguem em treinamento/descoberta.
+- `804C04C1`, `6630A54D`, `DBF2AB0E`: validados para estoque.
+- `AB439998`, `6AD70B15`, `A6B5B978`, `897A37D9`: validados como vazios/sem registros uteis no cenario atual.
+- `Planilhas/Gestão da Produção.xlsx`: fonte local validada por estrutura, com 45.390 linhas e 59 colunas.
+- `Planilhas/Margem_GABR_20260916.xlsx`: fonte local validada por estrutura, com abas de margem, apoio, metas e tabela de preco.
 
 ## Classificacao Varejo / Atacado
 

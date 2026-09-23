@@ -50,6 +50,16 @@ def chunks(rows: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
     return [rows[index : index + size] for index in range(0, len(rows), size)]
 
 
+def static_param_overrides(static_fields: tuple[StaticFieldBinding, ...]) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    for field in static_fields:
+        if field.hidden_input_id and field.hidden_input_id.startswith("_"):
+            overrides[field.hidden_input_id] = field.value
+        if field.hidden_input_id == "_FAMILIA":
+            overrides["@Familia"] = field.value
+    return overrides
+
+
 def post_ingest(env: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
     request = urllib.request.Request(
         env["ABR_INGEST_URL"],
@@ -190,6 +200,166 @@ async def choose_dropdown_value(page, input_index: int, value: str) -> str:
     return "enter"
 
 
+async def set_query_field_value(page, input_index: int, binding: StaticFieldBinding) -> str:
+    field_names = [binding.hidden_input_id, f"@{binding.name.title()}"]
+    if binding.hidden_input_id == "_FAMILIA":
+        field_names.append("@Familia")
+    field_names = [name for name in field_names if name]
+    result = await page.evaluate(
+        """({ inputIndex, value, fieldNames }) => {
+          const setNativeValue = (element, nextValue) => {
+            const prototype = element instanceof HTMLTextAreaElement
+              ? window.HTMLTextAreaElement.prototype
+              : window.HTMLInputElement.prototype
+            const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value')
+            if (descriptor && descriptor.set) {
+              descriptor.set.call(element, nextValue)
+            } else {
+              element.value = nextValue
+            }
+            element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: nextValue }))
+            element.dispatchEvent(new Event('change', { bubbles: true }))
+            element.dispatchEvent(new Event('blur', { bubbles: true }))
+          }
+
+          const inputs = Array.from(document.querySelectorAll('input, textarea'))
+          const touched = []
+          const visibleInputs = inputs
+            .map((input, index) => ({ input, index }))
+            .filter(({ input }) => {
+              const rect = input.getBoundingClientRect()
+              const style = window.getComputedStyle(input)
+              return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+            })
+
+          const target = inputs[inputIndex] || visibleInputs[0]?.input
+          if (target) {
+            setNativeValue(target, value)
+            touched.push(`input[${inputIndex}]`)
+          }
+
+          for (const name of fieldNames) {
+            const matches = inputs.filter((input) => {
+              return input.id === name
+                || input.name === name
+                || input.getAttribute('data-name') === name
+                || input.getAttribute('data-field') === name
+                || input.getAttribute('aria-label') === name
+            })
+            for (const input of matches) {
+              setNativeValue(input, value)
+              touched.push(name)
+            }
+          }
+
+          for (const form of document.querySelectorAll('form')) {
+            for (const name of fieldNames) {
+              let hidden = form.querySelector(`input[type="hidden"][name="${CSS.escape(name)}"]`)
+              if (!hidden) {
+                hidden = document.createElement('input')
+                hidden.type = 'hidden'
+                hidden.name = name
+                form.appendChild(hidden)
+              }
+              setNativeValue(hidden, value)
+              touched.push(`hidden:${name}`)
+            }
+          }
+
+          window.dispatchEvent(new Event('resize'))
+          return [...new Set(touched)]
+        }""",
+        {"inputIndex": input_index, "value": binding.value, "fieldNames": field_names},
+    )
+    return "direct_query_field:" + ",".join(result or [])
+
+
+async def choose_query_field_popup_value(page, input_index: int, binding: StaticFieldBinding) -> str:
+    value = binding.value
+    opened = await page.evaluate(
+        """({ inputIndex }) => {
+          const isVisible = (element) => {
+            const rect = element.getBoundingClientRect()
+            const style = window.getComputedStyle(element)
+            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+          }
+          const inputs = Array.from(document.querySelectorAll('input'))
+          const target = inputs[inputIndex]
+          if (!target) return false
+          target.scrollIntoView({ block: 'center', inline: 'center' })
+          const clickable = target.closest('[role="combobox"], .ant-select, .MuiAutocomplete-root, div') || target
+          clickable.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
+          clickable.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }))
+          clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+          if (isVisible(target)) target.focus()
+          return true
+        }""",
+        {"inputIndex": input_index},
+    )
+    await page.wait_for_timeout(700)
+
+    searched = await page.evaluate(
+        """(value) => {
+          const setNativeValue = (element, nextValue) => {
+            const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+            if (descriptor && descriptor.set) descriptor.set.call(element, nextValue)
+            else element.value = nextValue
+            element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: nextValue }))
+            element.dispatchEvent(new Event('change', { bubbles: true }))
+          }
+          const isVisible = (element) => {
+            const rect = element.getBoundingClientRect()
+            const style = window.getComputedStyle(element)
+            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+          }
+          const visibleInputs = Array.from(document.querySelectorAll('input'))
+            .filter(isVisible)
+            .sort((a, b) => b.getBoundingClientRect().y - a.getBoundingClientRect().y)
+          const search = visibleInputs.find((input) => {
+            const text = `${input.placeholder || ''} ${input.getAttribute('aria-label') || ''}`.toLowerCase()
+            return text.includes('pesquisar') || text.includes('search')
+          }) || visibleInputs[visibleInputs.length - 1]
+          if (!search) return false
+          search.focus()
+          setNativeValue(search, value)
+          return true
+        }""",
+        value,
+    )
+    await page.wait_for_timeout(1_000)
+
+    clicked = await page.evaluate(
+        """(value) => {
+          const normalize = (text) => (text || '').replace(/\\s+/g, ' ').trim().toUpperCase()
+          const wanted = normalize(value)
+          const isVisible = (element) => {
+            const rect = element.getBoundingClientRect()
+            const style = window.getComputedStyle(element)
+            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+          }
+          const candidates = Array.from(document.querySelectorAll(
+            '[role="option"], li, tr, td, div, span, button'
+          )).filter((element) => {
+            if (!isVisible(element)) return false
+            const text = normalize(element.innerText || element.textContent || '')
+            return text === wanted || text.includes(wanted)
+          })
+          const option = candidates[candidates.length - 1]
+          if (!option) return false
+          option.scrollIntoView({ block: 'center', inline: 'center' })
+          option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
+          option.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }))
+          option.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+          return true
+        }""",
+        value,
+    )
+    await page.wait_for_timeout(700)
+
+    direct = await set_query_field_value(page, input_index, binding)
+    return f"query_popup:opened={opened}:searched={searched}:clicked={clicked}:{direct}"
+
+
 async def fill_report_filters(
     page,
     date_from: str,
@@ -221,7 +391,10 @@ async def fill_report_filters(
 
             for binding in static_fields:
                 field_index = right_inputs[binding.input_position]["index"]
-                method = await choose_dropdown_value(page, field_index, binding.value)
+                if binding.hidden_input_id == "_FAMILIA":
+                    method = await choose_query_field_popup_value(page, field_index, binding)
+                else:
+                    method = await choose_dropdown_value(page, field_index, binding.value)
                 result["filled"].append(f"{binding.name}:right_input[{field_index}]={binding.value}:{method}")
 
             values = [date_from_ui, date_to_ui]
@@ -324,6 +497,56 @@ async def click_execute_button(page) -> str | None:
     return None
 
 
+async def direct_execute_report_query(page, query_id: str, params: dict[str, str]) -> dict[str, Any]:
+    return await page.evaluate(
+        """async ({ queryId, params }) => {
+          const rawPersist = sessionStorage.getItem('persist:SPS_AHS')
+          let state = {}
+          if (rawPersist) {
+            const parsed = JSON.parse(rawPersist)
+            for (const [key, value] of Object.entries(parsed)) {
+              try {
+                state[key] = JSON.parse(value)
+              } catch {
+                state[key] = value
+              }
+            }
+          }
+          const companyToken = localStorage.getItem('companyToken') || state.companyToken
+          if (!companyToken) {
+            throw new Error('companyToken ausente para execute direto')
+          }
+          const response = await fetch(`https://astersrv.gruposps.com.br/APP/CRM/ReportQueries/${queryId}/execute`, {
+            method: 'POST',
+            headers: {
+              'accept': 'application/json, text/plain, */*',
+              'authorization': `Bearer ${companyToken}`,
+              'connectionalias': 'Aster',
+              'content-type': 'application/json;charset=UTF-8',
+              'locale': 'pt-BR',
+            },
+            body: JSON.stringify({ params }),
+          })
+          const body = await response.json()
+          return {
+            status: response.status,
+            url: response.url,
+            postData: { params },
+            body,
+          }
+        }""",
+        {"queryId": query_id, "params": params},
+    )
+
+
+async def close_playwright(context, browser) -> None:
+    for handle in (context, browser):
+        try:
+            await handle.close()
+        except Exception:
+            pass
+
+
 async def capture_execute(
     query_id: str,
     timeout_seconds: int,
@@ -336,16 +559,43 @@ async def capture_execute(
     report_config = get_report_config(query_id)
     target_url = f"https://aster.gruposps.com.br/ExecuteReport/{query_id}"
     captured: dict[str, Any] = {}
+    last_empty_execute: dict[str, Any] = {}
     event_count = 0
+    skipped_empty_execute_count = 0
 
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=False, slow_mo=150)
         context = await browser.new_context()
         page = await context.new_page()
         page.set_default_timeout(settings.browser_timeout_ms)
+        param_overrides = static_param_overrides(report_config.static_fields)
+
+        if param_overrides:
+            async def force_execute_params(route, request) -> None:
+                if not request.url.endswith("/execute") or request.method != "POST":
+                    await route.continue_()
+                    return
+                try:
+                    payload = request.post_data_json or {}
+                except Exception:
+                    await route.continue_()
+                    return
+                params = payload.get("params")
+                if not isinstance(params, dict):
+                    params = {}
+                    payload["params"] = params
+                params.update(param_overrides)
+                headers = dict(request.headers)
+                headers.pop("content-length", None)
+                await route.continue_(
+                    post_data=json.dumps(payload, ensure_ascii=False),
+                    headers={**headers, "content-type": "application/json;charset=UTF-8"},
+                )
+
+            await page.route(f"**/APP/CRM/ReportQueries/{query_id}/execute", force_execute_params)
 
         async def on_response(response: Response) -> None:
-            nonlocal captured, event_count
+            nonlocal captured, event_count, last_empty_execute, skipped_empty_execute_count
             request: Request = response.request
             url = response.url
             if f"/APP/CRM/ReportQueries/{query_id}/" not in url:
@@ -357,6 +607,19 @@ async def capture_execute(
                 body = await response.json()
             except Exception as exc:
                 captured = {"error": f"Falha ao ler JSON do /execute: {type(exc).__name__}: {exc}"}
+                return
+            rows = body.get("data") if isinstance(body, dict) else None
+            if not isinstance(rows, list) or not rows:
+                skipped_empty_execute_count += 1
+                if isinstance(rows, list) or report_config.automation_status == "validated_empty":
+                    last_empty_execute = {
+                        "status": response.status,
+                        "url": url,
+                        "postData": request.post_data_json,
+                        "body": body,
+                    }
+                if report_config.automation_status == "validated_empty":
+                    captured = last_empty_execute
                 return
             captured = {
                 "status": response.status,
@@ -370,8 +633,7 @@ async def capture_execute(
         await page.goto(str(settings.aster_base_url), wait_until="domcontentloaded")
         session = await ensure_login(page, settings, timeout_seconds)
         if not session.get("hasAsterAuthTokens"):
-            await context.close()
-            await browser.close()
+            await close_playwright(context, browser)
             raise SystemExit("Timeout antes de detectar tokens do Aster.")
 
         await page.goto(target_url, wait_until="domcontentloaded")
@@ -384,6 +646,21 @@ async def capture_execute(
             "fill_result": None,
             "clicked": None,
         }
+        if auto_execute and param_overrides and not report_config.date_fields and not report_config.text_fields:
+            direct_captured = await direct_execute_report_query(page, query_id, param_overrides)
+            direct_captured["final_url"] = page.url
+            direct_captured["event_count"] = event_count
+            direct_captured["skipped_empty_execute_count"] = skipped_empty_execute_count
+            automation["fill_result"] = {
+                "date_from": date_from,
+                "date_to": date_to,
+                "filled": [f"direct_execute_params={sorted(param_overrides)}"],
+            }
+            automation["clicked"] = "direct_execute"
+            direct_captured["automation"] = automation
+            await close_playwright(context, browser)
+            return direct_captured
+
         if auto_execute:
             automation["fill_result"] = await fill_report_filters(
                 page,
@@ -396,7 +673,10 @@ async def capture_execute(
             await page.wait_for_timeout(500)
             automation["clicked"] = await click_execute_button(page)
             if not automation["clicked"]:
-                print("Nao encontrei automaticamente o botao de executar; aguardando intervencao manual.")
+                if not report_config.static_fields and not report_config.text_fields and not report_config.date_fields:
+                    print("Relatorio sem filtros/botao configurados; aguardando autoexecucao ou intervencao manual.")
+                else:
+                    print("Filtros preenchidos; aguardando autoexecucao ou intervencao manual se nenhum dado chegar.")
         else:
             print()
             print("Aster aberto. Preencha filtros e clique no botao de gerar/executar relatorio.")
@@ -404,21 +684,39 @@ async def capture_execute(
             print()
 
         deadline = asyncio.get_running_loop().time() + timeout_seconds
-        while asyncio.get_running_loop().time() < deadline and not captured:
-            await page.wait_for_timeout(1_000)
+        try:
+            while asyncio.get_running_loop().time() < deadline and not captured:
+                await page.wait_for_timeout(1_000)
+        except Exception as exc:
+            if report_config.automation_status == "validated_empty" and last_empty_execute:
+                captured = last_empty_execute
+            elif type(exc).__name__ == "TargetClosedError" and last_empty_execute:
+                captured = last_empty_execute
+            else:
+                raise
 
-        final_url = page.url
+        if not captured and report_config.automation_status == "validated_empty" and last_empty_execute:
+            captured = last_empty_execute
+
+        try:
+            final_url = page.url
+        except Exception:
+            final_url = target_url
         if not captured:
             screenshot = EVIDENCE_DIR / f"aster_live_ingest_timeout_{query_id}.png"
-            await page.screenshot(path=str(screenshot), full_page=True)
-            await context.close()
-            await browser.close()
+            try:
+                await page.screenshot(path=str(screenshot), full_page=True)
+                screenshot_value = str(screenshot.relative_to(ROOT))
+            except Exception:
+                screenshot_value = None
+            await close_playwright(context, browser)
             raise SystemExit(
                 json.dumps(
                     {
                         "error": "Nenhum /execute 2xx capturado dentro do timeout.",
                         "event_count": event_count,
-                        "timeout_screenshot": str(screenshot.relative_to(ROOT)),
+                        "skipped_empty_execute_count": skipped_empty_execute_count,
+                        "timeout_screenshot": screenshot_value,
                         "automation": automation,
                     },
                     ensure_ascii=False,
@@ -428,9 +726,9 @@ async def capture_execute(
 
         captured["final_url"] = final_url
         captured["event_count"] = event_count
+        captured["skipped_empty_execute_count"] = skipped_empty_execute_count
         captured["automation"] = automation
-        await context.close()
-        await browser.close()
+        await close_playwright(context, browser)
         return captured
 
 
@@ -459,7 +757,10 @@ async def main_async(
     body = execute.get("body") or {}
     rows = body.get("data") or []
     if not isinstance(rows, list) or not rows:
-        raise SystemExit("O /execute 2xx nao retornou linhas em body.data.")
+        if report_config.automation_status == "validated_empty":
+            rows = []
+        else:
+            raise SystemExit("O /execute 2xx nao retornou linhas em body.data.")
 
     sync_id = f"ASTER-{query_id}-{int(time.time())}"
     columns = body.get("columns") or []
@@ -500,6 +801,7 @@ async def main_async(
         "columns_count": len(columns),
         "filters": post_params,
         "automation": execute.get("automation"),
+        "skipped_empty_execute_count": execute.get("skipped_empty_execute_count", 0),
     }
     output = EVIDENCE_DIR / f"aster_live_ingest_summary_{query_id}.json"
     output.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

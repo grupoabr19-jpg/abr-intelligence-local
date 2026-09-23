@@ -5,7 +5,7 @@
 ABR Intelligence existe para responder, diariamente, perguntas de decisao sobre venda, margem, estoque, producao, compras e mercado. A ideia central e:
 
 ```text
-dados internos + mercado + inteligencia analitica -> diagnostico -> previsao -> acao
+inteligencia interna + inteligencia externa + camada analitica -> diagnostico -> previsao -> acao
 ```
 
 ## Perguntas Que o Sistema Deve Responder
@@ -28,10 +28,11 @@ dados internos + mercado + inteligencia analitica -> diagnostico -> previsao -> 
 2. **Comercial**: analise por empresa, mercado, regiao, vendedor, cliente e produto.
 3. **Estoque**: cobertura, giro, idade media, risco de ruptura, excesso e estoque morto.
 4. **Compras**: radar de oportunidade com estoque, demanda, preco fornecedor, mercado, dolar, frete e lead time.
-5. **Inteligencia Externa do Aco**: series de mercado nacional e internacional para contextualizar decisoes.
-6. **Central de Dados**: entrada, auditoria, processamento e promocao de dados.
-7. **Integracao Aster**: preferencialmente por API oficial; se indisponivel, por captura assistida autorizada.
-8. **Camada Analitica/IA**: recomendacoes auditaveis baseadas em score, historico e regras de negocio.
+5. **Inteligencia Interna**: dominio para Aster, planilhas operacionais, regioes comerciais, staging e bases internas normalizadas.
+6. **Inteligencia Externa do Aco**: dominio separado para series de mercado nacional e internacional, cotacoes, cambio e commodities.
+7. **Central de Dados**: entrada, auditoria, processamento e promocao de dados.
+8. **Integracao Aster**: preferencialmente por API oficial; se indisponivel, por captura assistida autorizada.
+9. **Camada Analitica/IA**: recomendacoes auditaveis baseadas em score, historico e regras de negocio.
 
 ## Estado do Recorte Atual
 
@@ -43,6 +44,7 @@ Este workspace contem principalmente a infraestrutura da Central de Dados:
 - historico de importacoes;
 - indicador de origem real/demonstracao;
 - extensao Chrome para captura assistida do Aster;
+- catalogo de dominios separando Inteligencia Interna e Inteligencia Externa;
 - diagnosticos e evidencias de investigacao.
 
 Ele nao contem todo o app final montado, rotas completas, `package.json`, estilos globais, componentes UI de base ou todas as Edge Functions historicas citadas nos documentos de referencia.

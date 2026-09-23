@@ -50,7 +50,31 @@ Retorna:
 GET /v1/aster/reports
 ```
 
-Lista o registro operacional de relatorios Aster, incluindo status de automacao.
+Lista o registro operacional de relatorios Aster, incluindo status de automacao e entregaveis cobertos.
+
+### Dominios de Inteligencia
+
+```http
+GET /v1/intelligence/domains
+```
+
+Lista a separacao entre **Inteligencia Interna** e **Inteligencia Externa**, com escopo atual, proximos passos e limites de cada dominio.
+
+### Dashboard de Inteligencia Interna
+
+```http
+GET /v1/dashboard/internal
+```
+
+Entrega uma visao consolidada para o frontend: KPIs de cobertura, relatorios Aster por status/area, requisitos internos, fontes de planilhas, ultimas cargas, staging por entidade e resumo comercial por regiao quando o banco estiver disponivel.
+
+### Requisitos de Dados Aster
+
+```http
+GET /v1/aster/requirements
+```
+
+Lista o escopo que o robo deve entregar: bases-alvo, campos esperados, granularidade, frequencia desejada, fontes conhecidas, fontes externas complementares e lacunas. Use este endpoint para conferir se vendas, cotacoes, pedidos, estoque, compras, cadastros, devolucoes, financeiro e logistica estao cobertos ou documentados como pendencia.
 
 ### Disparar Extracao Aster
 
@@ -78,6 +102,23 @@ Resposta:
   "status": "queued",
   "query_id": "D0A4D301",
   "status_url": "/v1/jobs/..."
+}
+```
+
+### Inspecionar Planilhas Locais
+
+```http
+POST /v1/spreadsheets/local/inspect
+content-type: application/json
+```
+
+Dispara no servidor a leitura das planilhas `.xlsx` em `Planilhas/` e atualiza as evidencias de abas/cabecalhos em `docs/evidence/local_spreadsheet_sources_summary.*`.
+
+Body:
+
+```json
+{
+  "input_dir": "Planilhas"
 }
 ```
 

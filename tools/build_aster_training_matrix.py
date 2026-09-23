@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from backend.aster_collector.report_registry import REPORTS
+from backend.aster_collector.data_requirements import EXTRACTION_RULES, REQUIREMENTS, requirements_by_source
+from backend.aster_collector.external_sources import EXTERNAL_SPREADSHEET_SOURCES
 
 
 EVIDENCE_DIR = ROOT / "docs" / "evidence"
@@ -42,6 +44,7 @@ def summarize_config(query_id: str) -> dict[str, Any]:
     probe = load_probe(query_id)
     contract = contract_by_id().get(query_id, {})
     params = ((contract.get("parameters") or {}).get("parameters") or [])
+    linked_requirements = requirements_by_source().get(query_id, ())
 
     return {
         "query_id": query_id,
@@ -50,6 +53,7 @@ def summarize_config(query_id: str) -> dict[str, Any]:
         "entity": config.entity,
         "status": config.automation_status,
         "notes": config.notes,
+        "deliverables": [item.key for item in linked_requirements],
         "params": [
             {
                 "name": param.get("name"),
@@ -86,8 +90,8 @@ def write_markdown(rows: list[dict[str, Any]]) -> None:
         "",
         "Esta matriz e gerada a partir dos contratos capturados, do registro operacional do robo e das evidencias de execucao/probe.",
         "",
-        "| Area | Query ID | Relatorio | Status | Ultima leitura | Observacao |",
-        "|---|---|---|---|---|---|",
+        "| Area | Query ID | Relatorio | Status | Entregaveis | Ultima leitura | Observacao |",
+        "|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         last = row.get("last_summary") or {}
@@ -95,18 +99,57 @@ def write_markdown(rows: list[dict[str, Any]]) -> None:
         if last.get("sync_id"):
             last_text = f"{last.get('rows_captured')} linhas; {last.get('sync_id')}"
         notes = (row.get("notes") or "").replace("|", "/")
+        deliverables = ", ".join(f"`{item}`" for item in row.get("deliverables") or ()) or "-"
         lines.append(
-            f"| {row['area']} | `{row['query_id']}` | {row['name']} | {row['status']} | {last_text} | {notes} |"
+            f"| {row['area']} | `{row['query_id']}` | {row['name']} | {row['status']} | {deliverables} | {last_text} | {notes} |"
         )
 
     lines.extend(
         [
             "",
+            "## Escopo Solicitado",
+            "",
+            "O robo deve entregar as bases abaixo em formato granular, preservando codigos, datas, quantidades e valores em colunas separadas.",
+            "",
+            "| Base | Prioridade | Atualizacao | Grao | Fontes conhecidas | Lacunas |",
+            "|---|---|---|---|---|---|",
+        ]
+    )
+    for requirement in REQUIREMENTS:
+        sources = ", ".join(f"`{source}`" for source in requirement.known_sources) or "-"
+        gaps = "<br>".join(requirement.gaps) if requirement.gaps else "-"
+        lines.append(
+            f"| {requirement.title} | {requirement.priority} | {requirement.refresh} | {requirement.grain} | {sources} | {gaps} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Fontes Externas Complementares",
+            "",
+            "| Fonte | Regra | Arquivo local | Cobertura provavel | Observacao |",
+            "|---|---|---|---|---|",
+        ]
+    )
+    for source in EXTERNAL_SPREADSHEET_SOURCES:
+        coverage = ", ".join(f"`{item}`" for item in source.likely_coverage) or "-"
+        notes = source.notes.replace("|", "/")
+        lines.append(
+            f"| `{source.key}` | {source.selection_rule} | `{source.local_path}` | {coverage} | {notes} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Regras de Extracao",
+            "",
+            *[f"- {rule}" for rule in EXTRACTION_RULES],
+            "",
             "## Regras Aprendidas",
             "",
             "- `D0A4D301`: `Tipo` vazio representa todos; `Filial` deve ser selecionada como `Todos` pelo dropdown.",
             "- `0F75E84D`: datas simples nas posicoes 0 e 1.",
-            "- `37D9E431`: fora da prioridade atual; contas a receber nao deve guiar o treino principal.",
+            "- `37D9E431`: financeiro e recebiveis sao prioridade secundaria; nao devem bloquear o treino comercial principal.",
             "- Vendas do `D0A4D301` sao classificadas por varejo/atacado e regiao com `backend/aster_collector/commercial_regions.py`.",
             "- Relatorios de estoque com `FAMILIA` exigem permissao e/ou queryField; `804C04C1` retornou `PageNotAuthorized` no probe atual.",
         ]
@@ -116,7 +159,39 @@ def write_markdown(rows: list[dict[str, Any]]) -> None:
 
 def main() -> None:
     rows = [summarize_config(query_id) for query_id in sorted(REPORTS)]
-    result = {"reports": rows}
+    result = {
+        "reports": rows,
+        "requirements": [
+            {
+                "key": item.key,
+                "title": item.title,
+                "priority": item.priority,
+                "refresh": item.refresh,
+                "grain": item.grain,
+                "objective": item.objective,
+                "fields": list(item.fields),
+                "known_sources": list(item.known_sources),
+                "gaps": list(item.gaps),
+            }
+            for item in REQUIREMENTS
+        ],
+        "external_spreadsheet_sources": [
+            {
+                "key": item.key,
+                "title": item.title,
+                "folder_url": item.folder_url,
+                "selection_rule": item.selection_rule,
+                "latest_file_id": item.latest_file_id,
+                "latest_file_name": item.latest_file_name,
+                "latest_modified_time": item.latest_modified_time,
+                "local_path": item.local_path,
+                "likely_coverage": list(item.likely_coverage),
+                "notes": item.notes,
+            }
+            for item in EXTERNAL_SPREADSHEET_SOURCES
+        ],
+        "extraction_rules": list(EXTRACTION_RULES),
+    }
     OUTPUT_JSON.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     write_markdown(rows)
     print(

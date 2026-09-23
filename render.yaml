@@ -35,3 +35,33 @@ services:
         sync: false
       - key: ASTER_LOGIN_PASSWORD
         sync: false
+
+  - type: web
+    name: abr-intelligence-frontend
+    runtime: static
+    region: oregon
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeployTrigger: commit
+    envVars:
+      - key: VITE_ABR_API_BASE_URL
+        sync: false
+
+  - type: cron
+    name: abr-local-spreadsheet-inspect
+    runtime: docker
+    region: oregon
+    plan: starter
+    schedule: "0 10 * * *"
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    startCommand: python tools/trigger_local_spreadsheet_inspect.py
+    autoDeployTrigger: commit
+    envVars:
+      - key: ABR_API_BASE_URL
+        sync: false
+      - key: ABR_API_KEY
+        sync: false
+      - key: ABR_LOCAL_SPREADSHEET_DIR
+        value: Planilhas
