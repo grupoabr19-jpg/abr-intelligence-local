@@ -94,10 +94,10 @@ Documentacao interativa:
 http://127.0.0.1:8000/docs
 ```
 
-Blueprint do Render:
+Deploy no Render como Web Service Docker:
 
 ```text
-render.yaml
+docs/render-web-service.md
 ```
 
 ## Seguranca

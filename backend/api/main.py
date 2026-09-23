@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend.api.config import get_api_settings
 from backend.api.data import (
@@ -26,6 +30,9 @@ from backend.api.models import (
 from backend.api.security import require_api_key
 from backend.aster_collector.local_spreadsheets import inspect_local_spreadsheet_sources
 
+
+ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 settings = get_api_settings()
 app = FastAPI(
@@ -139,3 +146,18 @@ async def get_job(job_id: str) -> JobRecord:
 )
 async def get_sales_regions_summary() -> list[dict]:
     return sales_regions_summary()
+
+
+if (FRONTEND_DIST / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="frontend-assets")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_frontend(full_path: str) -> FileResponse:
+    if full_path.startswith(("v1/", "health", "docs", "redoc", "openapi.json")):
+        raise HTTPException(status_code=404, detail="Not found.")
+
+    index_path = FRONTEND_DIST / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Frontend build not found.")
+    return FileResponse(index_path)

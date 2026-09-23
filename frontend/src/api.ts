@@ -48,7 +48,11 @@ export type DashboardSummary = {
   warnings: string[]
 }
 
-const API_BASE_URL = import.meta.env.VITE_ABR_API_BASE_URL || 'http://127.0.0.1:8000'
+const DEFAULT_API_BASE_URL =
+  window.location.hostname === '127.0.0.1' && window.location.port === '5173'
+    ? 'http://127.0.0.1:8000'
+    : window.location.origin
+const API_BASE_URL = import.meta.env.VITE_ABR_API_BASE_URL || DEFAULT_API_BASE_URL
 const API_KEY = import.meta.env.VITE_ABR_API_KEY || ''
 
 export async function fetchInternalDashboard(apiKeyOverride = ''): Promise<DashboardSummary> {
