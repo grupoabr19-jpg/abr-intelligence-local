@@ -53,17 +53,36 @@ const DEFAULT_API_BASE_URL =
     ? 'http://127.0.0.1:8000'
     : window.location.origin
 const API_BASE_URL = import.meta.env.VITE_ABR_API_BASE_URL || DEFAULT_API_BASE_URL
-const API_KEY = import.meta.env.VITE_ABR_API_KEY || ''
 
-export async function fetchInternalDashboard(apiKeyOverride = ''): Promise<DashboardSummary> {
-  const apiKey = apiKeyOverride || API_KEY
+export class DashboardAuthError extends Error {
+  constructor() {
+    super('AUTH_REQUIRED')
+  }
+}
+
+export async function fetchInternalDashboard(): Promise<DashboardSummary> {
   const response = await fetch(`${API_BASE_URL}/v1/dashboard/internal`, {
-    headers: apiKey ? { 'x-api-key': apiKey } : undefined,
+    credentials: 'include',
   })
 
+  if (response.status === 401) {
+    throw new DashboardAuthError()
+  }
   if (!response.ok) {
     throw new Error(`API respondeu ${response.status}`)
   }
 
   return response.json()
+}
+
+export async function loginDashboard(password: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/v1/auth/dashboard-login`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password }),
+  })
+  if (!response.ok) {
+    throw new Error('Senha invalida')
+  }
 }

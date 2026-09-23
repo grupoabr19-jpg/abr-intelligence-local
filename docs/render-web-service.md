@@ -23,6 +23,8 @@ Configure no painel do Render, sem commitar valores reais:
 ```env
 HEADLESS=true
 ABR_API_KEY=
+ABR_DASHBOARD_PASSWORD=
+ABR_SESSION_SECRET=
 DATABASE_URL_POOLER=
 DATABASE_URL=
 SUPABASE_URL=
@@ -36,7 +38,7 @@ ASTER_LOGIN_EMAIL=
 ASTER_LOGIN_PASSWORD=
 ```
 
-Nao precisa configurar `VITE_ABR_API_BASE_URL` nesse modo: o frontend usa a mesma origem do Web Service.
+Nao precisa configurar `VITE_ABR_API_BASE_URL` nesse modo: o frontend usa a mesma origem do Web Service. Tambem nao configure chaves `VITE_*` para autenticar o dashboard; o login usa cookie HttpOnly emitido pelo backend.
 
 ## Cron
 

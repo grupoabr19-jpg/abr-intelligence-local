@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import {
   AlertTriangle,
   AreaChart as AreaIcon,
@@ -10,8 +10,9 @@ import {
   Database,
   Filter,
   Gauge,
-  KeyRound,
   LineChart,
+  LockKeyhole,
+  LogIn,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -30,7 +31,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { DashboardSummary, fetchInternalDashboard } from './api'
+import { DashboardAuthError, DashboardSummary, fetchInternalDashboard, loginDashboard } from './api'
+import abrLogoWhite from './abr-logo-white.svg'
 
 const STATUS_LABELS: Record<string, string> = {
   validated: 'Validado',
@@ -66,31 +68,46 @@ function App() {
   const [statusFilter, setStatusFilter] = useState('todos')
   const [areaFilter, setAreaFilter] = useState('todas')
   const [search, setSearch] = useState('')
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('abr_api_key') ?? '')
+  const [needsLogin, setNeedsLogin] = useState(false)
+  const [password, setPassword] = useState('')
+  const [loginError, setLoginError] = useState<string | null>(null)
+  const [authenticating, setAuthenticating] = useState(false)
 
   const load = async () => {
     setLoading(true)
     setError(null)
     try {
-      setSummary(await fetchInternalDashboard(apiKey))
+      setSummary(await fetchInternalDashboard())
+      setNeedsLogin(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao carregar dados')
+      if (err instanceof DashboardAuthError) {
+        setNeedsLogin(true)
+      } else {
+        setError(err instanceof Error ? err.message : 'Falha ao carregar dados')
+      }
     } finally {
       setLoading(false)
+    }
+  }
+
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setAuthenticating(true)
+    setLoginError(null)
+    try {
+      await loginDashboard(password)
+      setPassword('')
+      await load()
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : 'Falha ao autenticar')
+    } finally {
+      setAuthenticating(false)
     }
   }
 
   useEffect(() => {
     void load()
   }, [])
-
-  useEffect(() => {
-    if (apiKey) {
-      localStorage.setItem('abr_api_key', apiKey)
-    } else {
-      localStorage.removeItem('abr_api_key')
-    }
-  }, [apiKey])
 
   const reports = summary?.reports ?? []
   const requirements = summary?.requirements ?? []
@@ -128,11 +145,19 @@ function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
-          <span className="eyebrow">ABR Intelligence</span>
-          <h1>Inteligencia Interna</h1>
+        <div className="brand-block">
+          <div className="brand-mark">
+            <img src={abrLogoWhite} alt="Grupo ABR" />
+          </div>
+          <div>
+            <span className="eyebrow">ABR Intelligence</span>
+            <h1>Inteligencia de Mercado</h1>
+            <p>Duas frentes conectadas: inteligencia interna da operacao e inteligencia externa do mercado.</p>
+          </div>
         </div>
         <div className="topbar-actions">
+          <span className="front-pill active">Interna</span>
+          <span className="front-pill">Externa</span>
           <span className="status-pill">
             <ShieldCheck size={15} />
             Backend trata os dados
@@ -168,21 +193,38 @@ function App() {
             ))}
           </select>
         </label>
-        <label className="control api-key-control">
-          <KeyRound size={16} />
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder="Chave API"
-          />
-        </label>
       </section>
 
       {error && (
         <section className="notice error">
           <AlertTriangle size={18} />
-          <span>{error}. Confira se o backend esta rodando e informe a chave API no filtro acima.</span>
+          <span>{error}. Confira se o backend esta rodando e se o deploy terminou.</span>
+        </section>
+      )}
+
+      {needsLogin && (
+        <section className="login-panel">
+          <div className="login-panel-copy">
+            <LockKeyhole size={24} />
+            <div>
+              <h2>Acesso ao dashboard</h2>
+              <p>Informe a senha de leitura da Inteligencia de Mercado.</p>
+            </div>
+          </div>
+          <form onSubmit={submitLogin} className="login-form">
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Senha do dashboard"
+              autoComplete="current-password"
+            />
+            <button type="submit" disabled={authenticating || !password}>
+              <LogIn size={16} />
+              {authenticating ? 'Entrando' : 'Entrar'}
+            </button>
+          </form>
+          {loginError && <span className="login-error">{loginError}</span>}
         </section>
       )}
 
@@ -193,23 +235,23 @@ function App() {
         </section>
       ))}
 
-      <nav className="tabs" aria-label="Abas de analise">
+      {!needsLogin && <nav className="tabs" aria-label="Abas de analise">
         {tabs.map((item) => (
           <button key={item.key} className={tab === item.key ? 'active' : ''} onClick={() => setTab(item.key)}>
             {item.icon}
             {item.label}
           </button>
         ))}
-      </nav>
+      </nav>}
 
-      <section className="kpi-grid">
-        <Kpi title="Relatorios Aster" value={summary?.kpis.reports_total} detail={`${summary?.kpis.reports_validated ?? 0} validados`} icon={<BarChart3 />} />
+      {!needsLogin && <section className="kpi-grid">
+        <Kpi title="Frente interna" value={summary?.kpis.reports_total} detail={`${summary?.kpis.reports_validated ?? 0} relatorios validados`} icon={<BarChart3 />} />
         <Kpi title="Requisitos internos" value={summary?.kpis.requirements_total} detail={`${summary?.kpis.requirements_covered ?? 0} com fonte`} icon={<CheckCircle2 />} />
         <Kpi title="Planilhas fonte" value={summary?.kpis.spreadsheet_sources} detail="Complemento Aster" icon={<Database />} />
-        <Kpi title="Cargas recentes" value={summary?.kpis.history_events} detail="Historico no backend" icon={<LineChart />} />
-      </section>
+        <Kpi title="Frente externa" value={0} detail="Proxima etapa: mercado do aco" icon={<LineChart />} />
+      </section>}
 
-      {tab === 'overview' && (
+      {!needsLogin && tab === 'overview' && (
         <section className="dashboard-grid">
           <Panel title="Relatorios por status" icon={<BarChart3 size={17} />}>
             <ChartFrame>
@@ -260,7 +302,7 @@ function App() {
         </section>
       )}
 
-      {tab === 'sales' && (
+      {!needsLogin && tab === 'sales' && (
         <section className="dashboard-grid">
           <Panel title="Vendas por canal e regiao" icon={<CircleDollarSign size={17} />} wide>
             <DataTable
@@ -280,7 +322,7 @@ function App() {
         </section>
       )}
 
-      {tab === 'stock' && (
+      {!needsLogin && tab === 'stock' && (
         <section className="dashboard-grid">
           <Panel title="Relatorios de estoque" icon={<Boxes size={17} />} wide>
             <ReportTable reports={filteredReports.filter((item) => item.area.includes('estoque'))} />
@@ -295,7 +337,7 @@ function App() {
         </section>
       )}
 
-      {tab === 'operations' && (
+      {!needsLogin && tab === 'operations' && (
         <section className="dashboard-grid">
           <Panel title="Historico recente" icon={<LineChart size={17} />} wide>
             <DataTable
@@ -316,7 +358,7 @@ function App() {
         </section>
       )}
 
-      {tab === 'sources' && (
+      {!needsLogin && tab === 'sources' && (
         <section className="dashboard-grid">
           <Panel title="Relatorios filtrados" icon={<Filter size={17} />} wide>
             <ReportTable reports={filteredReports} />
