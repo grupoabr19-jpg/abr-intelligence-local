@@ -39,7 +39,6 @@ services:
   - type: web
     name: abr-intelligence-frontend
     runtime: static
-    region: oregon
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
@@ -56,7 +55,7 @@ services:
     schedule: "0 10 * * *"
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    startCommand: python tools/trigger_local_spreadsheet_inspect.py
+    dockerCommand: python tools/trigger_local_spreadsheet_inspect.py
     autoDeployTrigger: commit
     envVars:
       - key: ABR_API_BASE_URL
