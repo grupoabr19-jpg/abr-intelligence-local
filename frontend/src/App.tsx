@@ -11,7 +11,7 @@ import {
   Database,
   Filter,
   Gauge,
-  LineChart,
+  LineChart as LineChartIcon,
   LockKeyhole,
   LogIn,
   RefreshCw,
@@ -25,6 +25,8 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Line,
+  LineChart as ReLineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -47,7 +49,21 @@ const COLORS = ['#253575', '#F18800', '#12805C', '#B42318', '#6B7280', '#3B82F6'
 const DEFAULT_DATE_FROM = '2026-01-01'
 const DEFAULT_DATE_TO = new Date().toISOString().slice(0, 10)
 
-type Tab = 'overview' | 'sales' | 'stock' | 'operations' | 'sources'
+type IntelligenceTab =
+  | 'executive'
+  | 'commercial'
+  | 'clients'
+  | 'segments'
+  | 'products'
+  | 'prices'
+  | 'margin'
+  | 'quotes'
+  | 'competition'
+  | 'stock'
+  | 'purchases'
+  | 'forecast'
+  | 'logistics'
+  | 'map'
 
 function formatNumber(value: number | string | undefined) {
   const number = Number(value || 0)
@@ -69,11 +85,45 @@ function monthLabel(value: string) {
   return `${month}/${year.slice(2)}`
 }
 
+const INTELLIGENCE_TABS: Array<{ key: IntelligenceTab; label: string; question: string; icon: ReactNode }> = [
+  { key: 'executive', label: '01 Executivo', question: 'Como esta o negocio?', icon: <Gauge size={16} /> },
+  { key: 'commercial', label: '02 Comercial', question: 'Quem esta vendendo?', icon: <CircleDollarSign size={16} /> },
+  { key: 'clients', label: '03 Clientes', question: 'Quem compra e quem esta parando?', icon: <CheckCircle2 size={16} /> },
+  { key: 'segments', label: '04 Segmentos', question: 'Qual setor esta crescendo?', icon: <BarChart3 size={16} /> },
+  { key: 'products', label: '05 Produtos', question: 'O que esta vendendo?', icon: <Boxes size={16} /> },
+  { key: 'prices', label: '06 Precos', question: 'Quanto estamos cobrando?', icon: <LineChartIcon size={16} /> },
+  { key: 'margin', label: '07 Margem', question: 'Onde ganhamos dinheiro?', icon: <AreaIcon size={16} /> },
+  { key: 'quotes', label: '08 Cotacoes', question: 'Onde esta a demanda futura?', icon: <TableProperties size={16} /> },
+  { key: 'competition', label: '09 Concorrencia', question: 'Onde estamos perdendo?', icon: <AlertTriangle size={16} /> },
+  { key: 'stock', label: '10 Estoque', question: 'O que temos e quanto gira?', icon: <Boxes size={16} /> },
+  { key: 'purchases', label: '11 Compras', question: 'Estamos comprando bem?', icon: <Database size={16} /> },
+  { key: 'forecast', label: '12 Forecast', question: 'O que devemos esperar?', icon: <LineChartIcon size={16} /> },
+  { key: 'logistics', label: '13 Logistica', question: 'Onde o frete afeta resultado?', icon: <SlidersHorizontal size={16} /> },
+  { key: 'map', label: '14 Mapa Comercial', question: 'Onde estao mercado e oportunidades?', icon: <AreaIcon size={16} /> },
+]
+
+const MODULES: Record<IntelligenceTab, string[]> = {
+  executive: ['Toneladas vendidas mes a mes', 'Receita e margem mes a mes', 'Preco medio R$/kg', 'Carteira e conversao'],
+  commercial: ['Volume x margem por vendedor', 'Receita por vendedor', 'Meta x realizado', 'Clientes ativos e reativados'],
+  clients: ['Curva ABC', 'Principais clientes em queda', 'RFM', 'Dias desde ultima compra'],
+  segments: ['Segmento x toneladas', 'Evolucao mensal por segmento', 'Preco/kg por segmento', 'Margem por segmento'],
+  products: ['Familia x toneladas', 'Top SKU', 'SKU em queda', 'Familia x segmento'],
+  prices: ['Preco medio R$/kg', 'Minimo x medio x maximo', 'Preco x toneladas', 'Outliers comerciais'],
+  margin: ['MCII por mes', 'MCII % por mes', 'MCII/kg por cliente', 'Volume x margem por cliente'],
+  quotes: ['Kg cotados x vendidos', 'Conversao mensal', 'Conversao por vendedor', 'Funil comercial'],
+  competition: ['Motivo das perdas', 'Perdas por concorrente', 'Diferenca de preco', 'Elasticidade real'],
+  stock: ['Estoque em toneladas', 'Estoque x venda', 'Aging', 'Cobertura x margem'],
+  purchases: ['Compras mensais', 'R$/kg de compra', 'Compra por fornecedor', 'Preco fornecedor x volume'],
+  forecast: ['Real x previsto', 'Forecast por familia', 'Forecast por segmento', 'Necessidade estimada de compra'],
+  logistics: ['Frete R$/t', 'Frete por cidade', 'Frete % da venda', 'Custo logistico x margem'],
+  map: ['Bolhas por cidade', 'Faturamento por municipio', 'Clientes por cidade', 'Potencial externo futuro'],
+}
+
 function App() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('overview')
+  const [intelligenceTab, setIntelligenceTab] = useState<IntelligenceTab>('executive')
   const [statusFilter, setStatusFilter] = useState('todos')
   const [areaFilter, setAreaFilter] = useState('todas')
   const [dateFrom, setDateFrom] = useState(DEFAULT_DATE_FROM)
@@ -129,16 +179,6 @@ function App() {
   const requirements = summary?.requirements ?? []
   const areas = useMemo(() => Array.from(new Set(reports.map((item) => item.area))).sort(), [reports])
 
-  const filteredReports = reports.filter((report) => {
-    const statusOk = statusFilter === 'todos' || report.automation_status === statusFilter
-    const areaOk = areaFilter === 'todas' || report.area === areaFilter
-    const needle = search.trim().toLowerCase()
-    const searchOk =
-      !needle ||
-      `${report.query_id} ${report.name} ${report.area} ${report.entity}`.toLowerCase().includes(needle)
-    return statusOk && areaOk && searchOk
-  })
-
   const coverageData = [
     { name: 'Cobertos', value: summary?.kpis.requirements_covered ?? 0 },
     {
@@ -150,13 +190,13 @@ function App() {
     },
   ]
 
-  const tabs: Array<{ key: Tab; label: string; icon: ReactNode }> = [
-    { key: 'overview', label: 'Visao geral', icon: <Gauge size={16} /> },
-    { key: 'sales', label: 'Vendas', icon: <CircleDollarSign size={16} /> },
-    { key: 'stock', label: 'Estoque', icon: <Boxes size={16} /> },
-    { key: 'operations', label: 'Operacao', icon: <TableProperties size={16} /> },
-    { key: 'sources', label: 'Fontes', icon: <Database size={16} /> },
-  ]
+  const activeModule = INTELLIGENCE_TABS.find((item) => item.key === intelligenceTab) ?? INTELLIGENCE_TABS[0]
+  const monthlySales = (summary?.sales_summary?.monthly ?? []).map((item) => ({
+    ...item,
+    mes_label: monthLabel(item.mes),
+    valor_numero: Number(item.valor_total),
+    peso_numero: Number(item.peso_total),
+  }))
 
   return (
     <main className="app-shell">
@@ -180,7 +220,7 @@ function App() {
             <div className="header-status">
               <span className="status-pill">
                 <ShieldCheck size={15} />
-                Backend trata os dados
+                Cada tela responde uma decisao
               </span>
               <button className="icon-button" onClick={load} disabled={loading} title="Atualizar">
                 <RefreshCw size={17} className={loading ? 'spin' : ''} />
@@ -271,9 +311,9 @@ function App() {
         </section>
       ))}
 
-      {!needsLogin && <nav className="tabs" aria-label="Abas de analise">
-        {tabs.map((item) => (
-          <button key={item.key} className={tab === item.key ? 'active' : ''} onClick={() => setTab(item.key)}>
+      {!needsLogin && <nav className="tabs intelligence-tabs" aria-label="Campos de atuacao">
+        {INTELLIGENCE_TABS.map((item) => (
+          <button key={item.key} className={intelligenceTab === item.key ? 'active' : ''} onClick={() => setIntelligenceTab(item.key)}>
             {item.icon}
             {item.label}
           </button>
@@ -283,67 +323,76 @@ function App() {
       {!needsLogin && <section className="kpi-grid">
         <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} vendas por item`} icon={<CircleDollarSign />} />
         <Kpi title="Receita liquida" displayValue={money(summary?.sales_summary?.receita_liquida)} detail="Periodo filtrado" icon={<BarChart3 />} />
-        <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail={`${summary?.kpis.reports_validated ?? 0} relatorios validados`} icon={<LineChart />} />
+        <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail={`${summary?.kpis.reports_validated ?? 0} relatorios validados`} icon={<LineChartIcon />} />
         <Kpi title="Peso vendido" displayValue={`${formatNumber(summary?.sales_summary?.peso_total)} kg`} detail={`${formatNumber(summary?.sales_summary?.clientes)} clientes distintos`} icon={<Boxes />} />
       </section>}
 
-      {!needsLogin && tab === 'overview' && (
+      {!needsLogin && (
+        <section className="decision-strip">
+          <div>
+            <span>{activeModule.label}</span>
+            <strong>{activeModule.question}</strong>
+          </div>
+          <small>Prioridade: poucos graficos, cada um ligado a uma acao de gestao.</small>
+        </section>
+      )}
+
+      {!needsLogin && intelligenceTab === 'executive' && (
         <section className="dashboard-grid">
-          <Panel title="Relatorios por status" icon={<BarChart3 size={17} />}>
+          <Panel title="Toneladas vendidas mes a mes" icon={<LineChartIcon size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={summary?.reports_by_status ?? []}>
+                <ReLineChart data={monthlySales}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="status" tickFormatter={(value) => STATUS_LABELS[value] ?? value} />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip labelFormatter={(value) => STATUS_LABELS[String(value)] ?? value} />
-                  <Bar dataKey="total" radius={[5, 5, 0, 0]}>
-                    {(summary?.reports_by_status ?? []).map((_, index) => (
-                      <Cell key={index} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Bar>
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => formatNumber(value)} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Peso']} />
+                  <Line type="monotone" dataKey="peso_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
+          <Panel title="Faturamento mes a mes" icon={<CircleDollarSign size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={monthlySales}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
+                  <Line type="monotone" dataKey="valor_numero" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
+          <Panel title="Receita e margem por mes" icon={<BarChart3 size={17} />} wide>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={monthlySales}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
+                  <Bar dataKey="valor_numero" fill="#253575" radius={[5, 5, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
 
-          <Panel title="Cobertura dos requisitos" icon={<AreaIcon size={17} />}>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={coverageData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={4}>
-                    {coverageData.map((_, index) => (
-                      <Cell key={index} fill={index === 0 ? '#12805C' : '#F18800'} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
-
-          <Panel title="Areas de relatorio" icon={<TableProperties size={17} />} wide>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <BarChart data={summary?.reports_by_area ?? []} layout="vertical" margin={{ left: 70 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" allowDecimals={false} />
-                  <YAxis type="category" dataKey="area" width={130} />
-                  <Tooltip />
-                  <Bar dataKey="total" fill="#253575" radius={[0, 5, 5, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartFrame>
+          <Panel title="Proximas decisoes executivas" icon={<Gauge size={17} />} wide>
+            <DecisionList items={MODULES.executive} />
           </Panel>
         </section>
       )}
 
-      {!needsLogin && tab === 'sales' && (
+      {!needsLogin && intelligenceTab === 'commercial' && (
         <>
           <section className="kpi-grid sales-kpis">
             <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} linhas`} icon={<CircleDollarSign />} />
             <Kpi title="Receita liquida" displayValue={money(summary?.sales_summary?.receita_liquida)} detail="Base de venda por item" icon={<BarChart3 />} />
-            <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail="Margem antes dos rateios" icon={<LineChart />} />
+            <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail="Margem antes dos rateios" icon={<LineChartIcon />} />
             <Kpi title="Peso total" displayValue={`${formatNumber(summary?.sales_summary?.peso_total)} kg`} detail={`${money(summary?.sales_summary?.preco_medio_kg)} por kg`} icon={<Boxes />} />
             <Kpi title="Clientes" value={summary?.sales_summary?.clientes} detail="Clientes distintos no periodo" icon={<CheckCircle2 />} />
             <Kpi title="Itens" value={summary?.sales_summary?.itens} detail="Itens distintos vendidos" icon={<TableProperties />} />
@@ -353,12 +402,7 @@ function App() {
             <Panel title="Vendas por mes" icon={<BarChart3 size={17} />} wide>
               <ChartFrame>
                 <ResponsiveContainer>
-                  <BarChart data={(summary?.sales_summary?.monthly ?? []).map((item) => ({
-                    ...item,
-                    mes_label: monthLabel(item.mes),
-                    valor_numero: Number(item.valor_total),
-                    peso_numero: Number(item.peso_total),
-                  }))}>
+                  <BarChart data={monthlySales}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="mes_label" />
                     <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
@@ -401,60 +445,41 @@ function App() {
         </>
       )}
 
-      {!needsLogin && tab === 'stock' && (
+      {!needsLogin && intelligenceTab !== 'executive' && intelligenceTab !== 'commercial' && (
         <section className="dashboard-grid">
-          <Panel title="Relatorios de estoque" icon={<Boxes size={17} />} wide>
-            <ReportTable reports={filteredReports.filter((item) => item.area.includes('estoque'))} />
+          <Panel title="Mapa da tela" icon={activeModule.icon} wide>
+            <DecisionList items={MODULES[intelligenceTab]} />
           </Panel>
-          <Panel title="Staging por entidade" icon={<Database size={17} />}>
+          <Panel title="Dados disponiveis agora" icon={<Database size={17} />}>
             <DataTable
-              columns={['Entidade', 'Linhas']}
-              rows={(summary?.staging_by_entity ?? []).map((item) => [item.entidade, formatNumber(item.linhas)])}
-              empty="Sem staging consultavel agora."
+              columns={['Fonte', 'Linhas']}
+              rows={(summary?.staging_by_entity ?? []).slice(0, 8).map((item) => [item.entidade, formatNumber(item.linhas)])}
+              empty="Sem fontes carregadas para este modulo."
             />
+          </Panel>
+          <Panel title="Status de cobertura" icon={<AreaIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={coverageData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={4}>
+                    {coverageData.map((_, index) => (
+                      <Cell key={index} fill={index === 0 ? '#12805C' : '#F18800'} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Requisitos relacionados" icon={<TableProperties size={17} />} wide>
+            <SourceList items={requirements.filter((item) => {
+              const text = `${item.title} ${item.objective} ${item.fields.join(' ')}`.toLowerCase()
+              return MODULES[intelligenceTab].some((module) => text.includes(module.split(' ')[0].toLowerCase()))
+            })} />
           </Panel>
         </section>
       )}
 
-      {!needsLogin && tab === 'operations' && (
-        <section className="dashboard-grid">
-          <Panel title="Historico recente" icon={<LineChart size={17} />} wide>
-            <DataTable
-              columns={['Entidade', 'Sync', 'Status', 'Lidos', 'Inseridos']}
-              rows={(summary?.recent_history ?? []).map((item) => [
-                item.entidade,
-                item.sync_id,
-                item.status,
-                formatNumber(item.registros_lidos),
-                formatNumber(item.registros_inseridos),
-              ])}
-              empty="Nenhuma carga recente localizada."
-            />
-          </Panel>
-          <Panel title="Requisitos com lacuna" icon={<AlertTriangle size={17} />}>
-            <SourceList items={requirements.filter((item) => item.gaps.length > 0)} />
-          </Panel>
-        </section>
-      )}
-
-      {!needsLogin && tab === 'sources' && (
-        <section className="dashboard-grid">
-          <Panel title="Relatorios filtrados" icon={<Filter size={17} />} wide>
-            <ReportTable reports={filteredReports} />
-          </Panel>
-          <Panel title="Planilhas internas" icon={<Database size={17} />}>
-            <div className="source-stack">
-              {(summary?.external_spreadsheet_sources ?? []).map((source) => (
-                <article className="source-item" key={source.key}>
-                  <strong>{source.title}</strong>
-                  <span>{source.local_path}</span>
-                  <small>{source.likely_coverage.join(', ')}</small>
-                </article>
-              ))}
-            </div>
-          </Panel>
-        </section>
-      )}
     </main>
   )
 }
@@ -486,6 +511,19 @@ function Panel({ title, icon, wide, children }: { title: string; icon: ReactNode
 
 function ChartFrame({ children }: { children: ReactNode }) {
   return <div className="chart-frame">{children}</div>
+}
+
+function DecisionList({ items }: { items: string[] }) {
+  return (
+    <div className="decision-list">
+      {items.map((item, index) => (
+        <article className="decision-item" key={item}>
+          <span>{String(index + 1).padStart(2, '0')}</span>
+          <strong>{item}</strong>
+        </article>
+      ))}
+    </div>
+  )
 }
 
 function DataTable({ columns, rows, empty }: { columns: string[]; rows: string[][]; empty: string }) {
