@@ -24,11 +24,8 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   Line,
   LineChart as ReLineChart,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -37,15 +34,6 @@ import {
 import { DashboardAuthError, DashboardSummary, fetchInternalDashboard, loginDashboard } from './api'
 import abrLogoWhite from './abr-logo-white.svg'
 
-const STATUS_LABELS: Record<string, string> = {
-  validated: 'Validado',
-  validated_empty: 'Sem registro',
-  deprioritized: 'Fora da prioridade',
-  candidate: 'Candidato',
-  training: 'Em treino',
-}
-
-const COLORS = ['#253575', '#F18800', '#12805C', '#B42318', '#6B7280', '#3B82F6']
 const DEFAULT_DATE_FROM = '2026-01-01'
 const DEFAULT_DATE_TO = new Date().toISOString().slice(0, 10)
 
@@ -183,19 +171,7 @@ function App() {
   }, [])
 
   const reports = summary?.reports ?? []
-  const requirements = summary?.requirements ?? []
   const areas = useMemo(() => Array.from(new Set(reports.map((item) => item.area))).sort(), [reports])
-
-  const coverageData = [
-    { name: 'Cobertos', value: summary?.kpis.requirements_covered ?? 0 },
-    {
-      name: 'Com lacuna',
-      value: Math.max(
-        0,
-        (summary?.kpis.requirements_total ?? 0) - (summary?.kpis.requirements_covered ?? 0),
-      ),
-    },
-  ]
 
   const monthlySales = (summary?.sales_summary?.monthly ?? []).map((item) => ({
     ...item,
@@ -532,7 +508,6 @@ function App() {
           modules={MODULES[intelligenceTab]}
           monthlySales={monthlySales}
           familyRows={familyRows}
-          requirements={requirements}
         />
       )}
 
@@ -574,13 +549,11 @@ function AnalysisTab({
   modules,
   monthlySales,
   familyRows,
-  requirements,
 }: {
   tab: IntelligenceTab
   modules: string[]
   monthlySales: Array<{ mes_label: string; valor_numero: number; peso_numero: number }>
   familyRows: ChartRow[]
-  requirements: DashboardSummary['requirements']
 }) {
   const valueLabel = tab === 'prices' || tab === 'margin' ? 'R$/kg' : 'Valor total'
   const priceRows = familyRows.map((item) => ({
@@ -678,40 +651,6 @@ function DataTable({ columns, rows, empty }: { columns: string[]; rows: string[]
           )}
         </tbody>
       </table>
-    </div>
-  )
-}
-
-function ReportTable({ reports }: { reports: DashboardSummary['reports'] }) {
-  return (
-    <DataTable
-      columns={['ID', 'Relatorio', 'Area', 'Status', 'Entregaveis']}
-      rows={reports.map((report) => [
-        report.query_id,
-        report.name,
-        report.area,
-        STATUS_LABELS[report.automation_status] ?? report.automation_status,
-        report.deliverables.length ? report.deliverables.join(', ') : '-',
-      ])}
-      empty="Nenhum relatorio no filtro atual."
-    />
-  )
-}
-
-function SourceList({ items }: { items: DashboardSummary['requirements'] }) {
-  return (
-    <div className="source-stack">
-      {items.length === 0 ? (
-        <p className="empty-text">Sem itens para este recorte.</p>
-      ) : (
-        items.map((item) => (
-          <article className="source-item" key={item.key}>
-            <strong>{item.title}</strong>
-            <span>{item.known_sources.length ? item.known_sources.join(', ') : 'Sem fonte confirmada'}</span>
-            <small>{item.gaps[0] ?? item.objective}</small>
-          </article>
-        ))
-      )}
     </div>
   )
 }
