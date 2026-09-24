@@ -126,6 +126,7 @@ type ChartRow = {
   peso_numero: number
   receita_numero?: number
   lucro_numero?: number
+  mcii_numero?: number
   linhas?: number
 }
 
@@ -222,6 +223,7 @@ function App() {
       peso_numero: Number(item.peso_total),
       receita_numero: Number(item.receita_liquida),
       lucro_numero: Number(item.lucro_bruto),
+      mcii_numero: Number(item.margem_contribuicao ?? 0),
       linhas: item.linhas,
     }))
     .sort((a, b) => b.peso_numero - a.peso_numero)
@@ -774,15 +776,29 @@ function App() {
             </ChartFrame>
           </Panel>
 
-          <Panel title="Margem por segmento" icon={<AreaIcon size={17} />}>
+          <Panel title="MC por segmento" icon={<AreaIcon size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={[...segmentRows].sort((a, b) => (b.lucro_numero ?? 0) - (a.lucro_numero ?? 0)).slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
+                <BarChart data={[...segmentRows].sort((a, b) => (b.mcii_numero ?? 0) - (a.mcii_numero ?? 0)).slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                   <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'Margem']} />
-                  <Bar dataKey="lucro_numero" fill="#6B7280" radius={[0, 5, 5, 0]} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'MC']} />
+                  <Bar dataKey="mcii_numero" fill="#6B7280" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
+          <Panel title="MC/kg por segmento" icon={<CircleDollarSign size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={segmentRows.map((item) => ({ ...item, mc_kg_numero: item.peso_numero ? (item.mcii_numero ?? 0) / item.peso_numero : 0 })).sort((a, b) => b.mc_kg_numero - a.mc_kg_numero).slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'MC/kg']} />
+                  <Bar dataKey="mc_kg_numero" fill="#253575" radius={[0, 5, 5, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartFrame>
