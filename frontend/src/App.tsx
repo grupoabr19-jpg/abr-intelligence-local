@@ -659,6 +659,20 @@ function App() {
             </ChartFrame>
           </Panel>
 
+          <Panel title="Faturamento por segmento" icon={<CircleDollarSign size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={segmentRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'Faturamento']} />
+                  <Bar dataKey="valor_numero" fill="#F18800" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
           <Panel title="Evolucao mensal por segmento" icon={<LineChartIcon size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
