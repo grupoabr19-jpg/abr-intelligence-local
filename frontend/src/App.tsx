@@ -79,6 +79,13 @@ function monthLabel(value: string) {
   return `${month}/${year.slice(2)}`
 }
 
+function addMonths(value: string, amount: number) {
+  const [year, month] = value.split('-').map(Number)
+  if (!year || !month) return value
+  const date = new Date(year, month - 1 + amount, 1)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
 function abbreviateLabel(value: string, maxLength = 18) {
   const normalized = value.replace(/\s+/g, ' ').trim()
   if (normalized.length <= maxLength) return normalized
@@ -335,6 +342,70 @@ function App() {
     valor_numero: Number(item.valor_total),
     peso_numero: Number(item.peso_total),
   }))
+  const totalSalesWeight = Number(summary?.sales_summary?.peso_total ?? 0)
+  const sortedMonthlySales = [...monthlySales].sort((a, b) => String(a.mes).localeCompare(String(b.mes)))
+  const recentForecastBase = sortedMonthlySales.slice(-3)
+  const forecastNextKg = recentForecastBase.length
+    ? recentForecastBase.reduce((sum, item) => sum + item.peso_numero, 0) / recentForecastBase.length
+    : 0
+  const currentMonthKg = sortedMonthlySales.at(-1)?.peso_numero ?? 0
+  const forecastChange = currentMonthKg ? ((forecastNextKg - currentMonthKg) / currentMonthKg) * 100 : 0
+  const lastMonthKey = sortedMonthlySales.at(-1)?.mes
+  const forecastMonths = lastMonthKey
+    ? [1, 2, 3].map((offset) => ({
+        mes: addMonths(lastMonthKey, offset),
+        mes_label: monthLabel(addMonths(lastMonthKey, offset)),
+        forecast_toneladas: forecastNextKg / 1000,
+      }))
+    : []
+  const realVsForecastRows = [
+    ...sortedMonthlySales.slice(-24).map((item) => ({
+      mes_label: item.mes_label,
+      real_toneladas: item.peso_numero / 1000,
+      forecast_toneladas: null as number | null,
+    })),
+    ...forecastMonths.map((item) => ({
+      mes_label: item.mes_label,
+      real_toneladas: null as number | null,
+      forecast_toneladas: item.forecast_toneladas,
+    })),
+  ]
+  const demandTrendRows = sortedMonthlySales.slice(-24).map((item, index, rows) => {
+    const base = rows.slice(Math.max(0, index - 2), index + 1)
+    return {
+      mes_label: item.mes_label,
+      toneladas: item.peso_numero / 1000,
+      media_movel: base.reduce((sum, row) => sum + row.peso_numero, 0) / base.length / 1000,
+    }
+  })
+  const seasonalityRows = Object.values(sortedMonthlySales.reduce((index, item) => {
+    const month = String(item.mes).split('-')[1] ?? '00'
+    const row = index[month] ?? { mes: month, label: month, total: 0, count: 0 }
+    row.total += item.peso_numero / 1000
+    row.count += 1
+    index[month] = row
+    return index
+  }, {} as Record<string, { mes: string; label: string; total: number; count: number }>))
+    .sort((a, b) => a.mes.localeCompare(b.mes))
+    .map((item) => ({ label: item.label, toneladas: item.count ? item.total / item.count : 0 }))
+  const forecastFamilyRows = familyRows.slice(0, BAR_LIMIT).map((item) => ({
+    name: item.name,
+    forecast_toneladas: totalSalesWeight ? (forecastNextKg * item.peso_numero) / totalSalesWeight / 1000 : 0,
+  }))
+  const forecastSegmentRows = segmentRows.slice(0, BAR_LIMIT).map((item) => ({
+    name: item.name,
+    forecast_toneladas: totalSalesWeight ? (forecastNextKg * item.peso_numero) / totalSalesWeight / 1000 : 0,
+  }))
+  const forecastCityRows = cityRows
+    .slice()
+    .sort((a, b) => b.peso_numero - a.peso_numero)
+    .slice(0, BAR_LIMIT)
+    .map((item) => ({
+      name: item.shortName,
+      fullName: item.name,
+      forecast_toneladas: totalSalesWeight ? (forecastNextKg * item.peso_numero) / totalSalesWeight / 1000 : 0,
+    }))
+  const quotedKg = quoteMonthly.reduce((sum, item) => sum + item.kg_cotado_numero, 0)
 
   return (
     <main className="app-shell">
@@ -1033,7 +1104,125 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && ['stock', 'purchases', 'forecast', 'logistics'].includes(intelligenceTab) && (
+      {!needsLogin && intelligenceTab === 'forecast' && (
+        <>
+          <section className="kpi-grid">
+            <Kpi title="Forecast proximo mes" displayValue={`${formatNumber(forecastNextKg / 1000)} t`} detail="Media movel dos ultimos 3 meses" icon={<Gauge />} />
+            <Kpi title="Variacao vs mes atual" displayValue={`${forecastChange >= 0 ? '+' : ''}${forecastChange.toFixed(1)}%`} detail="Comparado ao ultimo mes da base" icon={<LineChartIcon />} />
+            <Kpi title="Cotacoes no periodo" displayValue={`${formatNumber(quotedKg / 1000)} t`} detail="Radar antecipado de demanda" icon={<TableProperties />} />
+            <Kpi title="Historico disponivel" displayValue={`${formatNumber(sortedMonthlySales.length)} meses`} detail="Base usada para tendencia e sazonalidade" icon={<CalendarDays />} />
+          </section>
+
+          <section className="dashboard-grid">
+            <Panel title="Real x forecast em toneladas" icon={<LineChartIcon size={17} />} wide>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ReLineChart data={realVsForecastRows}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name === 'real_toneladas' ? 'Real' : 'Forecast']} />
+                    <Line type="monotone" dataKey="real_toneladas" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} connectNulls={false} />
+                    <Line type="monotone" dataKey="forecast_toneladas" stroke="#F18800" strokeWidth={3} strokeDasharray="6 5" dot={{ r: 3 }} connectNulls={false} />
+                  </ReLineChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Tendencia da demanda" icon={<LineChartIcon size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ReLineChart data={demandTrendRows}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name === 'media_movel' ? 'Media movel 3 meses' : 'Vendido']} />
+                    <Line type="monotone" dataKey="toneladas" stroke="#8EA0D8" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="media_movel" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+                  </ReLineChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Sazonalidade historica" icon={<BarChart3 size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <BarChart data={seasonalityRows}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="label" />
+                    <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Media historica']} />
+                    <Bar dataKey="toneladas" fill="#12805C" radius={[5, 5, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Forecast por familia" icon={<Boxes size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <BarChart data={forecastFamilyRows} layout="vertical" margin={{ left: 86 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
+                    <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Forecast']} />
+                    <Bar dataKey="forecast_toneladas" fill="#253575" radius={[0, 5, 5, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Forecast por segmento" icon={<SlidersHorizontal size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <BarChart data={forecastSegmentRows} layout="vertical" margin={{ left: 86 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
+                    <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Forecast']} />
+                    <Bar dataKey="forecast_toneladas" fill="#F18800" radius={[0, 5, 5, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Forecast por regiao" icon={<BarChart3 size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <BarChart data={forecastCityRows} layout="vertical" margin={{ left: 86 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
+                    <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Forecast']} labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ''} />
+                    <Bar dataKey="forecast_toneladas" fill="#6B7280" radius={[0, 5, 5, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Cotacoes x vendas" icon={<LineChartIcon size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ReLineChart data={quoteMonthly.map((item) => ({ ...item, cotado_toneladas: item.kg_cotado_numero / 1000, vendido_toneladas: item.kg_vendido_numero / 1000 }))}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name === 'cotado_toneladas' ? 'Cotado' : 'Vendido']} />
+                    <Line type="monotone" dataKey="cotado_toneladas" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                    <Line type="monotone" dataKey="vendido_toneladas" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+                  </ReLineChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <UnavailablePanel title="Carteira confirmada x demanda prevista" />
+            <UnavailablePanel title="Erro do forecast" />
+            <UnavailablePanel title="Necessidade estimada de compra" />
+          </section>
+        </>
+      )}
+
+      {!needsLogin && ['stock', 'purchases', 'logistics'].includes(intelligenceTab) && (
         <UnavailableTab title={INTELLIGENCE_TABS.find((item) => item.key === intelligenceTab)?.label.replace(/^\d+\s/, '') ?? 'Visao'} />
       )}
 
