@@ -119,6 +119,13 @@ const MODULES: Record<IntelligenceTab, string[]> = {
   map: ['Bolhas por cidade', 'Faturamento por municipio', 'Clientes por cidade', 'Potencial externo futuro'],
 }
 
+type ChartRow = {
+  name: string
+  valor_numero: number
+  peso_numero: number
+  linhas?: number
+}
+
 function App() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -196,6 +203,12 @@ function App() {
     mes_label: monthLabel(item.mes),
     valor_numero: Number(item.valor_total),
     peso_numero: Number(item.peso_total),
+  }))
+  const familyRows: ChartRow[] = (summary?.sales_summary?.families ?? []).map((item) => ({
+    name: item.familia,
+    valor_numero: Number(item.valor_total),
+    peso_numero: Number(item.peso_total),
+    linhas: item.linhas,
   }))
 
   return (
@@ -330,10 +343,10 @@ function App() {
       {!needsLogin && (
         <section className="decision-strip">
           <div>
-            <span>{activeModule.label}</span>
-            <strong>{activeModule.question}</strong>
+            <span>Inteligencia interna</span>
+            <strong>{activeModule.label}</strong>
           </div>
-          <small>Prioridade: poucos graficos, cada um ligado a uma acao de gestao.</small>
+          <small>Graficos do periodo filtrado, com fontes tecnicas em menus de apoio.</small>
         </section>
       )}
 
@@ -381,8 +394,24 @@ function App() {
             </ChartFrame>
           </Panel>
 
-          <Panel title="Proximas decisoes executivas" icon={<Gauge size={17} />} wide>
-            <DecisionList items={MODULES.executive} />
+          <Panel title="Preco medio R$/kg" icon={<LineChartIcon size={17} />} wide>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={monthlySales.map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
+                  <Line type="monotone" dataKey="preco_numero" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
+          <Panel title="Carteira e conversao" icon={<TableProperties size={17} />} wide>
+            <SupportDetails title="Fontes e proximas camadas">
+              <SourceList items={requirements.filter((item) => item.key.includes('pedidos') || item.key.includes('vendas'))} />
+            </SupportDetails>
           </Panel>
         </section>
       )}
@@ -439,45 +468,22 @@ function App() {
               />
             </Panel>
             <Panel title="Fontes comerciais" icon={<Database size={17} />}>
-              <SourceList items={requirements.filter((item) => item.key.includes('vendas') || item.key.includes('clientes') || item.key.includes('pedidos'))} />
+              <SupportDetails title="Ver fontes comerciais">
+                <SourceList items={requirements.filter((item) => item.key.includes('vendas') || item.key.includes('clientes') || item.key.includes('pedidos'))} />
+              </SupportDetails>
             </Panel>
           </section>
         </>
       )}
 
       {!needsLogin && intelligenceTab !== 'executive' && intelligenceTab !== 'commercial' && (
-        <section className="dashboard-grid">
-          <Panel title="Mapa da tela" icon={activeModule.icon} wide>
-            <DecisionList items={MODULES[intelligenceTab]} />
-          </Panel>
-          <Panel title="Dados disponiveis agora" icon={<Database size={17} />}>
-            <DataTable
-              columns={['Fonte', 'Linhas']}
-              rows={(summary?.staging_by_entity ?? []).slice(0, 8).map((item) => [item.entidade, formatNumber(item.linhas)])}
-              empty="Sem fontes carregadas para este modulo."
-            />
-          </Panel>
-          <Panel title="Status de cobertura" icon={<AreaIcon size={17} />}>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={coverageData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={4}>
-                    {coverageData.map((_, index) => (
-                      <Cell key={index} fill={index === 0 ? '#12805C' : '#F18800'} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
-          <Panel title="Requisitos relacionados" icon={<TableProperties size={17} />} wide>
-            <SourceList items={requirements.filter((item) => {
-              const text = `${item.title} ${item.objective} ${item.fields.join(' ')}`.toLowerCase()
-              return MODULES[intelligenceTab].some((module) => text.includes(module.split(' ')[0].toLowerCase()))
-            })} />
-          </Panel>
-        </section>
+        <AnalysisTab
+          tab={intelligenceTab}
+          modules={MODULES[intelligenceTab]}
+          monthlySales={monthlySales}
+          familyRows={familyRows}
+          requirements={requirements}
+        />
       )}
 
     </main>
@@ -511,6 +517,101 @@ function Panel({ title, icon, wide, children }: { title: string; icon: ReactNode
 
 function ChartFrame({ children }: { children: ReactNode }) {
   return <div className="chart-frame">{children}</div>
+}
+
+function AnalysisTab({
+  tab,
+  modules,
+  monthlySales,
+  familyRows,
+  requirements,
+}: {
+  tab: IntelligenceTab
+  modules: string[]
+  monthlySales: Array<{ mes_label: string; valor_numero: number; peso_numero: number }>
+  familyRows: ChartRow[]
+  requirements: DashboardSummary['requirements']
+}) {
+  const valueLabel = tab === 'prices' || tab === 'margin' ? 'R$/kg' : 'Valor total'
+  const priceRows = familyRows.map((item) => ({
+    ...item,
+    preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0,
+  }))
+
+  return (
+    <section className="dashboard-grid">
+      <Panel title={modules[0]} icon={<BarChart3 size={17} />}>
+        <ChartFrame>
+          <ResponsiveContainer>
+            <BarChart data={familyRows.slice(0, 8)} layout="vertical" margin={{ left: 92 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+              <YAxis type="category" dataKey="name" width={120} />
+              <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
+              <Bar dataKey="valor_numero" fill="#253575" radius={[0, 5, 5, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartFrame>
+      </Panel>
+
+      <Panel title={modules[1]} icon={<LineChartIcon size={17} />}>
+        <ChartFrame>
+          <ResponsiveContainer>
+            <ReLineChart data={monthlySales}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="mes_label" />
+              <YAxis tickFormatter={(value) => formatNumber(value)} />
+              <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Peso']} />
+              <Line type="monotone" dataKey="peso_numero" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+            </ReLineChart>
+          </ResponsiveContainer>
+        </ChartFrame>
+      </Panel>
+
+      <Panel title={modules[2]} icon={<CircleDollarSign size={17} />}>
+        <ChartFrame>
+          <ResponsiveContainer>
+            <BarChart data={priceRows.slice(0, 8)} layout="vertical" margin={{ left: 92 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+              <YAxis type="category" dataKey="name" width={120} />
+              <Tooltip formatter={(value) => [money(String(value)), valueLabel]} />
+              <Bar dataKey="preco_numero" fill="#12805C" radius={[0, 5, 5, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartFrame>
+      </Panel>
+
+      <Panel title={modules[3]} icon={<AreaIcon size={17} />}>
+        <ChartFrame>
+          <ResponsiveContainer>
+            <BarChart data={familyRows.slice(0, 8)}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="name" hide />
+              <YAxis tickFormatter={(value) => formatNumber(value)} />
+              <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Peso']} />
+              <Bar dataKey="peso_numero" fill="#6B7280" radius={[5, 5, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartFrame>
+      </Panel>
+
+      <Panel title="Apoio tecnico" icon={<Database size={17} />} wide>
+        <SupportDetails title="Ver fontes e requisitos relacionados">
+          <SourceList items={requirements} />
+        </SupportDetails>
+      </Panel>
+    </section>
+  )
+}
+
+function SupportDetails({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details className="support-details">
+      <summary>{title}</summary>
+      <div>{children}</div>
+    </details>
+  )
 }
 
 function DecisionList({ items }: { items: string[] }) {

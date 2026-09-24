@@ -544,6 +544,24 @@ tbody tr:hover {
   gap: 9px;
 }
 
+.support-details {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fbfcff;
+}
+
+.support-details summary {
+  cursor: pointer;
+  padding: 12px;
+  color: var(--abr-blue);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.support-details > div {
+  padding: 0 12px 12px;
+}
+
 .decision-list {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
