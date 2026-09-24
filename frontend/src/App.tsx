@@ -1064,20 +1064,16 @@ function App() {
 
       {!needsLogin && intelligenceTab === 'map' && (
         <section className="dashboard-grid">
-          <Panel title="Bolhas por cidade" icon={<AreaIcon size={17} />}>
+          <Panel title="Peso vendido por municipio" icon={<Boxes size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <ScatterChart margin={{ top: 12, right: 18, bottom: 12, left: 6 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" dataKey="clientes" name="Clientes" allowDecimals={false} />
-                  <YAxis type="number" dataKey="valor_numero" name="Faturamento" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <Tooltip
-                    cursor={{ strokeDasharray: '3 3' }}
-                    formatter={(value, name) => [name === 'Clientes' ? formatNumber(String(value)) : money(String(value)), name]}
-                    labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
-                  />
-                  <Scatter data={cityRows.slice(0, SCATTER_LIMIT)} fill="#253575" />
-                </ScatterChart>
+                <BarChart data={[...cityRows].sort((a, b) => b.peso_numero - a.peso_numero).slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <YAxis type="category" dataKey="shortName" width={108} interval={0} tickMargin={6} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
+                  <Bar dataKey={(row) => row.peso_numero / 1000} fill="#253575" radius={[0, 5, 5, 0]} />
+                </BarChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
@@ -1107,7 +1103,6 @@ function App() {
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
-          <UnavailablePanel title="Potencial externo futuro" />
         </section>
       )}
 
