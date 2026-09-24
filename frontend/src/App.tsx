@@ -24,6 +24,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
   LineChart as ReLineChart,
@@ -570,13 +571,16 @@ function App() {
             <Panel title="Receita e margem por mes" icon={<BarChart3 size={17} />} wide>
               <ChartFrame>
                 <ResponsiveContainer>
-                  <BarChart data={monthlySales}>
+                  <ComposedChart data={monthlySales}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="mes_label" />
-                    <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                    <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
-                    <Bar dataKey="valor_numero" fill="#253575" radius={[5, 5, 0, 0]} />
-                  </BarChart>
+                    <YAxis yAxisId="left" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                    <YAxis yAxisId="right" orientation="right" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                    <Tooltip formatter={(value, name) => [money(String(value)), name === 'receita_numero' ? 'Receita liquida' : 'MC']} />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Bar yAxisId="left" dataKey="receita_numero" name="Receita liquida" fill="#253575" radius={[5, 5, 0, 0]} />
+                    <Line yAxisId="right" type="monotone" dataKey="mcii_numero" name="MC" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </ChartFrame>
             </Panel>
@@ -994,14 +998,15 @@ function App() {
           <Panel title="Kg cotados x vendidos" icon={<BarChart3 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={quoteMonthly.map((item) => ({ ...item, cotado_toneladas: item.kg_cotado_numero / 1000, vendido_toneladas: item.kg_vendido_numero / 1000 }))}>
+                <ReLineChart data={quoteMonthly.map((item) => ({ ...item, cotado_toneladas: item.kg_cotado_numero / 1000, vendido_toneladas: item.kg_vendido_numero / 1000 }))}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="mes_label" />
                   <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
                   <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name === 'cotado_toneladas' ? 'Cotado' : 'Vendido']} />
-                  <Bar dataKey="cotado_toneladas" fill="#8EA0D8" radius={[5, 5, 0, 0]} />
-                  <Bar dataKey="vendido_toneladas" fill="#253575" radius={[5, 5, 0, 0]} />
-                </BarChart>
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Line type="monotone" dataKey="cotado_toneladas" name="Cotado" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="vendido_toneladas" name="Vendido" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
