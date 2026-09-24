@@ -613,7 +613,7 @@ function App() {
             </ChartFrame>
           </Panel>
 
-          <Panel title="Recencia, frequencia e valor" icon={<CheckCircle2 size={17} />}>
+            <Panel title="Recência, frequência e valor do cliente" icon={<CheckCircle2 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
                 <BarChart data={summary?.sales_summary?.rfm_segments ?? []}>
