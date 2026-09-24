@@ -427,16 +427,18 @@ function App() {
             </Panel>
 
             <Panel title="Top familias por valor" icon={<CircleDollarSign size={17} />} wide>
-              <DataTable
-                columns={['Familia', 'Linhas', 'Valor total', 'Peso total']}
-                rows={(summary?.sales_summary?.families ?? []).map((item) => [
-                  item.familia,
-                  formatNumber(item.linhas),
-                  money(item.valor_total),
-                  `${formatNumber(item.peso_total)} kg`,
-                ])}
-                empty="Sem resumo comercial em cache para este periodo."
-              />
+              <SupportDetails title="Ver ranking de familias">
+                <DataTable
+                  columns={['Familia', 'Linhas', 'Valor total', 'Peso total']}
+                  rows={(summary?.sales_summary?.families ?? []).map((item) => [
+                    item.familia,
+                    formatNumber(item.linhas),
+                    money(item.valor_total),
+                    `${formatNumber(item.peso_total)} kg`,
+                  ])}
+                  empty="Sem resumo comercial em cache para este periodo."
+                />
+              </SupportDetails>
             </Panel>
 
             <Panel title="Vendas por canal e regiao" icon={<CircleDollarSign size={17} />} wide>
