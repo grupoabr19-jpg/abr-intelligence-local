@@ -24,7 +24,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  LabelList,
   Legend,
   Line,
   LineChart as ReLineChart,
@@ -42,7 +41,6 @@ const DEFAULT_DATE_FROM = '2026-01-01'
 const DEFAULT_DATE_TO = new Date().toISOString().slice(0, 10)
 const BAR_LIMIT = 6
 const SCATTER_LIMIT = 14
-const LABELED_SCATTER_LIMIT = 8
 
 type IntelligenceTab =
   | 'executive'
@@ -956,22 +954,19 @@ function App() {
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
-          <Panel title="Volume x margem por cliente" icon={<BarChart3 size={17} />}>
+          <Panel title="Margem percentual por cliente" icon={<BarChart3 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <ScatterChart margin={{ top: 12, right: 18, bottom: 12, left: 6 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" dataKey={(row) => row.peso_numero / 1000} name="Toneladas" tickFormatter={(value) => `${formatNumber(value)} t`} />
-                  <YAxis type="number" dataKey="margem_numero" name="MCII %" tickFormatter={(value) => `${Number(value).toFixed(1)}%`} />
+                <BarChart data={[...marginClientRows].sort((a, b) => b.margem_numero - a.margem_numero).slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${Number(value).toFixed(1)}%`} />
+                  <YAxis type="category" dataKey="shortName" width={120} interval={0} tickMargin={6} />
                   <Tooltip
-                    cursor={{ strokeDasharray: '3 3' }}
-                    formatter={(value, name) => [name === 'Toneladas' ? `${formatNumber(String(value))} t` : `${Number(value).toFixed(2)}%`, name]}
+                    formatter={(value) => [`${Number(value).toFixed(2)}%`, 'MCII %']}
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
                   />
-                  <Scatter data={marginClientRows.slice(0, LABELED_SCATTER_LIMIT)} fill="#253575">
-                    <LabelList dataKey="shortName" position="top" className="chart-point-label" />
-                  </Scatter>
-                </ScatterChart>
+                  <Bar dataKey="margem_numero" fill="#253575" radius={[0, 5, 5, 0]} />
+                </BarChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
