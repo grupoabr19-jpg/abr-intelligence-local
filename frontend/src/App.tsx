@@ -325,6 +325,7 @@ function App() {
   }))
   const cityRows = (summary?.sales_summary?.cities ?? []).map((item) => ({
     name: `${item.cidade}/${item.estado}`,
+    shortName: abbreviateLabel(`${item.cidade}/${item.estado}`, 24),
     cidade: item.cidade,
     clientes: item.clientes,
     valor_numero: Number(item.valor_total),
@@ -583,10 +584,10 @@ function App() {
           <Panel title="Curva ABC" icon={<BarChart3 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={clientAbcRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={clientAbcRows.slice(0, 8)} layout="vertical" margin={{ left: 128 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <YAxis type="category" dataKey="shortName" width={150} />
                   <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey="valor_numero" fill="#253575" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -597,18 +598,18 @@ function App() {
           <Panel title="Principais clientes em queda" icon={<AlertTriangle size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={clientDeclineRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={clientDeclineRows.slice(0, 8)} layout="vertical" margin={{ left: 128 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} kg`} />
-                  <YAxis type="category" dataKey="shortName" width={120} />
-                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Queda']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
-                  <Bar dataKey="queda_numero" fill="#B42318" radius={[0, 5, 5, 0]} />
+                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <YAxis type="category" dataKey="shortName" width={150} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Queda']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
+                  <Bar dataKey={(row) => row.queda_numero / 1000} fill="#B42318" radius={[0, 5, 5, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
 
-          <Panel title="RFM" icon={<CheckCircle2 size={17} />}>
+          <Panel title="Recencia, frequencia e valor" icon={<CheckCircle2 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
                 <BarChart data={summary?.sales_summary?.rfm_segments ?? []}>
@@ -622,7 +623,7 @@ function App() {
             </ChartFrame>
           </Panel>
 
-          <Panel title="Dias desde ultima compra" icon={<LineChartIcon size={17} />}>
+          <Panel title="Clientes por dias desde ultima compra" icon={<LineChartIcon size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
                 <BarChart data={summary?.sales_summary?.recency_buckets ?? []}>
@@ -947,55 +948,19 @@ function App() {
           <Panel title="Motivo das perdas" icon={<AlertTriangle size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={lossRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={lossRows.slice(0, 8)} layout="vertical" margin={{ left: 128 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="name" width={120} />
+                  <YAxis type="category" dataKey="name" width={150} />
                   <Tooltip formatter={(value) => [money(String(value)), 'Valor perdido']} />
                   <Bar dataKey="valor_numero" fill="#B42318" radius={[0, 5, 5, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
-          <Panel title="Perdas por vendedor" icon={<BarChart3 size={17} />}>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <BarChart data={sellerRows.filter((item) => item.perdido_numero > 0).slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="name" width={120} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'Valor perdido']} />
-                  <Bar dataKey="perdido_numero" fill="#F18800" radius={[0, 5, 5, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
-          <Panel title="Diferenca de preco" icon={<CircleDollarSign size={17} />}>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <BarChart data={priceOutlierRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="name" width={120} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
-                  <Bar dataKey="preco_numero" fill="#253575" radius={[0, 5, 5, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
-          <Panel title="Elasticidade real" icon={<LineChartIcon size={17} />}>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <ReLineChart data={monthlySales.map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes_label" />
-                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
-                  <Line type="monotone" dataKey="preco_numero" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
-                </ReLineChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
+          <UnavailablePanel title="Perdas por concorrente" />
+          <UnavailablePanel title="Diferenca de preco" />
+          <UnavailablePanel title="Elasticidade real" />
         </section>
       )}
 
@@ -1004,23 +969,27 @@ function App() {
           <Panel title="Bolhas por cidade" icon={<AreaIcon size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={cityRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} kg`} />
-                  <YAxis type="category" dataKey="name" width={120} />
-                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Peso']} />
-                  <Bar dataKey="peso_numero" fill="#253575" radius={[0, 5, 5, 0]} />
-                </BarChart>
+                <ScatterChart margin={{ top: 12, right: 18, bottom: 12, left: 6 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" dataKey="clientes" name="Clientes" allowDecimals={false} />
+                  <YAxis type="number" dataKey="valor_numero" name="Faturamento" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <Tooltip
+                    cursor={{ strokeDasharray: '3 3' }}
+                    formatter={(value, name) => [name === 'Clientes' ? formatNumber(String(value)) : money(String(value)), name]}
+                    labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
+                  />
+                  <Scatter data={cityRows.slice(0, 25)} fill="#253575" />
+                </ScatterChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
           <Panel title="Faturamento por municipio" icon={<CircleDollarSign size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={cityRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={cityRows.slice(0, 8)} layout="vertical" margin={{ left: 110 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="name" width={120} />
+                  <YAxis type="category" dataKey="shortName" width={132} />
                   <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
                   <Bar dataKey="valor_numero" fill="#F18800" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -1030,29 +999,17 @@ function App() {
           <Panel title="Clientes por cidade" icon={<CheckCircle2 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={cityRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={[...cityRows].sort((a, b) => b.clientes - a.clientes).slice(0, 8)} layout="vertical" margin={{ left: 110 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" allowDecimals={false} />
-                  <YAxis type="category" dataKey="name" width={120} />
+                  <YAxis type="category" dataKey="shortName" width={132} />
                   <Tooltip />
                   <Bar dataKey="clientes" fill="#12805C" radius={[0, 5, 5, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
-          <Panel title="Potencial externo futuro" icon={<LineChartIcon size={17} />}>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <BarChart data={cityRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="name" width={120} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
-                  <Bar dataKey="valor_numero" fill="#6B7280" radius={[0, 5, 5, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
+          <UnavailablePanel title="Potencial externo futuro" />
         </section>
       )}
 
@@ -1093,13 +1050,23 @@ function ChartFrame({ children }: { children: ReactNode }) {
   return <div className="chart-frame">{children}</div>
 }
 
+function UnavailablePanel({ title }: { title: string }) {
+  return (
+    <Panel title={title} icon={<Database size={17} />}>
+      <div className="empty-state compact">
+        <strong>Faltam dados para cruzamentos</strong>
+      </div>
+    </Panel>
+  )
+}
+
 function UnavailableTab({ title }: { title: string }) {
   return (
     <section className="dashboard-grid">
       <Panel title={title} icon={<Database size={17} />} wide>
         <div className="empty-state">
-          <strong>Base especifica ainda nao carregada</strong>
-          <span>Esta visao depende de relatorios diferentes da venda por item; deixei sem placeholder para nao misturar indicador operacional com dado comercial.</span>
+          <strong>Faltam dados para cruzamentos</strong>
+          <span>Esta visao depende de bases que ainda nao estao carregadas com granularidade suficiente para gerar o indicador.</span>
         </div>
       </Panel>
     </section>

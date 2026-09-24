@@ -441,12 +441,12 @@ h1 {
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 12px;
 }
 
 .panel {
   min-width: 0;
-  padding: 15px;
+  padding: 13px;
 }
 
 .panel.wide {
@@ -456,15 +456,15 @@ h1 {
 .panel-title {
   gap: 8px;
   color: var(--abr-blue);
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .panel-title h2 {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .chart-frame {
-  height: 300px;
+  height: 240px;
   width: 100%;
 }
 
@@ -511,7 +511,7 @@ tbody tr:hover {
 }
 
 .empty-state {
-  min-height: 180px;
+  min-height: 150px;
   display: grid;
   align-content: center;
   gap: 6px;
@@ -526,6 +526,12 @@ tbody tr:hover {
 .empty-state span {
   max-width: 680px;
   line-height: 1.45;
+}
+
+.empty-state.compact {
+  min-height: 210px;
+  justify-items: center;
+  text-align: center;
 }
 
 .source-stack {
@@ -672,6 +678,6 @@ tbody tr:hover {
   }
 
   .chart-frame {
-    height: 260px;
+    height: 220px;
   }
 }
