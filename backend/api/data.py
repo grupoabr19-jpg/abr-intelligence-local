@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
+from functools import lru_cache
 from typing import Any
 
 from backend.aster_collector.commercial_regions import classify_sale
@@ -113,6 +115,240 @@ def in_date_range(value: date | None, date_from: date | None, date_to: date | No
     return True
 
 
+SALE_DATE_SQL = """
+    case
+      when payload_original->>'Data Venda' like '__/__/____'
+        then make_date(
+          substring(payload_original->>'Data Venda' from 7 for 4)::int,
+          substring(payload_original->>'Data Venda' from 4 for 2)::int,
+          substring(payload_original->>'Data Venda' from 1 for 2)::int
+        )
+      when payload_original->>'Data Venda' like '____-__-__%%'
+        then left(payload_original->>'Data Venda', 10)::date
+      else null
+    end
+"""
+
+
+def money_sql(field_name: str) -> str:
+    return f"""
+        case
+          when payload_original->>{field_name!r} is null or trim(payload_original->>{field_name!r}) = '' then 0::numeric
+          when payload_original->>{field_name!r} like '%%,%%' then
+            replace(
+              replace(regexp_replace(payload_original->>{field_name!r}, '[^0-9,.-]', '', 'g'), '.', ''),
+              ',',
+              '.'
+            )::numeric
+          else regexp_replace(payload_original->>{field_name!r}, '[^0-9.-]', '', 'g')::numeric
+        end
+    """
+
+
+def sales_where(date_from: date | None, date_to: date | None) -> tuple[str, list[Any]]:
+    clauses = ["entidade = 'aster_report_d0a4d301'"]
+    params: list[Any] = []
+    if date_from:
+        clauses.append(f"({SALE_DATE_SQL}) >= %s")
+        params.append(date_from)
+    if date_to:
+        clauses.append(f"({SALE_DATE_SQL}) <= %s")
+        params.append(date_to)
+    return " and ".join(clauses), params
+
+
+def sales_period_summary(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any]:
+    cached = read_sales_summary_cache(date_from=date_from, date_to=date_to)
+    if cached:
+        return cached
+    return compute_sales_period_summary(
+        date_from.isoformat() if date_from else "",
+        date_to.isoformat() if date_to else "",
+    )
+
+
+def sales_summary_cache_key(date_from: date | None = None, date_to: date | None = None) -> str:
+    return f"aster_report_d0a4d301:{date_from.isoformat() if date_from else 'all'}:{date_to.isoformat() if date_to else 'all'}"
+
+
+def read_sales_summary_cache(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any] | None:
+    env = load_env()
+    try:
+        with connect_database(env) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select payload, refreshed_at
+                    from public.dashboard_sales_summary_cache
+                    where cache_key = %s
+                    """,
+                    (sales_summary_cache_key(date_from=date_from, date_to=date_to),),
+                )
+                row = cur.fetchone()
+    except BaseException:
+        return None
+    if not row:
+        return None
+    payload, refreshed_at = row
+    payload = dict(payload)
+    payload["cache_refreshed_at"] = refreshed_at.isoformat() if refreshed_at else None
+    return payload
+
+
+def write_sales_summary_cache(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any]:
+    payload = compute_sales_period_summary(
+        date_from.isoformat() if date_from else "",
+        date_to.isoformat() if date_to else "",
+    )
+    env = load_env()
+    with connect_database(env) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                insert into public.dashboard_sales_summary_cache(cache_key, date_from, date_to, payload, refreshed_at)
+                values (%s, %s, %s, %s::jsonb, now())
+                on conflict (cache_key)
+                do update set
+                  date_from = excluded.date_from,
+                  date_to = excluded.date_to,
+                  payload = excluded.payload,
+                  refreshed_at = now()
+                """,
+                (
+                    sales_summary_cache_key(date_from=date_from, date_to=date_to),
+                    date_from,
+                    date_to,
+                    json.dumps(payload),
+                ),
+            )
+            conn.commit()
+    return payload
+
+
+@lru_cache(maxsize=32)
+def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict[str, Any]:
+    date_from = date.fromisoformat(date_from_text) if date_from_text else None
+    date_to = date.fromisoformat(date_to_text) if date_to_text else None
+    valor_total = money_sql("Valor Total")
+    rec_liquida = money_sql("RecLiquida")
+    lucro_bruto = money_sql("LucroBruto")
+    peso_total = money_sql("Peso Total")
+    date_filters: list[str] = []
+    params: list[Any] = []
+    if date_from:
+        date_filters.append("sale_date >= %s")
+        params.append(date_from)
+    if date_to:
+        date_filters.append("sale_date <= %s")
+        params.append(date_to)
+    sales_where_sql = f"where {' and '.join(date_filters)}" if date_filters else ""
+    env = load_env()
+    with connect_database(env) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                with raw_sales as (
+                    select
+                      {SALE_DATE_SQL} as sale_date,
+                      {valor_total} as valor_total,
+                      {rec_liquida} as receita_liquida,
+                      {lucro_bruto} as lucro_bruto,
+                      {peso_total} as peso_total,
+                      nullif(payload_original->>'CodCliente', '') as cliente,
+                      nullif(payload_original->>'Item', '') as item,
+                      coalesce(nullif(payload_original->>'Familia', ''), 'Sem familia') as familia
+                    from public.staging_dados
+                    where entidade = 'aster_report_d0a4d301'
+                ),
+                sales as materialized (
+                    select *
+                    from raw_sales
+                    {sales_where_sql}
+                )
+                select
+                  count(*)::int as linhas,
+                  coalesce(sum(valor_total), 0) as valor_total,
+                  coalesce(sum(receita_liquida), 0) as receita_liquida,
+                  coalesce(sum(lucro_bruto), 0) as lucro_bruto,
+                  coalesce(sum(peso_total), 0) as peso_total,
+                  count(distinct cliente)::int as clientes,
+                  count(distinct item)::int as itens,
+                  min(sale_date) as data_min,
+                  max(sale_date) as data_max,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(month_rows) order by month_rows.mes), '[]'::jsonb)
+                    from (
+                      select
+                        to_char(date_trunc('month', sale_date), 'YYYY-MM') as mes,
+                        count(*)::int as linhas,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      where sale_date is not null
+                      group by 1
+                    ) month_rows
+                  ) as monthly,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(family_rows) order by family_rows.valor_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        familia,
+                        count(*)::int as linhas,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      group by 1
+                      order by valor_total desc
+                      limit 10
+                    ) family_rows
+                  ) as families
+                from sales
+                """,
+                params,
+            )
+            row = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0, None, None, [], [])
+
+    linhas, total, liquida, lucro, peso, clientes, itens, min_date, max_date, monthly_rows, family_rows = row
+
+    average_price_kg = Decimal("0")
+    if peso:
+        average_price_kg = total / peso
+
+    monthly = [
+        {
+            "mes": item["mes"],
+            "linhas": item["linhas"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in monthly_rows
+    ]
+    families = [
+        {
+            "familia": item["familia"],
+            "linhas": item["linhas"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in family_rows
+    ]
+
+    return {
+        "linhas": linhas,
+        "valor_total": f"{total:.2f}",
+        "receita_liquida": f"{liquida:.2f}",
+        "lucro_bruto": f"{lucro:.2f}",
+        "peso_total": f"{peso:.2f}",
+        "preco_medio_kg": f"{average_price_kg:.2f}",
+        "clientes": clientes,
+        "itens": itens,
+        "data_min": min_date.isoformat() if min_date else None,
+        "data_max": max_date.isoformat() if max_date else None,
+        "monthly": monthly,
+        "families": families,
+    }
+
+
 def internal_dashboard_summary(
     date_from: date | None = None,
     date_to: date | None = None,
@@ -184,11 +420,16 @@ def internal_dashboard_summary(
         warnings.append(f"Banco indisponivel para resumo ao vivo: {type(exc).__name__}: {str(exc)[:160]}")
 
     regions: list[dict[str, Any]] = []
+    sales_summary: dict[str, Any] = {}
     if include_sales_regions:
         try:
             regions = sales_regions_summary(date_from=date_from, date_to=date_to)
         except BaseException as exc:
             warnings.append(f"Resumo de regioes indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+    try:
+        sales_summary = sales_period_summary(date_from=date_from, date_to=date_to)
+    except BaseException as exc:
+        warnings.append(f"Resumo de vendas indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
 
     return {
         "domain": "internal",
@@ -214,6 +455,7 @@ def internal_dashboard_summary(
         "external_spreadsheet_sources": requirements["external_spreadsheet_sources"],
         "staging_by_entity": staging_by_entity,
         "recent_history": history,
+        "sales_summary": sales_summary,
         "sales_regions": regions,
         "warnings": warnings,
     }
@@ -228,15 +470,7 @@ def sales_regions_summary(date_from: date | None = None, date_to: date | None = 
         with conn.cursor() as cur:
             where_clauses = ["entidade = 'aster_report_d0a4d301'"]
             params: list[Any] = []
-            parsed_sale_date = """
-                case
-                  when payload_original->>'Data Venda' ~ '^\\d{2}/\\d{2}/\\d{4}$'
-                    then to_date(payload_original->>'Data Venda', 'DD/MM/YYYY')
-                  when payload_original->>'Data Venda' ~ '^\\d{4}-\\d{2}-\\d{2}'
-                    then left(payload_original->>'Data Venda', 10)::date
-                  else null
-                end
-            """
+            parsed_sale_date = SALE_DATE_SQL
             if date_from:
                 where_clauses.append(f"({parsed_sale_date}) >= %s")
                 params.append(date_from)

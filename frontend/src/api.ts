@@ -48,6 +48,21 @@ export type DashboardSummary = {
     registros_inseridos: number
     iniciado_em: string | null
   }>
+  sales_summary?: {
+    linhas: number
+    valor_total: string
+    receita_liquida: string
+    lucro_bruto: string
+    peso_total: string
+    preco_medio_kg: string
+    clientes: number
+    itens: number
+    data_min: string | null
+    data_max: string | null
+    cache_refreshed_at?: string | null
+    monthly: Array<{ mes: string; linhas: number; valor_total: string; peso_total: string }>
+    families: Array<{ familia: string; linhas: number; valor_total: string; peso_total: string }>
+  }
   sales_regions: Array<{ canal: string; regiao: string; linhas: number; valor_total: string }>
   warnings: string[]
 }

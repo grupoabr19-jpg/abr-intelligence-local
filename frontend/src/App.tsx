@@ -63,6 +63,12 @@ function money(value: number | string | undefined) {
   }).format(number)
 }
 
+function monthLabel(value: string) {
+  const [year, month] = value.split('-')
+  if (!year || !month) return value
+  return `${month}/${year.slice(2)}`
+}
+
 function App() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -275,10 +281,10 @@ function App() {
       </nav>}
 
       {!needsLogin && <section className="kpi-grid">
-        <Kpi title="Frente interna" value={summary?.kpis.reports_total} detail={`${summary?.kpis.reports_validated ?? 0} relatorios validados`} icon={<BarChart3 />} />
-        <Kpi title="Requisitos internos" value={summary?.kpis.requirements_total} detail={`${summary?.kpis.requirements_covered ?? 0} com fonte`} icon={<CheckCircle2 />} />
-        <Kpi title="Planilhas fonte" value={summary?.kpis.spreadsheet_sources} detail="Complemento Aster" icon={<Database />} />
-        <Kpi title="Frente externa" value={0} detail="Proxima etapa: mercado do aco" icon={<LineChart />} />
+        <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} vendas por item`} icon={<CircleDollarSign />} />
+        <Kpi title="Receita liquida" displayValue={money(summary?.sales_summary?.receita_liquida)} detail="Periodo filtrado" icon={<BarChart3 />} />
+        <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail={`${summary?.kpis.reports_validated ?? 0} relatorios validados`} icon={<LineChart />} />
+        <Kpi title="Peso vendido" displayValue={`${formatNumber(summary?.sales_summary?.peso_total)} kg`} detail={`${formatNumber(summary?.sales_summary?.clientes)} clientes distintos`} icon={<Boxes />} />
       </section>}
 
       {!needsLogin && tab === 'overview' && (
@@ -333,23 +339,66 @@ function App() {
       )}
 
       {!needsLogin && tab === 'sales' && (
-        <section className="dashboard-grid">
-          <Panel title="Vendas por canal e regiao" icon={<CircleDollarSign size={17} />} wide>
-            <DataTable
-              columns={['Canal', 'Regiao', 'Linhas', 'Valor total']}
-              rows={(summary?.sales_regions ?? []).map((item) => [
-                item.canal,
-                item.regiao,
-                formatNumber(item.linhas),
-                money(item.valor_total),
-              ])}
-              empty="Resumo regional sera carregado na proxima otimizacao da aba de vendas."
-            />
-          </Panel>
-          <Panel title="Fontes comerciais" icon={<Database size={17} />}>
-            <SourceList items={requirements.filter((item) => item.key.includes('vendas') || item.key.includes('clientes') || item.key.includes('pedidos'))} />
-          </Panel>
-        </section>
+        <>
+          <section className="kpi-grid sales-kpis">
+            <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} linhas`} icon={<CircleDollarSign />} />
+            <Kpi title="Receita liquida" displayValue={money(summary?.sales_summary?.receita_liquida)} detail="Base de venda por item" icon={<BarChart3 />} />
+            <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail="Margem antes dos rateios" icon={<LineChart />} />
+            <Kpi title="Peso total" displayValue={`${formatNumber(summary?.sales_summary?.peso_total)} kg`} detail={`${money(summary?.sales_summary?.preco_medio_kg)} por kg`} icon={<Boxes />} />
+            <Kpi title="Clientes" value={summary?.sales_summary?.clientes} detail="Clientes distintos no periodo" icon={<CheckCircle2 />} />
+            <Kpi title="Itens" value={summary?.sales_summary?.itens} detail="Itens distintos vendidos" icon={<TableProperties />} />
+          </section>
+
+          <section className="dashboard-grid">
+            <Panel title="Vendas por mes" icon={<BarChart3 size={17} />} wide>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <BarChart data={(summary?.sales_summary?.monthly ?? []).map((item) => ({
+                    ...item,
+                    mes_label: monthLabel(item.mes),
+                    valor_numero: Number(item.valor_total),
+                    peso_numero: Number(item.peso_total),
+                  }))}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                    <Tooltip formatter={(value, name) => [name === 'valor_numero' ? money(String(value)) : formatNumber(String(value)), name === 'valor_numero' ? 'Valor total' : 'Peso']} />
+                    <Bar dataKey="valor_numero" fill="#253575" radius={[5, 5, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Top familias por valor" icon={<CircleDollarSign size={17} />} wide>
+              <DataTable
+                columns={['Familia', 'Linhas', 'Valor total', 'Peso total']}
+                rows={(summary?.sales_summary?.families ?? []).map((item) => [
+                  item.familia,
+                  formatNumber(item.linhas),
+                  money(item.valor_total),
+                  `${formatNumber(item.peso_total)} kg`,
+                ])}
+                empty="Sem resumo comercial em cache para este periodo."
+              />
+            </Panel>
+
+            <Panel title="Vendas por canal e regiao" icon={<CircleDollarSign size={17} />} wide>
+              <DataTable
+                columns={['Canal', 'Regiao', 'Linhas', 'Valor total']}
+                rows={(summary?.sales_regions ?? []).map((item) => [
+                  item.canal,
+                  item.regiao,
+                  formatNumber(item.linhas),
+                  money(item.valor_total),
+                ])}
+                empty="Resumo regional fica fora da abertura para manter o dashboard rapido."
+              />
+            </Panel>
+            <Panel title="Fontes comerciais" icon={<Database size={17} />}>
+              <SourceList items={requirements.filter((item) => item.key.includes('vendas') || item.key.includes('clientes') || item.key.includes('pedidos'))} />
+            </Panel>
+          </section>
+        </>
       )}
 
       {!needsLogin && tab === 'stock' && (
@@ -410,13 +459,13 @@ function App() {
   )
 }
 
-function Kpi({ title, value, detail, icon }: { title: string; value?: number; detail: string; icon: ReactNode }) {
+function Kpi({ title, value, displayValue, detail, icon }: { title: string; value?: number; displayValue?: string; detail: string; icon: ReactNode }) {
   return (
     <article className="kpi-card">
       <div className="kpi-icon">{icon}</div>
       <div>
         <span>{title}</span>
-        <strong>{formatNumber(value)}</strong>
+        <strong>{displayValue ?? formatNumber(value)}</strong>
         <small>{detail}</small>
       </div>
     </article>

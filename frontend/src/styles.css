@@ -415,11 +415,22 @@ h1 {
   color: var(--abr-blue);
   font-size: 28px;
   line-height: 1;
+  word-break: break-word;
 }
 
 .kpi-card small {
   color: #6b7280;
   font-size: 12px;
+}
+
+.sales-kpis {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.sales-kpis .kpi-card strong {
+  font-size: 23px;
+  line-height: 1.08;
+  word-break: break-word;
 }
 
 .dashboard-grid {
@@ -545,6 +556,10 @@ tbody tr:hover {
   .dashboard-grid {
     grid-template-columns: 1fr 1fr;
   }
+
+  .sales-kpis {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -593,6 +608,7 @@ tbody tr:hover {
   }
 
   .kpi-grid,
+  .sales-kpis,
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
