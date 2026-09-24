@@ -25,6 +25,7 @@ import {
   BarChart,
   CartesianGrid,
   LabelList,
+  Legend,
   Line,
   LineChart as ReLineChart,
   ResponsiveContainer,
@@ -752,6 +753,7 @@ function App() {
                   <XAxis dataKey="mes_label" />
                   <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
                   <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
+                  <Legend verticalAlign="bottom" height={24} iconType="line" />
                   {topSegments.map((segment, index) => (
                     <Line key={segment} type="monotone" dataKey={segment} stroke={['#253575', '#F18800', '#12805C', '#B42318'][index]} strokeWidth={2.5} dot={{ r: 2 }} />
                   ))}
