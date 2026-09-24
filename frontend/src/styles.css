@@ -533,42 +533,6 @@ tbody tr:hover {
   padding: 0 12px 12px;
 }
 
-.decision-list {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.decision-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 58px;
-  padding: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #fbfcff;
-}
-
-.decision-item span {
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  border-radius: 6px;
-  color: #ffffff;
-  background: var(--abr-blue);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.decision-item strong {
-  color: #141d40;
-  font-size: 13px;
-  line-height: 1.25;
-}
-
 .source-item {
   border: 1px solid #e2e8f0;
   border-radius: 6px;
@@ -620,9 +584,6 @@ tbody tr:hover {
     grid-template-columns: 1fr 1fr;
   }
 
-  .decision-list {
-    grid-template-columns: 1fr 1fr;
-  }
 }
 
 @media (max-width: 720px) {
@@ -672,8 +633,7 @@ tbody tr:hover {
 
   .kpi-grid,
   .sales-kpis,
-  .dashboard-grid,
-  .decision-list {
+  .dashboard-grid {
     grid-template-columns: 1fr;
   }
 

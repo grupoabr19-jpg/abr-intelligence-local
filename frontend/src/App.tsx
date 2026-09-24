@@ -103,7 +103,7 @@ const INTELLIGENCE_TABS: Array<{ key: IntelligenceTab; label: string; icon: Reac
 ]
 
 const MODULES: Record<IntelligenceTab, string[]> = {
-  executive: ['Toneladas vendidas mes a mes', 'Receita e margem mes a mes', 'Preco medio R$/kg', 'Carteira e conversao'],
+  executive: ['Toneladas vendidas mes a mes', 'Receita e margem mes a mes', 'Preco medio R$/kg'],
   commercial: ['Volume x margem por vendedor', 'Receita por vendedor', 'Meta x realizado', 'Clientes ativos e reativados'],
   clients: ['Curva ABC', 'Principais clientes em queda', 'RFM', 'Dias desde ultima compra'],
   segments: ['Segmento x toneladas', 'Evolucao mensal por segmento', 'Preco/kg por segmento', 'Margem por segmento'],
@@ -397,11 +397,6 @@ function App() {
             </ChartFrame>
           </Panel>
 
-          <Panel title="Carteira e conversao" icon={<TableProperties size={17} />} wide>
-            <SupportDetails title="Fontes e proximas camadas">
-              <SourceList items={requirements.filter((item) => item.key.includes('pedidos') || item.key.includes('vendas'))} />
-            </SupportDetails>
-          </Panel>
         </section>
       )}
 
@@ -600,19 +595,6 @@ function SupportDetails({ title, children }: { title: string; children: ReactNod
       <summary>{title}</summary>
       <div>{children}</div>
     </details>
-  )
-}
-
-function DecisionList({ items }: { items: string[] }) {
-  return (
-    <div className="decision-list">
-      {items.map((item, index) => (
-        <article className="decision-item" key={item}>
-          <span>{String(index + 1).padStart(2, '0')}</span>
-          <strong>{item}</strong>
-        </article>
-      ))}
-    </div>
   )
 }
 
