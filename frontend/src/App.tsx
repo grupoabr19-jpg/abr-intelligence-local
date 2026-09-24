@@ -453,11 +453,6 @@ function App() {
                 empty="Resumo regional fica fora da abertura para manter o dashboard rapido."
               />
             </Panel>
-            <Panel title="Fontes comerciais" icon={<Database size={17} />}>
-              <SupportDetails title="Ver fontes comerciais">
-                <SourceList items={requirements.filter((item) => item.key.includes('vendas') || item.key.includes('clientes') || item.key.includes('pedidos'))} />
-              </SupportDetails>
-            </Panel>
           </section>
         </>
       )}
