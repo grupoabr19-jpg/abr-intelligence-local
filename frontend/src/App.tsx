@@ -646,11 +646,6 @@ function AnalysisTab({
         </ChartFrame>
       </Panel>
 
-      <Panel title="Apoio tecnico" icon={<Database size={17} />} wide>
-        <SupportDetails title="Ver fontes e requisitos relacionados">
-          <SourceList items={requirements} />
-        </SupportDetails>
-      </Panel>
     </section>
   )
 }
