@@ -232,6 +232,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
     valor_total = money_sql("Valor Total")
     rec_liquida = money_sql("RecLiquida")
     lucro_bruto = money_sql("LucroBruto")
+    margem_contribuicao = money_sql("Margem de Contribuição (MC)")
     peso_total = money_sql("Peso Total")
     date_filters: list[str] = []
     params: list[Any] = []
@@ -253,16 +254,29 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                       {valor_total} as valor_total,
                       {rec_liquida} as receita_liquida,
                       {lucro_bruto} as lucro_bruto,
+                      {margem_contribuicao} as margem_contribuicao,
                       {peso_total} as peso_total,
                       nullif(payload_original->>'CodCliente', '') as cliente_codigo,
                       coalesce(
                         nullif(payload_original->>'Cliente', ''),
+                        nullif(payload_original->>'Nome do cliente', ''),
                         nullif(payload_original->>'Nome Cliente', ''),
                         nullif(payload_original->>'CodCliente', ''),
                         'Sem cliente'
                       ) as cliente,
                       nullif(payload_original->>'Item', '') as item,
-                      coalesce(nullif(payload_original->>'Familia', ''), 'Sem familia') as familia
+                      coalesce(
+                        nullif(payload_original->>'Descrição', ''),
+                        nullif(payload_original->>'Item', ''),
+                        'Sem item'
+                      ) as produto,
+                      coalesce(nullif(payload_original->>'Familia', ''), 'Sem familia') as familia,
+                      coalesce(nullif(payload_original->>'Segmento', ''), 'Sem segmento') as segmento,
+                      coalesce(nullif(payload_original->>'Cidade', ''), 'Sem cidade') as cidade,
+                      coalesce(nullif(payload_original->>'Estado', ''), 'Sem UF') as estado,
+                      coalesce(nullif(payload_original->>'Vendedor', ''), 'Sem vendedor') as vendedor,
+                      coalesce(nullif(payload_original->>'Tipo', ''), 'Sem tipo') as tipo,
+                      {money_sql("Valor Venda Perdida")} as valor_perdido
                     from public.staging_dados
                     where entidade = 'aster_report_d0a4d301'
                 ),
@@ -288,14 +302,18 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                         to_char(date_trunc('month', sale_date), 'YYYY-MM') as mes,
                         count(*)::int as linhas,
                         coalesce(sum(valor_total), 0) as valor_total,
-                        coalesce(sum(peso_total), 0) as peso_total
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(lucro_bruto), 0) as lucro_bruto,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        coalesce(sum(valor_perdido), 0) as valor_perdido
                       from sales
                       where sale_date is not null
                       group by 1
                     ) month_rows
                   ) as monthly,
                   (
-                    select coalesce(jsonb_agg(to_jsonb(family_rows) order by family_rows.valor_total desc), '[]'::jsonb)
+                    select coalesce(jsonb_agg(to_jsonb(family_rows) order by family_rows.peso_total desc), '[]'::jsonb)
                     from (
                       select
                         familia,
@@ -304,7 +322,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                         coalesce(sum(peso_total), 0) as peso_total
                       from sales
                       group by 1
-                      order by valor_total desc
+                      order by peso_total desc
                       limit 10
                     ) family_rows
                   ) as families,
@@ -410,12 +428,291 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                       from client_last_purchase
                       group by 1, 2
                     ) recency_rows
-                  ) as recency_buckets
+                  ) as recency_buckets,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(segment_rows) order by segment_rows.valor_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        segmento,
+                        count(*)::int as linhas,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(lucro_bruto), 0) as lucro_bruto,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      group by 1
+                      order by valor_total desc
+                      limit 15
+                    ) segment_rows
+                  ) as segments,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(segment_month_rows) order by segment_month_rows.mes, segment_month_rows.segmento), '[]'::jsonb)
+                    from (
+                      select
+                        to_char(date_trunc('month', sale_date), 'YYYY-MM') as mes,
+                        segmento,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      where sale_date is not null
+                      group by 1, 2
+                    ) segment_month_rows
+                  ) as segment_monthly,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(item_rows) order by item_rows.peso_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        produto,
+                        item,
+                        familia,
+                        count(*)::int as linhas,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      group by 1, 2, 3
+                      order by peso_total desc
+                      limit 20
+                    ) item_rows
+                  ) as items,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(drop_rows) order by drop_rows.queda_peso desc), '[]'::jsonb)
+                    from (
+                      with bounds as (
+                        select
+                          case
+                            when max(sale_date) >= (date_trunc('month', max(sale_date)) + interval '1 month - 1 day')::date
+                              then date_trunc('month', max(sale_date))::date
+                            else (date_trunc('month', max(sale_date)) - interval '1 month')::date
+                          end as latest_month
+                        from sales
+                        where sale_date is not null
+                      ),
+                      monthly_items as (
+                        select
+                          produto,
+                          date_trunc('month', sale_date)::date as mes,
+                          coalesce(sum(peso_total), 0) as peso_total
+                        from sales
+                        where sale_date is not null
+                        group by 1, 2
+                      )
+                      select
+                        mi.produto,
+                        coalesce(sum(mi.peso_total) filter (where mi.mes = (select latest_month - interval '1 month' from bounds)), 0) as peso_anterior,
+                        coalesce(sum(mi.peso_total) filter (where mi.mes = (select latest_month from bounds)), 0) as peso_atual,
+                        coalesce(sum(mi.peso_total) filter (where mi.mes = (select latest_month - interval '1 month' from bounds)), 0)
+                          - coalesce(sum(mi.peso_total) filter (where mi.mes = (select latest_month from bounds)), 0) as queda_peso
+                      from monthly_items mi
+                      group by 1
+                      having coalesce(sum(mi.peso_total) filter (where mi.mes = (select latest_month - interval '1 month' from bounds)), 0)
+                          - coalesce(sum(mi.peso_total) filter (where mi.mes = (select latest_month from bounds)), 0) > 0
+                      order by queda_peso desc
+                      limit 20
+                    ) drop_rows
+                  ) as item_decline,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(family_segment_rows) order by family_segment_rows.peso_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        familia,
+                        segmento,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      group by 1, 2
+                      order by peso_total desc
+                      limit 20
+                    ) family_segment_rows
+                  ) as family_segments,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(price_rows) order by price_rows.avg_preco_kg desc), '[]'::jsonb)
+                    from (
+                      select
+                        familia,
+                        percentile_cont(0.05) within group (order by valor_total / nullif(peso_total, 0)) as min_preco_kg,
+                        sum(valor_total) / nullif(sum(peso_total), 0) as avg_preco_kg,
+                        percentile_cont(0.95) within group (order by valor_total / nullif(peso_total, 0)) as max_preco_kg,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      where peso_total >= 10 and valor_total > 0
+                      group by 1
+                      order by avg_preco_kg desc
+                      limit 15
+                    ) price_rows
+                  ) as price_stats,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(outlier_rows) order by abs(outlier_rows.desvio_pct) desc), '[]'::jsonb)
+                    from (
+                      with family_price as (
+                        select
+                          familia,
+                          sum(valor_total) / nullif(sum(peso_total), 0) as media_familia_kg
+                        from sales
+                        where peso_total > 0 and valor_total > 0
+                        group by 1
+                      )
+                      select
+                        s.produto,
+                        s.familia,
+                        coalesce(sum(s.valor_total), 0) as valor_total,
+                        coalesce(sum(s.peso_total), 0) as peso_total,
+                        sum(s.valor_total) / nullif(sum(s.peso_total), 0) as preco_kg,
+                        fp.media_familia_kg,
+                        ((sum(s.valor_total) / nullif(sum(s.peso_total), 0)) - fp.media_familia_kg) / nullif(fp.media_familia_kg, 0) * 100 as desvio_pct
+                      from sales s
+                      join family_price fp on fp.familia = s.familia
+                      where s.peso_total > 0 and s.valor_total > 0
+                      group by 1, 2, fp.media_familia_kg
+                      having sum(s.peso_total) >= 1000
+                      order by abs(((sum(s.valor_total) / nullif(sum(s.peso_total), 0)) - fp.media_familia_kg) / nullif(fp.media_familia_kg, 0) * 100) desc
+                      limit 20
+                    ) outlier_rows
+                  ) as price_outliers,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(price_month_rows) order by price_month_rows.mes), '[]'::jsonb)
+                    from (
+                      select
+                        to_char(date_trunc('month', sale_date), 'YYYY-MM') as mes,
+                        percentile_cont(0.05) within group (order by valor_total / nullif(peso_total, 0)) as min_preco_kg,
+                        sum(valor_total) / nullif(sum(peso_total), 0) as avg_preco_kg,
+                        percentile_cont(0.95) within group (order by valor_total / nullif(peso_total, 0)) as max_preco_kg,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      where sale_date is not null and peso_total >= 10 and valor_total > 0
+                      group by 1
+                    ) price_month_rows
+                  ) as price_monthly,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(margin_rows) order by margin_rows.mes), '[]'::jsonb)
+                    from (
+                      select
+                        to_char(date_trunc('month', sale_date), 'YYYY-MM') as mes,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(lucro_bruto), 0) as lucro_bruto,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      where sale_date is not null
+                      group by 1
+                    ) margin_rows
+                  ) as margin_monthly,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(margin_client_rows) order by margin_client_rows.margem_contribuicao desc), '[]'::jsonb)
+                    from (
+                      select
+                        cliente,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(lucro_bruto), 0) as lucro_bruto,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      group by 1
+                      order by margem_contribuicao desc
+                      limit 20
+                    ) margin_client_rows
+                  ) as margin_clients,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(loss_rows) order by loss_rows.valor_perdido desc), '[]'::jsonb)
+                    from (
+                      select
+                        coalesce(nullif(trim(payload_original->>'Motivo 1'), ''), 'Sem motivo') as motivo,
+                        count(*)::int as linhas,
+                        coalesce(sum({money_sql("Valor Venda Perdida")}), 0) as valor_perdido
+                      from public.staging_dados
+                      where entidade = 'aster_report_d0a4d301'
+                        and ({SALE_DATE_SQL}) is not null
+                        {"and (" + SALE_DATE_SQL + ") >= %s" if date_from else ""}
+                        {"and (" + SALE_DATE_SQL + ") <= %s" if date_to else ""}
+                      group by 1
+                      having coalesce(sum({money_sql("Valor Venda Perdida")}), 0) > 0
+                      order by valor_perdido desc
+                      limit 15
+                    ) loss_rows
+                  ) as losses,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(seller_rows) order by seller_rows.valor_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        vendedor,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(valor_perdido), 0) as valor_perdido,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      group by 1
+                      order by valor_total desc
+                      limit 20
+                    ) seller_rows
+                  ) as sellers,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(quote_month_rows) order by quote_month_rows.mes), '[]'::jsonb)
+                    from (
+                      select
+                        to_char(date_trunc('month', sale_date), 'YYYY-MM') as mes,
+                        coalesce(sum(peso_total) filter (where tipo = 'NFS'), 0) as kg_vendido,
+                        coalesce(sum(peso_total) filter (where tipo = 'CPerd'), 0) as kg_perdido,
+                        coalesce(sum(peso_total) filter (where tipo in ('NFS', 'CPerd')), 0) as kg_cotado,
+                        coalesce(sum(valor_total) filter (where tipo = 'NFS'), 0) as valor_vendido,
+                        coalesce(sum(valor_perdido) filter (where tipo = 'CPerd'), 0) as valor_perdido,
+                        coalesce(sum(valor_total) filter (where tipo = 'NFS'), 0)
+                          + coalesce(sum(valor_perdido) filter (where tipo = 'CPerd'), 0) as valor_cotado
+                      from sales
+                      where sale_date is not null
+                      group by 1
+                    ) quote_month_rows
+                  ) as quote_monthly,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(quote_seller_rows) order by quote_seller_rows.kg_cotado desc), '[]'::jsonb)
+                    from (
+                      select
+                        vendedor,
+                        coalesce(sum(peso_total) filter (where tipo = 'NFS'), 0) as kg_vendido,
+                        coalesce(sum(peso_total) filter (where tipo = 'CPerd'), 0) as kg_perdido,
+                        coalesce(sum(peso_total) filter (where tipo in ('NFS', 'CPerd')), 0) as kg_cotado,
+                        coalesce(sum(valor_total) filter (where tipo = 'NFS'), 0) as valor_vendido,
+                        coalesce(sum(valor_perdido) filter (where tipo = 'CPerd'), 0) as valor_perdido
+                      from sales
+                      group by 1
+                      having coalesce(sum(peso_total) filter (where tipo in ('NFS', 'CPerd')), 0) > 0
+                      order by kg_cotado desc
+                      limit 20
+                    ) quote_seller_rows
+                  ) as quote_sellers,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(funnel_rows) order by funnel_rows.ordem), '[]'::jsonb)
+                    from (
+                      select 1 as ordem, 'Cotado' as etapa, coalesce(sum(peso_total) filter (where tipo in ('NFS', 'CPerd')), 0) as kg_total
+                      from sales
+                      union all
+                      select 2 as ordem, 'Vendido' as etapa, coalesce(sum(peso_total) filter (where tipo = 'NFS'), 0) as kg_total
+                      from sales
+                      union all
+                      select 3 as ordem, 'Perdido' as etapa, coalesce(sum(peso_total) filter (where tipo = 'CPerd'), 0) as kg_total
+                      from sales
+                    ) funnel_rows
+                  ) as quote_funnel,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(city_rows) order by city_rows.valor_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        cidade,
+                        estado,
+                        count(distinct cliente)::int as clientes,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(peso_total), 0) as peso_total
+                      from sales
+                      group by 1, 2
+                      order by valor_total desc
+                      limit 25
+                    ) city_rows
+                  ) as cities
                 from sales
                 """,
-                params,
+                params + params,
             )
-            row = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0, None, None, [], [], [], [], [], [])
+            row = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0, None, None, [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [])
 
     (
         linhas,
@@ -433,6 +730,22 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
         decline_rows,
         rfm_rows,
         recency_rows,
+        segment_rows,
+        segment_month_rows,
+        item_rows,
+        item_decline_rows,
+        family_segment_rows,
+        price_stat_rows,
+        price_outlier_rows,
+        price_month_rows,
+        margin_monthly_rows,
+        margin_client_rows,
+        loss_rows,
+        seller_rows,
+        quote_month_rows,
+        quote_seller_rows,
+        quote_funnel_rows,
+        city_rows,
     ) = row
 
     average_price_kg = Decimal("0")
@@ -445,6 +758,10 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
             "linhas": item["linhas"],
             "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
             "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+            "receita_liquida": f"{Decimal(str(item.get('receita_liquida', 0))):.2f}",
+            "lucro_bruto": f"{Decimal(str(item.get('lucro_bruto', 0))):.2f}",
+            "margem_contribuicao": f"{Decimal(str(item.get('margem_contribuicao', 0))):.2f}",
+            "valor_perdido": f"{Decimal(str(item.get('valor_perdido', 0))):.2f}",
         }
         for item in monthly_rows
     ]
@@ -476,6 +793,167 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
         }
         for item in decline_rows
     ]
+    segments = [
+        {
+            "segmento": item["segmento"],
+            "linhas": item["linhas"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "receita_liquida": f"{Decimal(str(item['receita_liquida'])):.2f}",
+            "lucro_bruto": f"{Decimal(str(item['lucro_bruto'])):.2f}",
+            "margem_contribuicao": f"{Decimal(str(item['margem_contribuicao'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in segment_rows
+    ]
+    segment_monthly = [
+        {
+            "mes": item["mes"],
+            "segmento": item["segmento"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in segment_month_rows
+    ]
+    items = [
+        {
+            "produto": item["produto"],
+            "item": item.get("item"),
+            "familia": item["familia"],
+            "linhas": item["linhas"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in item_rows
+    ]
+    item_decline = [
+        {
+            "produto": item["produto"],
+            "peso_anterior": f"{Decimal(str(item['peso_anterior'])):.2f}",
+            "peso_atual": f"{Decimal(str(item['peso_atual'])):.2f}",
+            "queda_peso": f"{Decimal(str(item['queda_peso'])):.2f}",
+        }
+        for item in item_decline_rows
+    ]
+    family_segments = [
+        {
+            "familia": item["familia"],
+            "segmento": item["segmento"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in family_segment_rows
+    ]
+    price_stats = [
+        {
+            "familia": item["familia"],
+            "min_preco_kg": f"{Decimal(str(item['min_preco_kg'] or 0)):.2f}",
+            "avg_preco_kg": f"{Decimal(str(item['avg_preco_kg'] or 0)):.2f}",
+            "max_preco_kg": f"{Decimal(str(item['max_preco_kg'] or 0)):.2f}",
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in price_stat_rows
+    ]
+    price_outliers = [
+        {
+            "produto": item["produto"],
+            "familia": item["familia"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+            "preco_kg": f"{Decimal(str(item['preco_kg'] or 0)):.2f}",
+            "media_familia_kg": f"{Decimal(str(item['media_familia_kg'] or 0)):.2f}",
+            "desvio_pct": f"{Decimal(str(item['desvio_pct'] or 0)):.2f}",
+        }
+        for item in price_outlier_rows
+    ]
+    price_monthly = [
+        {
+            "mes": item["mes"],
+            "min_preco_kg": f"{Decimal(str(item['min_preco_kg'] or 0)):.2f}",
+            "avg_preco_kg": f"{Decimal(str(item['avg_preco_kg'] or 0)):.2f}",
+            "max_preco_kg": f"{Decimal(str(item['max_preco_kg'] or 0)):.2f}",
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in price_month_rows
+    ]
+    margin_monthly = [
+        {
+            "mes": item["mes"],
+            "receita_liquida": f"{Decimal(str(item['receita_liquida'])):.2f}",
+            "lucro_bruto": f"{Decimal(str(item['lucro_bruto'])):.2f}",
+            "margem_contribuicao": f"{Decimal(str(item['margem_contribuicao'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in margin_monthly_rows
+    ]
+    margin_clients = [
+        {
+            "cliente": item["cliente"],
+            "receita_liquida": f"{Decimal(str(item['receita_liquida'])):.2f}",
+            "lucro_bruto": f"{Decimal(str(item['lucro_bruto'])):.2f}",
+            "margem_contribuicao": f"{Decimal(str(item['margem_contribuicao'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in margin_client_rows
+    ]
+    losses = [
+        {
+            "motivo": item["motivo"],
+            "linhas": item["linhas"],
+            "valor_perdido": f"{Decimal(str(item['valor_perdido'])):.2f}",
+        }
+        for item in loss_rows
+    ]
+    sellers = [
+        {
+            "vendedor": item["vendedor"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "valor_perdido": f"{Decimal(str(item['valor_perdido'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in seller_rows
+    ]
+    quote_monthly = [
+        {
+            "mes": item["mes"],
+            "kg_cotado": f"{Decimal(str(item['kg_cotado'])):.2f}",
+            "kg_vendido": f"{Decimal(str(item['kg_vendido'])):.2f}",
+            "kg_perdido": f"{Decimal(str(item['kg_perdido'])):.2f}",
+            "valor_cotado": f"{Decimal(str(item['valor_cotado'])):.2f}",
+            "valor_vendido": f"{Decimal(str(item['valor_vendido'])):.2f}",
+            "valor_perdido": f"{Decimal(str(item['valor_perdido'])):.2f}",
+        }
+        for item in quote_month_rows
+    ]
+    quote_sellers = [
+        {
+            "vendedor": item["vendedor"],
+            "kg_cotado": f"{Decimal(str(item['kg_cotado'])):.2f}",
+            "kg_vendido": f"{Decimal(str(item['kg_vendido'])):.2f}",
+            "kg_perdido": f"{Decimal(str(item['kg_perdido'])):.2f}",
+            "valor_vendido": f"{Decimal(str(item['valor_vendido'])):.2f}",
+            "valor_perdido": f"{Decimal(str(item['valor_perdido'])):.2f}",
+        }
+        for item in quote_seller_rows
+    ]
+    quote_funnel = [
+        {
+            "etapa": item["etapa"],
+            "kg_total": f"{Decimal(str(item['kg_total'])):.2f}",
+        }
+        for item in quote_funnel_rows
+    ]
+    cities = [
+        {
+            "cidade": item["cidade"],
+            "estado": item["estado"],
+            "clientes": item["clientes"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+        }
+        for item in city_rows
+    ]
 
     return {
         "linhas": linhas,
@@ -494,6 +972,22 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
         "clients_decline": clients_decline,
         "rfm_segments": rfm_rows,
         "recency_buckets": recency_rows,
+        "segments": segments,
+        "segment_monthly": segment_monthly,
+        "items": items,
+        "item_decline": item_decline,
+        "family_segments": family_segments,
+        "price_stats": price_stats,
+        "price_outliers": price_outliers,
+        "price_monthly": price_monthly,
+        "margin_monthly": margin_monthly,
+        "margin_clients": margin_clients,
+        "losses": losses,
+        "sellers": sellers,
+        "quote_monthly": quote_monthly,
+        "quote_sellers": quote_sellers,
+        "quote_funnel": quote_funnel,
+        "cities": cities,
     }
 
 

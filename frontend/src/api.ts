@@ -60,12 +60,68 @@ export type DashboardSummary = {
     data_min: string | null
     data_max: string | null
     cache_refreshed_at?: string | null
-    monthly: Array<{ mes: string; linhas: number; valor_total: string; peso_total: string }>
+    monthly: Array<{
+      mes: string
+      linhas: number
+      valor_total: string
+      receita_liquida?: string
+      lucro_bruto?: string
+      margem_contribuicao?: string
+      peso_total: string
+      valor_perdido?: string
+    }>
     families: Array<{ familia: string; linhas: number; valor_total: string; peso_total: string }>
     clients_abc?: Array<{ cliente: string; linhas: number; valor_total: string; peso_total: string; ultima_compra: string | null }>
     clients_decline?: Array<{ cliente: string; peso_anterior: string; peso_atual: string; queda_peso: string }>
     rfm_segments?: Array<{ segmento: string; total: number }>
     recency_buckets?: Array<{ faixa: string; ordem: number; clientes: number }>
+    segments?: Array<{
+      segmento: string
+      linhas: number
+      valor_total: string
+      receita_liquida: string
+      lucro_bruto: string
+      margem_contribuicao?: string
+      peso_total: string
+    }>
+    segment_monthly?: Array<{ mes: string; segmento: string; valor_total: string; peso_total: string }>
+    items?: Array<{ produto: string; item: string | null; familia: string; linhas: number; valor_total: string; peso_total: string }>
+    item_decline?: Array<{ produto: string; peso_anterior: string; peso_atual: string; queda_peso: string }>
+    family_segments?: Array<{ familia: string; segmento: string; valor_total: string; peso_total: string }>
+    price_stats?: Array<{ familia: string; min_preco_kg: string; avg_preco_kg: string; max_preco_kg: string; valor_total: string; peso_total: string }>
+    price_outliers?: Array<{
+      produto: string
+      familia: string
+      valor_total: string
+      peso_total: string
+      preco_kg: string
+      media_familia_kg: string
+      desvio_pct: string
+    }>
+    price_monthly?: Array<{ mes: string; min_preco_kg: string; avg_preco_kg: string; max_preco_kg: string; valor_total: string; peso_total: string }>
+    margin_monthly?: Array<{ mes: string; receita_liquida: string; lucro_bruto: string; margem_contribuicao?: string; peso_total: string }>
+    margin_clients?: Array<{ cliente: string; receita_liquida: string; lucro_bruto: string; margem_contribuicao?: string; peso_total: string }>
+    losses?: Array<{ motivo: string; linhas: number; valor_perdido: string }>
+    sellers?: Array<{ vendedor: string; valor_total: string; valor_perdido: string; peso_total: string }>
+    quote_monthly?: Array<{
+      mes: string
+      kg_cotado: string
+      kg_vendido: string
+      kg_perdido: string
+      valor_cotado: string
+      valor_vendido: string
+      valor_perdido: string
+    }>
+    quote_sellers?: Array<{
+      vendedor: string
+      kg_cotado: string
+      kg_vendido: string
+      kg_perdido: string
+      valor_vendido: string
+      valor_perdido: string
+    }>
+    quote_funnel?: Array<{ etapa: string; kg_total: string }>
+    cities?: Array<{ cidade: string; estado: string; clientes: number; valor_total: string; peso_total: string }>
   }
   sales_regions: Array<{ canal: string; regiao: string; linhas: number; valor_total: string }>
   warnings: string[]

@@ -27,6 +27,8 @@ import {
   Line,
   LineChart as ReLineChart,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
@@ -73,44 +75,47 @@ function monthLabel(value: string) {
   return `${month}/${year.slice(2)}`
 }
 
-const INTELLIGENCE_TABS: Array<{ key: IntelligenceTab; label: string; icon: ReactNode }> = [
-  { key: 'executive', label: '01 Executivo', icon: <Gauge size={16} /> },
-  { key: 'commercial', label: '02 Comercial', icon: <CircleDollarSign size={16} /> },
-  { key: 'clients', label: '03 Clientes', icon: <CheckCircle2 size={16} /> },
-  { key: 'segments', label: '04 Segmentos', icon: <BarChart3 size={16} /> },
-  { key: 'products', label: '05 Produtos', icon: <Boxes size={16} /> },
-  { key: 'prices', label: '06 Precos', icon: <LineChartIcon size={16} /> },
-  { key: 'margin', label: '07 Margem', icon: <AreaIcon size={16} /> },
-  { key: 'quotes', label: '08 Cotacoes', icon: <TableProperties size={16} /> },
-  { key: 'competition', label: '09 Concorrencia', icon: <AlertTriangle size={16} /> },
-  { key: 'stock', label: '10 Estoque', icon: <Boxes size={16} /> },
-  { key: 'purchases', label: '11 Compras', icon: <Database size={16} /> },
-  { key: 'forecast', label: '12 Forecast', icon: <LineChartIcon size={16} /> },
-  { key: 'logistics', label: '13 Logistica', icon: <SlidersHorizontal size={16} /> },
-  { key: 'map', label: '14 Mapa Comercial', icon: <AreaIcon size={16} /> },
-]
-
-const MODULES: Record<IntelligenceTab, string[]> = {
-  executive: ['Toneladas vendidas mes a mes', 'Receita e margem mes a mes', 'Preco medio R$/kg'],
-  commercial: ['Volume x margem por vendedor', 'Receita por vendedor', 'Meta x realizado', 'Clientes ativos e reativados'],
-  clients: ['Curva ABC', 'Principais clientes em queda', 'RFM', 'Dias desde ultima compra'],
-  segments: ['Segmento x toneladas', 'Evolucao mensal por segmento', 'Preco/kg por segmento', 'Margem por segmento'],
-  products: ['Familia x toneladas', 'Top SKU', 'SKU em queda', 'Familia x segmento'],
-  prices: ['Preco medio R$/kg', 'Minimo x medio x maximo', 'Preco x toneladas', 'Outliers comerciais'],
-  margin: ['MCII por mes', 'MCII % por mes', 'MCII/kg por cliente', 'Volume x margem por cliente'],
-  quotes: ['Kg cotados x vendidos', 'Conversao mensal', 'Conversao por vendedor', 'Funil comercial'],
-  competition: ['Motivo das perdas', 'Perdas por concorrente', 'Diferenca de preco', 'Elasticidade real'],
-  stock: ['Estoque em toneladas', 'Estoque x venda', 'Aging', 'Cobertura x margem'],
-  purchases: ['Compras mensais', 'R$/kg de compra', 'Compra por fornecedor', 'Preco fornecedor x volume'],
-  forecast: ['Real x previsto', 'Forecast por familia', 'Forecast por segmento', 'Necessidade estimada de compra'],
-  logistics: ['Frete R$/t', 'Frete por cidade', 'Frete % da venda', 'Custo logistico x margem'],
-  map: ['Bolhas por cidade', 'Faturamento por municipio', 'Clientes por cidade', 'Potencial externo futuro'],
+function abbreviateLabel(value: string, maxLength = 24) {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) return normalized
+  const ignored = new Set(['DE', 'DA', 'DO', 'DAS', 'DOS', 'E'])
+  const words = normalized.split(' ').filter((word) => !ignored.has(word.toUpperCase()))
+  const initials = words.slice(1, 4).map((word) => word[0]?.toUpperCase()).filter(Boolean).join('')
+  const firstWord = words[0] ?? normalized.slice(0, maxLength - 1)
+  const compact = initials ? `${firstWord} ${initials}` : firstWord
+  return compact.length <= maxLength ? compact : `${normalized.slice(0, maxLength - 1)}...`
 }
+
+function cleanSegmentName(value: string) {
+  return value
+    .replace('Ind�strias', 'Industrias')
+    .replace('Dep�sito', 'Deposito')
+    .replace('N�o', 'Nao')
+}
+
+const INTELLIGENCE_TABS: Array<{ key: IntelligenceTab; label: string }> = [
+  { key: 'executive', label: 'Executivo' },
+  { key: 'commercial', label: 'Comercial' },
+  { key: 'clients', label: 'Clientes' },
+  { key: 'segments', label: 'Segmentos' },
+  { key: 'products', label: 'Produtos' },
+  { key: 'prices', label: 'Precos' },
+  { key: 'margin', label: 'Margem' },
+  { key: 'quotes', label: 'Cotacoes' },
+  { key: 'competition', label: 'Concorrencia' },
+  { key: 'stock', label: 'Estoque' },
+  { key: 'purchases', label: 'Compras' },
+  { key: 'forecast', label: 'Forecast' },
+  { key: 'logistics', label: 'Logistica' },
+  { key: 'map', label: 'Mapa Comercial' },
+]
 
 type ChartRow = {
   name: string
   valor_numero: number
   peso_numero: number
+  receita_numero?: number
+  lucro_numero?: number
   linhas?: number
 }
 
@@ -177,22 +182,153 @@ function App() {
     ...item,
     mes_label: monthLabel(item.mes),
     valor_numero: Number(item.valor_total),
+    receita_numero: Number(item.receita_liquida ?? 0),
+    lucro_numero: Number(item.lucro_bruto ?? 0),
+    mcii_numero: Number(item.margem_contribuicao ?? 0),
     peso_numero: Number(item.peso_total),
+    perdido_numero: Number(item.valor_perdido ?? 0),
   }))
   const familyRows: ChartRow[] = (summary?.sales_summary?.families ?? []).map((item) => ({
     name: item.familia,
     valor_numero: Number(item.valor_total),
     peso_numero: Number(item.peso_total),
     linhas: item.linhas,
-  }))
+  })).sort((a, b) => b.peso_numero - a.peso_numero)
   const clientAbcRows = (summary?.sales_summary?.clients_abc ?? []).map((item) => ({
     name: item.cliente,
+    shortName: abbreviateLabel(item.cliente),
     valor_numero: Number(item.valor_total),
     peso_numero: Number(item.peso_total),
   }))
   const clientDeclineRows = (summary?.sales_summary?.clients_decline ?? []).map((item) => ({
     name: item.cliente,
+    shortName: abbreviateLabel(item.cliente),
     queda_numero: Number(item.queda_peso),
+  }))
+  const segmentRows: ChartRow[] = (summary?.sales_summary?.segments ?? [])
+    .map((item) => ({
+      name: cleanSegmentName(item.segmento),
+      valor_numero: Number(item.valor_total),
+      peso_numero: Number(item.peso_total),
+      receita_numero: Number(item.receita_liquida),
+      lucro_numero: Number(item.lucro_bruto),
+      linhas: item.linhas,
+    }))
+    .sort((a, b) => b.peso_numero - a.peso_numero)
+  const topSegments = segmentRows.slice(0, 4).map((item) => item.name)
+  const segmentMonthly = Array.from(
+    (summary?.sales_summary?.segment_monthly ?? []).reduce((index, item) => {
+      const segmentName = cleanSegmentName(item.segmento)
+      if (!topSegments.includes(segmentName)) return index
+      const mes = monthLabel(item.mes)
+      const row = index.get(mes) ?? { mes_label: mes }
+      row[segmentName] = Number(item.peso_total) / 1000
+      index.set(mes, row)
+      return index
+    }, new Map<string, Record<string, number | string>>()).values(),
+  )
+  const itemRows: ChartRow[] = (summary?.sales_summary?.items ?? []).map((item) => ({
+    name: item.produto,
+    shortName: abbreviateLabel(item.produto, 28),
+    valor_numero: Number(item.valor_total),
+    peso_numero: Number(item.peso_total),
+    linhas: item.linhas,
+  })).sort((a, b) => b.peso_numero - a.peso_numero)
+  const itemDeclineRows = (summary?.sales_summary?.item_decline ?? []).map((item) => ({
+    name: item.produto,
+    shortName: abbreviateLabel(item.produto, 28),
+    queda_numero: Number(item.queda_peso),
+  })).sort((a, b) => b.queda_numero - a.queda_numero)
+  const familySegmentRows: ChartRow[] = (summary?.sales_summary?.family_segments ?? []).map((item) => ({
+    name: `${item.familia} / ${cleanSegmentName(item.segmento)}`,
+    valor_numero: Number(item.valor_total),
+    peso_numero: Number(item.peso_total),
+  })).sort((a, b) => b.peso_numero - a.peso_numero)
+  const priceStatsRows = (summary?.sales_summary?.price_stats ?? []).map((item) => ({
+    name: item.familia,
+    min_numero: Number(item.min_preco_kg),
+    avg_numero: Number(item.avg_preco_kg),
+    max_numero: Number(item.max_preco_kg),
+    valor_numero: Number(item.valor_total),
+    peso_numero: Number(item.peso_total),
+  }))
+  const priceOutlierRows = (summary?.sales_summary?.price_outliers ?? []).map((item) => ({
+    name: item.produto,
+    shortName: abbreviateLabel(item.produto, 28),
+    familia: item.familia,
+    preco_numero: Number(item.preco_kg),
+    media_familia_numero: Number(item.media_familia_kg),
+    desvio_numero: Number(item.desvio_pct),
+    peso_numero: Number(item.peso_total),
+  }))
+  const priceMonthly = (summary?.sales_summary?.price_monthly ?? []).map((item) => ({
+    mes_label: monthLabel(item.mes),
+    min_numero: Number(item.min_preco_kg),
+    avg_numero: Number(item.avg_preco_kg),
+    max_numero: Number(item.max_preco_kg),
+    valor_numero: Number(item.valor_total),
+    peso_numero: Number(item.peso_total),
+  }))
+  const marginMonthly = (summary?.sales_summary?.margin_monthly ?? []).map((item) => ({
+    mes_label: monthLabel(item.mes),
+    receita_numero: Number(item.receita_liquida),
+    lucro_numero: Number(item.lucro_bruto),
+    mcii_numero: Number(item.margem_contribuicao ?? item.lucro_bruto),
+    peso_numero: Number(item.peso_total),
+    margem_numero: Number(item.receita_liquida) ? (Number(item.margem_contribuicao ?? item.lucro_bruto) / Number(item.receita_liquida)) * 100 : 0,
+  }))
+  const marginClientRows = (summary?.sales_summary?.margin_clients ?? []).map((item) => ({
+    name: item.cliente,
+    shortName: abbreviateLabel(item.cliente),
+    receita_numero: Number(item.receita_liquida),
+    lucro_numero: Number(item.lucro_bruto),
+    mcii_numero: Number(item.margem_contribuicao ?? item.lucro_bruto),
+    peso_numero: Number(item.peso_total),
+    margem_kg_numero: Number(item.peso_total) ? Number(item.margem_contribuicao ?? item.lucro_bruto) / Number(item.peso_total) : 0,
+    margem_numero: Number(item.receita_liquida) ? (Number(item.margem_contribuicao ?? item.lucro_bruto) / Number(item.receita_liquida)) * 100 : 0,
+  })).sort((a, b) => b.mcii_numero - a.mcii_numero)
+  const lossRows = (summary?.sales_summary?.losses ?? []).map((item) => ({
+    name: item.motivo,
+    valor_numero: Number(item.valor_perdido),
+    linhas: item.linhas,
+  }))
+  const sellerRows = (summary?.sales_summary?.sellers ?? []).map((item) => ({
+    name: item.vendedor,
+    valor_numero: Number(item.valor_total),
+    perdido_numero: Number(item.valor_perdido),
+    peso_numero: Number(item.peso_total),
+    conversao_numero: Number(item.valor_total) + Number(item.valor_perdido) > 0 ? (Number(item.valor_total) / (Number(item.valor_total) + Number(item.valor_perdido))) * 100 : 0,
+  }))
+  const quoteMonthly = (summary?.sales_summary?.quote_monthly ?? []).map((item) => ({
+    mes_label: monthLabel(item.mes),
+    kg_cotado_numero: Number(item.kg_cotado),
+    kg_vendido_numero: Number(item.kg_vendido),
+    kg_perdido_numero: Number(item.kg_perdido),
+    valor_cotado_numero: Number(item.valor_cotado),
+    valor_vendido_numero: Number(item.valor_vendido),
+    valor_perdido_numero: Number(item.valor_perdido),
+    conversao_numero: Number(item.kg_cotado) ? (Number(item.kg_vendido) / Number(item.kg_cotado)) * 100 : 0,
+  }))
+  const quoteSellerRows = (summary?.sales_summary?.quote_sellers ?? []).map((item) => ({
+    name: item.vendedor,
+    shortName: abbreviateLabel(item.vendedor, 24),
+    kg_cotado_numero: Number(item.kg_cotado),
+    kg_vendido_numero: Number(item.kg_vendido),
+    kg_perdido_numero: Number(item.kg_perdido),
+    valor_vendido_numero: Number(item.valor_vendido),
+    valor_perdido_numero: Number(item.valor_perdido),
+    conversao_numero: Number(item.kg_cotado) ? (Number(item.kg_vendido) / Number(item.kg_cotado)) * 100 : 0,
+  }))
+  const quoteFunnelRows = (summary?.sales_summary?.quote_funnel ?? []).map((item) => ({
+    name: item.etapa,
+    toneladas_numero: Number(item.kg_total) / 1000,
+  }))
+  const cityRows = (summary?.sales_summary?.cities ?? []).map((item) => ({
+    name: `${item.cidade}/${item.estado}`,
+    cidade: item.cidade,
+    clientes: item.clientes,
+    valor_numero: Number(item.valor_total),
+    peso_numero: Number(item.peso_total),
   }))
 
   return (
@@ -311,78 +447,78 @@ function App() {
       {!needsLogin && <nav className="tabs intelligence-tabs" aria-label="Campos de atuacao">
         {INTELLIGENCE_TABS.map((item) => (
           <button key={item.key} className={intelligenceTab === item.key ? 'active' : ''} onClick={() => setIntelligenceTab(item.key)}>
-            {item.icon}
             {item.label}
           </button>
         ))}
       </nav>}
 
-      {!needsLogin && <section className="kpi-grid">
-        <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} vendas por item`} icon={<CircleDollarSign />} />
-        <Kpi title="Receita liquida" displayValue={money(summary?.sales_summary?.receita_liquida)} detail="Periodo filtrado" icon={<BarChart3 />} />
-        <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail={`${summary?.kpis.reports_validated ?? 0} relatorios validados`} icon={<LineChartIcon />} />
-        <Kpi title="Peso vendido" displayValue={`${formatNumber(summary?.sales_summary?.peso_total)} kg`} detail={`${formatNumber(summary?.sales_summary?.clientes)} clientes distintos`} icon={<Boxes />} />
-      </section>}
-
       {!needsLogin && intelligenceTab === 'executive' && (
-        <section className="dashboard-grid">
-          <Panel title="Toneladas vendidas mes a mes" icon={<LineChartIcon size={17} />}>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <ReLineChart data={monthlySales}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes_label" />
-                  <YAxis tickFormatter={(value) => formatNumber(value)} />
-                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Peso']} />
-                  <Line type="monotone" dataKey="peso_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
-                </ReLineChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
+        <>
+          <section className="kpi-grid">
+            <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} vendas por item`} icon={<CircleDollarSign />} />
+            <Kpi title="Receita liquida" displayValue={money(summary?.sales_summary?.receita_liquida)} detail="Periodo filtrado" icon={<BarChart3 />} />
+            <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail={`${summary?.kpis.reports_validated ?? 0} relatorios validados`} icon={<LineChartIcon />} />
+            <Kpi title="Peso vendido" displayValue={`${formatNumber(summary?.sales_summary?.peso_total)} kg`} detail={`${formatNumber(summary?.sales_summary?.clientes)} clientes distintos`} icon={<Boxes />} />
+          </section>
 
-          <Panel title="Faturamento mes a mes" icon={<CircleDollarSign size={17} />}>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <ReLineChart data={monthlySales}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes_label" />
-                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
-                  <Line type="monotone" dataKey="valor_numero" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
-                </ReLineChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
+          <section className="dashboard-grid">
+            <Panel title="Toneladas vendidas mes a mes" icon={<LineChartIcon size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ReLineChart data={monthlySales}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis tickFormatter={(value) => formatNumber(value)} />
+                    <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Peso']} />
+                    <Line type="monotone" dataKey="peso_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                  </ReLineChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
 
-          <Panel title="Receita e margem por mes" icon={<BarChart3 size={17} />} wide>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <BarChart data={monthlySales}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes_label" />
-                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
-                  <Bar dataKey="valor_numero" fill="#253575" radius={[5, 5, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
+            <Panel title="Faturamento mes a mes" icon={<CircleDollarSign size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ReLineChart data={monthlySales}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                    <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
+                    <Line type="monotone" dataKey="valor_numero" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                  </ReLineChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
 
-          <Panel title="Preco medio R$/kg" icon={<LineChartIcon size={17} />} wide>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <ReLineChart data={monthlySales.map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes_label" />
-                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
-                  <Line type="monotone" dataKey="preco_numero" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
-                </ReLineChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
+            <Panel title="Receita e margem por mes" icon={<BarChart3 size={17} />} wide>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <BarChart data={monthlySales}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                    <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
+                    <Bar dataKey="valor_numero" fill="#253575" radius={[5, 5, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
 
-        </section>
+            <Panel title="Preco medio R$/kg" icon={<LineChartIcon size={17} />} wide>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ReLineChart data={monthlySales.map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                    <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
+                    <Line type="monotone" dataKey="preco_numero" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
+                  </ReLineChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+          </section>
+        </>
       )}
 
       {!needsLogin && intelligenceTab === 'commercial' && (
@@ -450,8 +586,8 @@ function App() {
                 <BarChart data={clientAbcRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="name" width={120} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
+                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey="valor_numero" fill="#253575" radius={[0, 5, 5, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -464,8 +600,8 @@ function App() {
                 <BarChart data={clientDeclineRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} kg`} />
-                  <YAxis type="category" dataKey="name" width={120} />
-                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Queda']} />
+                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Queda']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey="queda_numero" fill="#B42318" radius={[0, 5, 5, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -502,13 +638,426 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && intelligenceTab !== 'executive' && intelligenceTab !== 'commercial' && intelligenceTab !== 'clients' && (
-        <AnalysisTab
-          tab={intelligenceTab}
-          modules={MODULES[intelligenceTab]}
-          monthlySales={monthlySales}
-          familyRows={familyRows}
-        />
+      {!needsLogin && intelligenceTab === 'segments' && (
+        <section className="dashboard-grid">
+          <Panel title="Segmento x toneladas" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={segmentRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
+                  <Bar dataKey={(row) => row.peso_numero / 1000} fill="#253575" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
+          <Panel title="Evolucao mensal por segmento" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={segmentMonthly}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
+                  {topSegments.map((segment, index) => (
+                    <Line key={segment} type="monotone" dataKey={segment} stroke={['#253575', '#F18800', '#12805C', '#B42318'][index]} strokeWidth={2.5} dot={{ r: 2 }} />
+                  ))}
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
+          <Panel title="Preco/kg por segmento" icon={<CircleDollarSign size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={segmentRows.slice(0, 10).map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
+                  <Bar dataKey="preco_numero" fill="#12805C" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
+          <Panel title="Margem por segmento" icon={<AreaIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={[...segmentRows].sort((a, b) => (b.lucro_numero ?? 0) - (a.lucro_numero ?? 0)).slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'Margem']} />
+                  <Bar dataKey="lucro_numero" fill="#6B7280" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && intelligenceTab === 'products' && (
+        <section className="dashboard-grid">
+          <Panel title="Familia x toneladas" icon={<Boxes size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={familyRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
+                  <Bar dataKey={(row) => row.peso_numero / 1000} fill="#253575" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Top SKU" icon={<CircleDollarSign size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={itemRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
+                  <Bar dataKey={(row) => row.peso_numero / 1000} fill="#F18800" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="SKU em queda" icon={<AlertTriangle size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={itemDeclineRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Queda em toneladas']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
+                  <Bar dataKey={(row) => row.queda_numero / 1000} fill="#B42318" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Familia x segmento" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={familySegmentRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
+                  <Bar dataKey={(row) => row.peso_numero / 1000} fill="#12805C" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && intelligenceTab === 'prices' && (
+        <section className="dashboard-grid">
+          <Panel title="Preco medio R$/kg" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={priceMonthly}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
+                  <Line type="monotone" dataKey="avg_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Minimo x medio x maximo" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={priceMonthly}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
+                  <Line type="monotone" dataKey="min_numero" stroke="#8EA0D8" strokeWidth={2} dot={{ r: 2 }} />
+                  <Line type="monotone" dataKey="avg_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="max_numero" stroke="#F18800" strokeWidth={2} dot={{ r: 2 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Preco x toneladas" icon={<CircleDollarSign size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ScatterChart margin={{ top: 12, right: 18, bottom: 12, left: 6 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" dataKey={(row) => row.peso_numero / 1000} name="Toneladas" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <YAxis type="number" dataKey="avg_numero" name="R$/kg" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <Tooltip
+                    cursor={{ strokeDasharray: '3 3' }}
+                    formatter={(value, name) => [name === 'Toneladas' ? `${formatNumber(String(value))} t` : money(String(value)), name]}
+                    labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
+                  />
+                  <Scatter data={priceStatsRows.slice(0, 12)} fill="#12805C" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Outliers comerciais" icon={<AlertTriangle size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={priceOutlierRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
+                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <Tooltip
+                    formatter={(value, name) => [name === 'desvio_numero' ? `${Number(value).toFixed(2)}%` : money(String(value)), name === 'desvio_numero' ? 'Desvio vs familia' : 'R$/kg']}
+                    labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
+                  />
+                  <Bar dataKey="desvio_numero" fill="#B42318" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && intelligenceTab === 'margin' && (
+        <section className="dashboard-grid">
+          <Panel title="MCII por mes" icon={<AreaIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={marginMonthly}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'MCII']} />
+                  <Line type="monotone" dataKey="mcii_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="MCII % por mes" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={marginMonthly}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => `${Number(value).toFixed(1)}%`} />
+                  <Tooltip formatter={(value) => [`${Number(value).toFixed(2)}%`, 'Margem']} />
+                  <Line type="monotone" dataKey="margem_numero" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="MCII/kg por cliente" icon={<CircleDollarSign size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={marginClientRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'MCII/kg']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
+                  <Bar dataKey="margem_kg_numero" fill="#12805C" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Volume x margem por cliente" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ScatterChart margin={{ top: 12, right: 18, bottom: 12, left: 6 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" dataKey={(row) => row.peso_numero / 1000} name="Toneladas" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <YAxis type="number" dataKey="margem_numero" name="MCII %" tickFormatter={(value) => `${Number(value).toFixed(1)}%`} />
+                  <Tooltip
+                    cursor={{ strokeDasharray: '3 3' }}
+                    formatter={(value, name) => [name === 'Toneladas' ? `${formatNumber(String(value))} t` : `${Number(value).toFixed(2)}%`, name]}
+                    labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
+                  />
+                  <Scatter data={marginClientRows.slice(0, 30)} fill="#253575" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && intelligenceTab === 'quotes' && (
+        <section className="dashboard-grid">
+          <Panel title="Kg cotados x vendidos" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={quoteMonthly.map((item) => ({ ...item, cotado_toneladas: item.kg_cotado_numero / 1000, vendido_toneladas: item.kg_vendido_numero / 1000 }))}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name === 'cotado_toneladas' ? 'Cotado' : 'Vendido']} />
+                  <Bar dataKey="cotado_toneladas" fill="#8EA0D8" radius={[5, 5, 0, 0]} />
+                  <Bar dataKey="vendido_toneladas" fill="#253575" radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Conversao mensal" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={quoteMonthly}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => `${Number(value).toFixed(1)}%`} />
+                  <Tooltip formatter={(value) => [`${Number(value).toFixed(2)}%`, 'Conversao']} />
+                  <Line type="monotone" dataKey="conversao_numero" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Conversao por vendedor" icon={<CheckCircle2 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={quoteSellerRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${Number(value).toFixed(1)}%`} />
+                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <Tooltip formatter={(value) => [`${Number(value).toFixed(2)}%`, 'Conversao']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
+                  <Bar dataKey="conversao_numero" fill="#F18800" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Funil comercial" icon={<CircleDollarSign size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={quoteFunnelRows}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" />
+                  <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
+                  <Bar dataKey="toneladas_numero" fill="#253575" radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && intelligenceTab === 'competition' && (
+        <section className="dashboard-grid">
+          <Panel title="Motivo das perdas" icon={<AlertTriangle size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={lossRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'Valor perdido']} />
+                  <Bar dataKey="valor_numero" fill="#B42318" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Perdas por vendedor" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={sellerRows.filter((item) => item.perdido_numero > 0).slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'Valor perdido']} />
+                  <Bar dataKey="perdido_numero" fill="#F18800" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Diferenca de preco" icon={<CircleDollarSign size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={priceOutlierRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
+                  <Bar dataKey="preco_numero" fill="#253575" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Elasticidade real" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={monthlySales.map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes_label" />
+                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
+                  <Line type="monotone" dataKey="preco_numero" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && intelligenceTab === 'map' && (
+        <section className="dashboard-grid">
+          <Panel title="Bolhas por cidade" icon={<AreaIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={cityRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} kg`} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Peso']} />
+                  <Bar dataKey="peso_numero" fill="#253575" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Faturamento por municipio" icon={<CircleDollarSign size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={cityRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
+                  <Bar dataKey="valor_numero" fill="#F18800" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Clientes por cidade" icon={<CheckCircle2 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={cityRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip />
+                  <Bar dataKey="clientes" fill="#12805C" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+          <Panel title="Potencial externo futuro" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={cityRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
+                  <Bar dataKey="valor_numero" fill="#6B7280" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && ['stock', 'purchases', 'forecast', 'logistics'].includes(intelligenceTab) && (
+        <UnavailableTab title={INTELLIGENCE_TABS.find((item) => item.key === intelligenceTab)?.label.replace(/^\d+\s/, '') ?? 'Visao'} />
       )}
 
     </main>
@@ -544,81 +1093,15 @@ function ChartFrame({ children }: { children: ReactNode }) {
   return <div className="chart-frame">{children}</div>
 }
 
-function AnalysisTab({
-  tab,
-  modules,
-  monthlySales,
-  familyRows,
-}: {
-  tab: IntelligenceTab
-  modules: string[]
-  monthlySales: Array<{ mes_label: string; valor_numero: number; peso_numero: number }>
-  familyRows: ChartRow[]
-}) {
-  const valueLabel = tab === 'prices' || tab === 'margin' ? 'R$/kg' : 'Valor total'
-  const priceRows = familyRows.map((item) => ({
-    ...item,
-    preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0,
-  }))
-
+function UnavailableTab({ title }: { title: string }) {
   return (
     <section className="dashboard-grid">
-      <Panel title={modules[0]} icon={<BarChart3 size={17} />}>
-        <ChartFrame>
-          <ResponsiveContainer>
-            <BarChart data={familyRows.slice(0, 8)} layout="vertical" margin={{ left: 92 }}>
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-              <YAxis type="category" dataKey="name" width={120} />
-              <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
-              <Bar dataKey="valor_numero" fill="#253575" radius={[0, 5, 5, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartFrame>
+      <Panel title={title} icon={<Database size={17} />} wide>
+        <div className="empty-state">
+          <strong>Base especifica ainda nao carregada</strong>
+          <span>Esta visao depende de relatorios diferentes da venda por item; deixei sem placeholder para nao misturar indicador operacional com dado comercial.</span>
+        </div>
       </Panel>
-
-      <Panel title={modules[1]} icon={<LineChartIcon size={17} />}>
-        <ChartFrame>
-          <ResponsiveContainer>
-            <ReLineChart data={monthlySales}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="mes_label" />
-              <YAxis tickFormatter={(value) => formatNumber(value)} />
-              <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Peso']} />
-              <Line type="monotone" dataKey="peso_numero" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
-            </ReLineChart>
-          </ResponsiveContainer>
-        </ChartFrame>
-      </Panel>
-
-      <Panel title={modules[2]} icon={<CircleDollarSign size={17} />}>
-        <ChartFrame>
-          <ResponsiveContainer>
-            <BarChart data={priceRows.slice(0, 8)} layout="vertical" margin={{ left: 92 }}>
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-              <YAxis type="category" dataKey="name" width={120} />
-              <Tooltip formatter={(value) => [money(String(value)), valueLabel]} />
-              <Bar dataKey="preco_numero" fill="#12805C" radius={[0, 5, 5, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartFrame>
-      </Panel>
-
-      <Panel title={modules[3]} icon={<AreaIcon size={17} />}>
-        <ChartFrame>
-          <ResponsiveContainer>
-            <BarChart data={familyRows.slice(0, 8)}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" hide />
-              <YAxis tickFormatter={(value) => formatNumber(value)} />
-              <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Peso']} />
-              <Bar dataKey="peso_numero" fill="#6B7280" radius={[5, 5, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartFrame>
-      </Panel>
-
     </section>
   )
 }
