@@ -290,6 +290,8 @@ function App() {
     lucro_numero: Number(item.lucro_bruto),
     mcii_numero: Number(item.margem_contribuicao ?? item.lucro_bruto),
     peso_numero: Number(item.peso_total),
+    preco_venda_kg_numero: Number(item.peso_total) ? Number(item.receita_liquida) / Number(item.peso_total) : 0,
+    mcii_kg_numero: Number(item.peso_total) ? Number(item.margem_contribuicao ?? item.lucro_bruto) / Number(item.peso_total) : 0,
     margem_numero: Number(item.receita_liquida) ? (Number(item.margem_contribuicao ?? item.lucro_bruto) / Number(item.receita_liquida)) * 100 : 0,
   }))
   const marginClientRows = (summary?.sales_summary?.margin_clients ?? []).map((item) => ({
@@ -948,29 +950,28 @@ function App() {
 
       {!needsLogin && intelligenceTab === 'margin' && (
         <section className="dashboard-grid">
-          <Panel title="MCII por mes" icon={<AreaIcon size={17} />}>
+          <Panel title="Preço de venda e margem por mês" icon={<AreaIcon size={17} />} wide>
             <ChartFrame>
               <ResponsiveContainer>
-                <ReLineChart data={marginMonthly}>
+                <ComposedChart data={marginMonthly}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="mes_label" />
-                  <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'MCII']} />
-                  <Line type="monotone" dataKey="mcii_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
-                </ReLineChart>
-              </ResponsiveContainer>
-            </ChartFrame>
-          </Panel>
-          <Panel title="MCII % por mes" icon={<LineChartIcon size={17} />}>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <ReLineChart data={marginMonthly}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes_label" />
-                  <YAxis tickFormatter={(value) => `${Number(value).toFixed(1)}%`} />
-                  <Tooltip formatter={(value) => [`${Number(value).toFixed(2)}%`, 'Margem']} />
-                  <Line type="monotone" dataKey="margem_numero" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
-                </ReLineChart>
+                  <YAxis yAxisId="mc" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis yAxisId="percent" orientation="right" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
+                  <YAxis yAxisId="kg" hide />
+                  <Tooltip
+                    formatter={(value, name) => {
+                      if (name === 'MCII %') return [`${Number(value).toFixed(2)}%`, name]
+                      if (name === 'Preço venda/kg' || name === 'MCII/kg') return [money(String(value)), name]
+                      return [money(String(value)), name]
+                    }}
+                  />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Bar yAxisId="mc" dataKey="mcii_numero" name="MCII R$" fill="#253575" radius={[5, 5, 0, 0]} />
+                  <Line yAxisId="percent" type="monotone" dataKey="margem_numero" name="MCII %" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                  <Line yAxisId="kg" type="monotone" dataKey="preco_venda_kg_numero" name="Preço venda/kg" stroke="#12805C" strokeWidth={2.5} dot={{ r: 2 }} />
+                  <Line yAxisId="kg" type="monotone" dataKey="mcii_kg_numero" name="MCII/kg" stroke="#6B7280" strokeWidth={2.5} dot={{ r: 2 }} />
+                </ComposedChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
