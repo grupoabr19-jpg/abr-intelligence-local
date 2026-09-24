@@ -24,6 +24,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   Line,
   LineChart as ReLineChart,
   ResponsiveContainer,
@@ -40,6 +41,7 @@ const DEFAULT_DATE_FROM = '2026-01-01'
 const DEFAULT_DATE_TO = new Date().toISOString().slice(0, 10)
 const BAR_LIMIT = 6
 const SCATTER_LIMIT = 14
+const LABELED_SCATTER_LIMIT = 8
 
 type IntelligenceTab =
   | 'executive'
@@ -589,7 +591,7 @@ function App() {
                 <BarChart data={clientAbcRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 94 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="shortName" width={112} />
+                  <YAxis type="category" dataKey="shortName" width={112} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey="valor_numero" fill="#253575" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -603,7 +605,7 @@ function App() {
                 <BarChart data={clientDeclineRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 94 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
-                  <YAxis type="category" dataKey="shortName" width={112} />
+                  <YAxis type="category" dataKey="shortName" width={112} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Queda']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey={(row) => row.queda_numero / 1000} fill="#B42318" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -649,7 +651,7 @@ function App() {
                 <BarChart data={segmentRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
-                  <YAxis type="category" dataKey="name" width={120} />
+                  <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
                   <Bar dataKey={(row) => row.peso_numero / 1000} fill="#253575" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -679,7 +681,7 @@ function App() {
                 <BarChart data={segmentRows.slice(0, BAR_LIMIT).map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="name" width={120} />
+                  <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
                   <Bar dataKey="preco_numero" fill="#12805C" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -693,7 +695,7 @@ function App() {
                 <BarChart data={[...segmentRows].sort((a, b) => (b.lucro_numero ?? 0) - (a.lucro_numero ?? 0)).slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="name" width={120} />
+                  <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [money(String(value)), 'Margem']} />
                   <Bar dataKey="lucro_numero" fill="#6B7280" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -711,7 +713,7 @@ function App() {
                 <BarChart data={familyRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
-                  <YAxis type="category" dataKey="name" width={120} />
+                  <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
                   <Bar dataKey={(row) => row.peso_numero / 1000} fill="#253575" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -724,7 +726,7 @@ function App() {
                 <BarChart data={itemRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
-                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <YAxis type="category" dataKey="shortName" width={120} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey={(row) => row.peso_numero / 1000} fill="#F18800" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -737,7 +739,7 @@ function App() {
                 <BarChart data={itemDeclineRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
-                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <YAxis type="category" dataKey="shortName" width={120} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Queda em toneladas']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey={(row) => row.queda_numero / 1000} fill="#B42318" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -750,7 +752,7 @@ function App() {
                 <BarChart data={familySegmentRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
-                  <YAxis type="category" dataKey="name" width={120} />
+                  <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
                   <Bar dataKey={(row) => row.peso_numero / 1000} fill="#12805C" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -813,7 +815,7 @@ function App() {
                 <BarChart data={priceOutlierRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
-                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <YAxis type="category" dataKey="shortName" width={120} interval={0} tickMargin={6} />
                   <Tooltip
                     formatter={(value, name) => [name === 'desvio_numero' ? `${Number(value).toFixed(2)}%` : money(String(value)), name === 'desvio_numero' ? 'Desvio vs familia' : 'R$/kg']}
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
@@ -860,7 +862,7 @@ function App() {
                 <BarChart data={marginClientRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <YAxis type="category" dataKey="shortName" width={120} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [money(String(value)), 'MCII/kg']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey="margem_kg_numero" fill="#12805C" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -879,7 +881,9 @@ function App() {
                     formatter={(value, name) => [name === 'Toneladas' ? `${formatNumber(String(value))} t` : `${Number(value).toFixed(2)}%`, name]}
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
                   />
-                  <Scatter data={marginClientRows.slice(0, SCATTER_LIMIT)} fill="#253575" />
+                  <Scatter data={marginClientRows.slice(0, LABELED_SCATTER_LIMIT)} fill="#253575">
+                    <LabelList dataKey="shortName" position="top" className="chart-point-label" />
+                  </Scatter>
                 </ScatterChart>
               </ResponsiveContainer>
             </ChartFrame>
@@ -922,7 +926,7 @@ function App() {
                 <BarChart data={quoteSellerRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${Number(value).toFixed(1)}%`} />
-                  <YAxis type="category" dataKey="shortName" width={120} />
+                  <YAxis type="category" dataKey="shortName" width={120} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [`${Number(value).toFixed(2)}%`, 'Conversao']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey="conversao_numero" fill="#F18800" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -953,7 +957,7 @@ function App() {
                 <BarChart data={lossRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 94 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="name" width={112} />
+                  <YAxis type="category" dataKey="name" width={112} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [money(String(value)), 'Valor perdido']} />
                   <Bar dataKey="valor_numero" fill="#B42318" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -991,7 +995,7 @@ function App() {
                 <BarChart data={cityRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="shortName" width={108} />
+                  <YAxis type="category" dataKey="shortName" width={108} interval={0} tickMargin={6} />
                   <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
                   <Bar dataKey="valor_numero" fill="#F18800" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -1004,7 +1008,7 @@ function App() {
                 <BarChart data={[...cityRows].sort((a, b) => b.clientes - a.clientes).slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" allowDecimals={false} />
-                  <YAxis type="category" dataKey="shortName" width={108} />
+                  <YAxis type="category" dataKey="shortName" width={108} interval={0} tickMargin={6} />
                   <Tooltip />
                   <Bar dataKey="clientes" fill="#12805C" radius={[0, 5, 5, 0]} />
                 </BarChart>

@@ -476,6 +476,12 @@ h1 {
   font-size: 12px;
 }
 
+.chart-point-label {
+  fill: #526079;
+  font-size: 9px;
+  font-weight: 700;
+}
+
 .table-wrap {
   overflow: auto;
   border: 1px solid #e2e8f0;
