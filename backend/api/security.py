@@ -46,15 +46,17 @@ def valid_dashboard_session(token: str | None) -> bool:
     return hmac.compare_digest(signature, expected)
 
 
-def set_dashboard_session_cookie(response: Response) -> None:
+def set_dashboard_session_cookie(response: Response, token: str | None = None) -> str:
+    session_token = token or create_dashboard_session()
     response.set_cookie(
         key=DASHBOARD_SESSION_COOKIE,
-        value=create_dashboard_session(),
+        value=session_token,
         httponly=True,
         samesite="lax",
         max_age=DASHBOARD_SESSION_TTL_SECONDS,
         path="/",
     )
+    return session_token
 
 
 def clear_dashboard_session_cookie(response: Response) -> None:
@@ -74,11 +76,12 @@ async def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
 
 async def require_dashboard_read_key(
     x_api_key: str | None = Header(default=None),
+    x_dashboard_session: str | None = Header(default=None),
     abr_dashboard_session: str | None = Cookie(default=None, alias=DASHBOARD_SESSION_COOKIE),
 ) -> None:
     settings = get_api_settings()
     allowed_keys = {key for key in (settings.abr_api_key, settings.abr_dashboard_read_key) if key}
-    if valid_dashboard_session(abr_dashboard_session):
+    if valid_dashboard_session(abr_dashboard_session) or valid_dashboard_session(x_dashboard_session):
         return
     if not allowed_keys:
         return

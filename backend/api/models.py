@@ -98,6 +98,7 @@ class DashboardLoginRequest(BaseModel):
 
 class DashboardSessionResponse(BaseModel):
     authenticated: bool
+    session_token: str | None = None
 
 
 class IntelligenceDomainInfo(BaseModel):

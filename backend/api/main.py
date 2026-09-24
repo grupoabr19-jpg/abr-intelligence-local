@@ -76,8 +76,8 @@ async def dashboard_login(request: DashboardLoginRequest, response: Response) ->
     expected_password = dashboard_password()
     if not expected_password or not hmac.compare_digest(request.password, expected_password):
         raise HTTPException(status_code=401, detail="Invalid dashboard password.")
-    set_dashboard_session_cookie(response)
-    return DashboardSessionResponse(authenticated=True)
+    session_token = set_dashboard_session_cookie(response)
+    return DashboardSessionResponse(authenticated=True, session_token=session_token)
 
 
 @app.post("/v1/auth/dashboard-logout", response_model=DashboardSessionResponse, tags=["auth"])
