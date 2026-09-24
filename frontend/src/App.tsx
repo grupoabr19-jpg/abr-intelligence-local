@@ -42,6 +42,7 @@ const DEFAULT_DATE_FROM = '2026-01-01'
 const DEFAULT_DATE_TO = new Date().toISOString().slice(0, 10)
 const BAR_LIMIT = 6
 const SCATTER_LIMIT = 14
+const FORECAST_WEIGHTS = [0.5, 0.3, 0.2]
 
 type IntelligenceTab =
   | 'executive'
@@ -198,6 +199,7 @@ function App() {
     lucro_numero: Number(item.lucro_bruto ?? 0),
     mcii_numero: Number(item.margem_contribuicao ?? 0),
     peso_numero: Number(item.peso_total),
+    toneladas_numero: Number(item.peso_total) / 1000,
     perdido_numero: Number(item.valor_perdido ?? 0),
   }))
   const familyRows: ChartRow[] = (summary?.sales_summary?.families ?? []).map((item) => ({
@@ -347,12 +349,23 @@ function App() {
   const totalSalesWeight = Number(summary?.sales_summary?.peso_total ?? 0)
   const sortedMonthlySales = [...monthlySales].sort((a, b) => String(a.mes).localeCompare(String(b.mes)))
   const recentForecastBase = sortedMonthlySales.slice(-3)
-  const forecastNextKg = recentForecastBase.length
-    ? recentForecastBase.reduce((sum, item) => sum + item.peso_numero, 0) / recentForecastBase.length
+  const activeForecastWeights = FORECAST_WEIGHTS.slice(0, recentForecastBase.length)
+  const activeForecastWeightTotal = activeForecastWeights.reduce((sum, weight) => sum + weight, 0) || 1
+  const forecastBaseKg = recentForecastBase.length
+    ? recentForecastBase
+        .slice()
+        .reverse()
+        .reduce((sum, item, index) => sum + item.peso_numero * ((activeForecastWeights[index] ?? 0) / activeForecastWeightTotal), 0)
     : 0
+  const lastMonthKey = sortedMonthlySales.at(-1)?.mes
+  const nextMonthKey = lastMonthKey ? addMonths(lastMonthKey, 1).split('-')[1] : null
+  const averageMonthlyKg = sortedMonthlySales.length ? sortedMonthlySales.reduce((sum, item) => sum + item.peso_numero, 0) / sortedMonthlySales.length : 0
+  const nextMonthHistory = nextMonthKey ? sortedMonthlySales.filter((item) => String(item.mes).split('-')[1] === nextMonthKey) : []
+  const nextMonthAverageKg = nextMonthHistory.length ? nextMonthHistory.reduce((sum, item) => sum + item.peso_numero, 0) / nextMonthHistory.length : averageMonthlyKg
+  const seasonalFactor = averageMonthlyKg ? nextMonthAverageKg / averageMonthlyKg : 1
+  const forecastNextKg = forecastBaseKg * seasonalFactor
   const currentMonthKg = sortedMonthlySales.at(-1)?.peso_numero ?? 0
   const forecastChange = currentMonthKg ? ((forecastNextKg - currentMonthKg) / currentMonthKg) * 100 : 0
-  const lastMonthKey = sortedMonthlySales.at(-1)?.mes
   const forecastMonths = lastMonthKey
     ? [1, 2, 3].map((offset) => ({
         mes: addMonths(lastMonthKey, offset),
@@ -536,7 +549,7 @@ function App() {
             <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} vendas por item`} icon={<CircleDollarSign />} />
             <Kpi title="Receita liquida" displayValue={money(summary?.sales_summary?.receita_liquida)} detail="Periodo filtrado" icon={<BarChart3 />} />
             <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail={`${summary?.kpis.reports_validated ?? 0} relatorios validados`} icon={<LineChartIcon />} />
-            <Kpi title="Peso vendido" displayValue={`${formatNumber(summary?.sales_summary?.peso_total)} kg`} detail={`${formatNumber(summary?.sales_summary?.clientes)} clientes distintos`} icon={<Boxes />} />
+            <Kpi title="Toneladas vendidas" displayValue={`${formatNumber(Number(summary?.sales_summary?.peso_total ?? 0) / 1000)} t`} detail={`${formatNumber(summary?.sales_summary?.clientes)} clientes distintos`} icon={<Boxes />} />
           </section>
 
           <section className="dashboard-grid">
@@ -546,9 +559,9 @@ function App() {
                   <ReLineChart data={monthlySales}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="mes_label" />
-                    <YAxis tickFormatter={(value) => formatNumber(value)} />
-                    <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Peso']} />
-                    <Line type="monotone" dataKey="peso_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                    <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
+                    <Line type="monotone" dataKey="toneladas_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
                   </ReLineChart>
                 </ResponsiveContainer>
               </ChartFrame>
@@ -588,7 +601,7 @@ function App() {
             <Panel title="Preco medio R$/kg" icon={<LineChartIcon size={17} />} wide>
               <ChartFrame>
                 <ResponsiveContainer>
-                  <ReLineChart data={monthlySales.map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))}>
+                  <ReLineChart data={monthlySales.map((item) => ({ ...item, preco_numero: item.peso_numero ? item.receita_numero / item.peso_numero : 0 }))}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="mes_label" />
                     <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
@@ -608,7 +621,7 @@ function App() {
             <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} linhas`} icon={<CircleDollarSign />} />
             <Kpi title="Receita liquida" displayValue={money(summary?.sales_summary?.receita_liquida)} detail="Base de venda por item" icon={<BarChart3 />} />
             <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail="Margem antes dos rateios" icon={<LineChartIcon />} />
-            <Kpi title="Peso total" displayValue={`${formatNumber(summary?.sales_summary?.peso_total)} kg`} detail={`${money(summary?.sales_summary?.preco_medio_kg)} por kg`} icon={<Boxes />} />
+            <Kpi title="Toneladas vendidas" displayValue={`${formatNumber(Number(summary?.sales_summary?.peso_total ?? 0) / 1000)} t`} detail={`${money(summary?.sales_summary?.preco_medio_kg)} por kg`} icon={<Boxes />} />
             <Kpi title="Clientes" value={summary?.sales_summary?.clientes} detail="Clientes distintos no periodo" icon={<CheckCircle2 />} />
             <Kpi title="Itens" value={summary?.sales_summary?.itens} detail="Itens distintos vendidos" icon={<TableProperties />} />
           </section>
@@ -769,7 +782,7 @@ function App() {
           <Panel title="Preco/kg por segmento" icon={<CircleDollarSign size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={segmentRows.slice(0, BAR_LIMIT).map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))} layout="vertical" margin={{ left: 86 }}>
+                <BarChart data={segmentRows.slice(0, BAR_LIMIT).map((item) => ({ ...item, preco_numero: item.peso_numero ? (item.receita_numero ?? 0) / item.peso_numero : 0 }))} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                   <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
@@ -1130,7 +1143,7 @@ function App() {
       {!needsLogin && intelligenceTab === 'forecast' && (
         <>
           <section className="kpi-grid">
-            <Kpi title="Forecast proximo mes" displayValue={`${formatNumber(forecastNextKg / 1000)} t`} detail="Media movel dos ultimos 3 meses" icon={<Gauge />} />
+            <Kpi title="Forecast proximo mes" displayValue={`${formatNumber(forecastNextKg / 1000)} t`} detail="Media ponderada recente ajustada por sazonalidade" icon={<Gauge />} />
             <Kpi title="Variacao vs mes atual" displayValue={`${forecastChange >= 0 ? '+' : ''}${forecastChange.toFixed(1)}%`} detail="Comparado ao ultimo mes da base" icon={<LineChartIcon />} />
             <Kpi title="Cotacoes no periodo" displayValue={`${formatNumber(quotedKg / 1000)} t`} detail="Radar antecipado de demanda" icon={<TableProperties />} />
             <Kpi title="Historico disponivel" displayValue={`${formatNumber(sortedMonthlySales.length)} meses`} detail="Base usada para tendencia e sazonalidade" icon={<CalendarDays />} />
