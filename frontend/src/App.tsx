@@ -1033,7 +1033,7 @@ function App() {
 
       {!needsLogin && intelligenceTab === 'competition' && (
         <section className="dashboard-grid">
-          <Panel title="Motivo das perdas" icon={<AlertTriangle size={17} />}>
+          <Panel title="Valor perdido por motivo" icon={<AlertTriangle size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
                 <BarChart data={lossRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 94 }}>
@@ -1046,9 +1046,19 @@ function App() {
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
-          <UnavailablePanel title="Perdas por concorrente" />
-          <UnavailablePanel title="Diferenca de preco" />
-          <UnavailablePanel title="Elasticidade real" />
+          <Panel title="Quantidade de perdas por motivo" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={[...lossRows].sort((a, b) => (b.linhas ?? 0) - (a.linhas ?? 0)).slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 94 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis type="category" dataKey="name" width={112} interval={0} tickMargin={6} />
+                  <Tooltip formatter={(value) => [formatNumber(String(value)), 'Ocorrencias']} />
+                  <Bar dataKey="linhas" fill="#F18800" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
         </section>
       )}
 
