@@ -85,21 +85,21 @@ function monthLabel(value: string) {
   return `${month}/${year.slice(2)}`
 }
 
-const INTELLIGENCE_TABS: Array<{ key: IntelligenceTab; label: string; question: string; icon: ReactNode }> = [
-  { key: 'executive', label: '01 Executivo', question: 'Como esta o negocio?', icon: <Gauge size={16} /> },
-  { key: 'commercial', label: '02 Comercial', question: 'Quem esta vendendo?', icon: <CircleDollarSign size={16} /> },
-  { key: 'clients', label: '03 Clientes', question: 'Quem compra e quem esta parando?', icon: <CheckCircle2 size={16} /> },
-  { key: 'segments', label: '04 Segmentos', question: 'Qual setor esta crescendo?', icon: <BarChart3 size={16} /> },
-  { key: 'products', label: '05 Produtos', question: 'O que esta vendendo?', icon: <Boxes size={16} /> },
-  { key: 'prices', label: '06 Precos', question: 'Quanto estamos cobrando?', icon: <LineChartIcon size={16} /> },
-  { key: 'margin', label: '07 Margem', question: 'Onde ganhamos dinheiro?', icon: <AreaIcon size={16} /> },
-  { key: 'quotes', label: '08 Cotacoes', question: 'Onde esta a demanda futura?', icon: <TableProperties size={16} /> },
-  { key: 'competition', label: '09 Concorrencia', question: 'Onde estamos perdendo?', icon: <AlertTriangle size={16} /> },
-  { key: 'stock', label: '10 Estoque', question: 'O que temos e quanto gira?', icon: <Boxes size={16} /> },
-  { key: 'purchases', label: '11 Compras', question: 'Estamos comprando bem?', icon: <Database size={16} /> },
-  { key: 'forecast', label: '12 Forecast', question: 'O que devemos esperar?', icon: <LineChartIcon size={16} /> },
-  { key: 'logistics', label: '13 Logistica', question: 'Onde o frete afeta resultado?', icon: <SlidersHorizontal size={16} /> },
-  { key: 'map', label: '14 Mapa Comercial', question: 'Onde estao mercado e oportunidades?', icon: <AreaIcon size={16} /> },
+const INTELLIGENCE_TABS: Array<{ key: IntelligenceTab; label: string; icon: ReactNode }> = [
+  { key: 'executive', label: '01 Executivo', icon: <Gauge size={16} /> },
+  { key: 'commercial', label: '02 Comercial', icon: <CircleDollarSign size={16} /> },
+  { key: 'clients', label: '03 Clientes', icon: <CheckCircle2 size={16} /> },
+  { key: 'segments', label: '04 Segmentos', icon: <BarChart3 size={16} /> },
+  { key: 'products', label: '05 Produtos', icon: <Boxes size={16} /> },
+  { key: 'prices', label: '06 Precos', icon: <LineChartIcon size={16} /> },
+  { key: 'margin', label: '07 Margem', icon: <AreaIcon size={16} /> },
+  { key: 'quotes', label: '08 Cotacoes', icon: <TableProperties size={16} /> },
+  { key: 'competition', label: '09 Concorrencia', icon: <AlertTriangle size={16} /> },
+  { key: 'stock', label: '10 Estoque', icon: <Boxes size={16} /> },
+  { key: 'purchases', label: '11 Compras', icon: <Database size={16} /> },
+  { key: 'forecast', label: '12 Forecast', icon: <LineChartIcon size={16} /> },
+  { key: 'logistics', label: '13 Logistica', icon: <SlidersHorizontal size={16} /> },
+  { key: 'map', label: '14 Mapa Comercial', icon: <AreaIcon size={16} /> },
 ]
 
 const MODULES: Record<IntelligenceTab, string[]> = {
@@ -197,7 +197,6 @@ function App() {
     },
   ]
 
-  const activeModule = INTELLIGENCE_TABS.find((item) => item.key === intelligenceTab) ?? INTELLIGENCE_TABS[0]
   const monthlySales = (summary?.sales_summary?.monthly ?? []).map((item) => ({
     ...item,
     mes_label: monthLabel(item.mes),
@@ -233,7 +232,7 @@ function App() {
             <div className="header-status">
               <span className="status-pill">
                 <ShieldCheck size={15} />
-                Cada tela responde uma decisao
+                Inteligencia interna
               </span>
               <button className="icon-button" onClick={load} disabled={loading} title="Atualizar">
                 <RefreshCw size={17} className={loading ? 'spin' : ''} />
@@ -339,16 +338,6 @@ function App() {
         <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail={`${summary?.kpis.reports_validated ?? 0} relatorios validados`} icon={<LineChartIcon />} />
         <Kpi title="Peso vendido" displayValue={`${formatNumber(summary?.sales_summary?.peso_total)} kg`} detail={`${formatNumber(summary?.sales_summary?.clientes)} clientes distintos`} icon={<Boxes />} />
       </section>}
-
-      {!needsLogin && (
-        <section className="decision-strip">
-          <div>
-            <span>Inteligencia interna</span>
-            <strong>{activeModule.label}</strong>
-          </div>
-          <small>Graficos do periodo filtrado, com fontes tecnicas em menus de apoio.</small>
-        </section>
-      )}
 
       {!needsLogin && intelligenceTab === 'executive' && (
         <section className="dashboard-grid">

@@ -366,35 +366,6 @@ h1 {
   box-shadow: inset 0 -3px 0 var(--abr-orange);
 }
 
-.decision-strip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin: 0 0 14px;
-  padding: 14px 16px;
-  border: 1px solid rgba(37, 53, 117, 0.18);
-  border-left: 5px solid var(--abr-orange);
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 14px 30px rgba(20, 29, 64, 0.06);
-}
-
-.decision-strip span,
-.decision-strip small {
-  color: #526079;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.decision-strip strong {
-  display: block;
-  margin-top: 3px;
-  color: var(--abr-blue);
-  font-size: clamp(18px, 2.2vw, 28px);
-  line-height: 1.08;
-}
-
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -683,11 +654,6 @@ tbody tr:hover {
   .front-switch,
   .header-status {
     justify-content: flex-start;
-  }
-
-  .decision-strip {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .brand-mark {
