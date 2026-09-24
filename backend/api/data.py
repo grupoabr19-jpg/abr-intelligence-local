@@ -254,7 +254,13 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                       {rec_liquida} as receita_liquida,
                       {lucro_bruto} as lucro_bruto,
                       {peso_total} as peso_total,
-                      nullif(payload_original->>'CodCliente', '') as cliente,
+                      nullif(payload_original->>'CodCliente', '') as cliente_codigo,
+                      coalesce(
+                        nullif(payload_original->>'Cliente', ''),
+                        nullif(payload_original->>'Nome Cliente', ''),
+                        nullif(payload_original->>'CodCliente', ''),
+                        'Sem cliente'
+                      ) as cliente,
                       nullif(payload_original->>'Item', '') as item,
                       coalesce(nullif(payload_original->>'Familia', ''), 'Sem familia') as familia
                     from public.staging_dados
@@ -301,14 +307,133 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                       order by valor_total desc
                       limit 10
                     ) family_rows
-                  ) as families
+                  ) as families,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(client_rows) order by client_rows.valor_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        cliente,
+                        count(*)::int as linhas,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        max(sale_date) as ultima_compra
+                      from sales
+                      group by 1
+                      order by valor_total desc
+                      limit 20
+                    ) client_rows
+                  ) as clients_abc,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(drop_rows) order by drop_rows.queda_peso desc), '[]'::jsonb)
+                    from (
+                      with bounds as (
+                        select date_trunc('month', max(sale_date))::date as latest_month
+                        from sales
+                        where sale_date is not null
+                      ),
+                      monthly_clients as (
+                        select
+                          s.cliente,
+                          date_trunc('month', s.sale_date)::date as mes,
+                          coalesce(sum(s.peso_total), 0) as peso_total
+                        from sales s
+                        where s.sale_date is not null
+                        group by 1, 2
+                      )
+                      select
+                        mc.cliente,
+                        coalesce(sum(mc.peso_total) filter (where mc.mes = (select latest_month - interval '1 month' from bounds)), 0) as peso_anterior,
+                        coalesce(sum(mc.peso_total) filter (where mc.mes = (select latest_month from bounds)), 0) as peso_atual,
+                        coalesce(sum(mc.peso_total) filter (where mc.mes = (select latest_month - interval '1 month' from bounds)), 0)
+                          - coalesce(sum(mc.peso_total) filter (where mc.mes = (select latest_month from bounds)), 0) as queda_peso
+                      from monthly_clients mc
+                      group by 1
+                      having coalesce(sum(mc.peso_total) filter (where mc.mes = (select latest_month - interval '1 month' from bounds)), 0)
+                          - coalesce(sum(mc.peso_total) filter (where mc.mes = (select latest_month from bounds)), 0) > 0
+                      order by queda_peso desc
+                      limit 20
+                    ) drop_rows
+                  ) as clients_decline,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(rfm_rows) order by rfm_rows.total desc), '[]'::jsonb)
+                    from (
+                      with client_rfm as (
+                        select
+                          cliente,
+                          (select max(sale_date) from sales) - max(sale_date) as recencia_dias,
+                          count(*)::int as frequencia,
+                          coalesce(sum(valor_total), 0) as valor_total
+                        from sales
+                        where sale_date is not null
+                        group by 1
+                      )
+                      select
+                        case
+                          when recencia_dias <= 30 and frequencia >= 8 then 'VIP'
+                          when recencia_dias <= 60 and frequencia >= 4 then 'Recorrente'
+                          when recencia_dias <= 90 then 'Promissor'
+                          when recencia_dias <= 180 then 'Em risco'
+                          else 'Dormindo'
+                        end as segmento,
+                        count(*)::int as total
+                      from client_rfm
+                      group by 1
+                    ) rfm_rows
+                  ) as rfm_segments,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(recency_rows) order by recency_rows.ordem), '[]'::jsonb)
+                    from (
+                      with client_last_purchase as (
+                        select
+                          cliente,
+                          (select max(sale_date) from sales) - max(sale_date) as recencia_dias
+                        from sales
+                        where sale_date is not null
+                        group by 1
+                      )
+                      select
+                        case
+                          when recencia_dias <= 30 then '0-30 dias'
+                          when recencia_dias <= 60 then '31-60 dias'
+                          when recencia_dias <= 90 then '61-90 dias'
+                          when recencia_dias <= 180 then '91-180 dias'
+                          else '+180 dias'
+                        end as faixa,
+                        case
+                          when recencia_dias <= 30 then 1
+                          when recencia_dias <= 60 then 2
+                          when recencia_dias <= 90 then 3
+                          when recencia_dias <= 180 then 4
+                          else 5
+                        end as ordem,
+                        count(*)::int as clientes
+                      from client_last_purchase
+                      group by 1, 2
+                    ) recency_rows
+                  ) as recency_buckets
                 from sales
                 """,
                 params,
             )
-            row = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0, None, None, [], [])
+            row = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0, None, None, [], [], [], [], [], [])
 
-    linhas, total, liquida, lucro, peso, clientes, itens, min_date, max_date, monthly_rows, family_rows = row
+    (
+        linhas,
+        total,
+        liquida,
+        lucro,
+        peso,
+        clientes,
+        itens,
+        min_date,
+        max_date,
+        monthly_rows,
+        family_rows,
+        client_rows,
+        decline_rows,
+        rfm_rows,
+        recency_rows,
+    ) = row
 
     average_price_kg = Decimal("0")
     if peso:
@@ -332,6 +457,25 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
         }
         for item in family_rows
     ]
+    clients_abc = [
+        {
+            "cliente": item["cliente"],
+            "linhas": item["linhas"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+            "ultima_compra": str(item["ultima_compra"]) if item.get("ultima_compra") else None,
+        }
+        for item in client_rows
+    ]
+    clients_decline = [
+        {
+            "cliente": item["cliente"],
+            "peso_anterior": f"{Decimal(str(item['peso_anterior'])):.2f}",
+            "peso_atual": f"{Decimal(str(item['peso_atual'])):.2f}",
+            "queda_peso": f"{Decimal(str(item['queda_peso'])):.2f}",
+        }
+        for item in decline_rows
+    ]
 
     return {
         "linhas": linhas,
@@ -346,6 +490,10 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
         "data_max": max_date.isoformat() if max_date else None,
         "monthly": monthly,
         "families": families,
+        "clients_abc": clients_abc,
+        "clients_decline": clients_decline,
+        "rfm_segments": rfm_rows,
+        "recency_buckets": recency_rows,
     }
 
 

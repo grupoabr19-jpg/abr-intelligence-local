@@ -209,6 +209,15 @@ function App() {
     peso_numero: Number(item.peso_total),
     linhas: item.linhas,
   }))
+  const clientAbcRows = (summary?.sales_summary?.clients_abc ?? []).map((item) => ({
+    name: item.cliente,
+    valor_numero: Number(item.valor_total),
+    peso_numero: Number(item.peso_total),
+  }))
+  const clientDeclineRows = (summary?.sales_summary?.clients_decline ?? []).map((item) => ({
+    name: item.cliente,
+    queda_numero: Number(item.queda_peso),
+  }))
 
   return (
     <main className="app-shell">
@@ -457,7 +466,67 @@ function App() {
         </>
       )}
 
-      {!needsLogin && intelligenceTab !== 'executive' && intelligenceTab !== 'commercial' && (
+      {!needsLogin && intelligenceTab === 'clients' && (
+        <section className="dashboard-grid">
+          <Panel title="Curva ABC" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={clientAbcRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
+                  <Bar dataKey="valor_numero" fill="#253575" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
+          <Panel title="Principais clientes em queda" icon={<AlertTriangle size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={clientDeclineRows.slice(0, 12)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} kg`} />
+                  <YAxis type="category" dataKey="name" width={120} />
+                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} kg`, 'Queda']} />
+                  <Bar dataKey="queda_numero" fill="#B42318" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
+          <Panel title="RFM" icon={<CheckCircle2 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={summary?.sales_summary?.rfm_segments ?? []}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="segmento" />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="total" fill="#12805C" radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+
+          <Panel title="Dias desde ultima compra" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={summary?.sales_summary?.recency_buckets ?? []}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="faixa" />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="clientes" fill="#F18800" radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && intelligenceTab !== 'executive' && intelligenceTab !== 'commercial' && intelligenceTab !== 'clients' && (
         <AnalysisTab
           tab={intelligenceTab}
           modules={MODULES[intelligenceTab]}

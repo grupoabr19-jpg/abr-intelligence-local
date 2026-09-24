@@ -62,6 +62,10 @@ export type DashboardSummary = {
     cache_refreshed_at?: string | null
     monthly: Array<{ mes: string; linhas: number; valor_total: string; peso_total: string }>
     families: Array<{ familia: string; linhas: number; valor_total: string; peso_total: string }>
+    clients_abc?: Array<{ cliente: string; linhas: number; valor_total: string; peso_total: string; ultima_compra: string | null }>
+    clients_decline?: Array<{ cliente: string; peso_anterior: string; peso_atual: string; queda_peso: string }>
+    rfm_segments?: Array<{ segmento: string; total: number }>
+    recency_buckets?: Array<{ faixa: string; ordem: number; clientes: number }>
   }
   sales_regions: Array<{ canal: string; regiao: string; linhas: number; valor_total: string }>
   warnings: string[]
