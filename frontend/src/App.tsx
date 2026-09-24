@@ -563,7 +563,8 @@ function App() {
                     <XAxis dataKey="mes_label" />
                     <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
                     <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
-                    <Line type="monotone" dataKey="toneladas_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Line type="monotone" dataKey="toneladas_numero" name="Toneladas vendidas" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
                   </ReLineChart>
                 </ResponsiveContainer>
               </ChartFrame>
@@ -576,8 +577,9 @@ function App() {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="mes_label" />
                     <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                    <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
-                    <Line type="monotone" dataKey="valor_numero" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                    <Tooltip formatter={(value, name) => [money(String(value)), name]} />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Line type="monotone" dataKey="valor_numero" name="Faturamento" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
                   </ReLineChart>
                 </ResponsiveContainer>
               </ChartFrame>
@@ -591,7 +593,7 @@ function App() {
                     <XAxis dataKey="mes_label" />
                     <YAxis yAxisId="left" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                     <YAxis yAxisId="right" orientation="right" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                    <Tooltip formatter={(value, name) => [money(String(value)), name === 'receita_numero' ? 'Receita liquida' : 'MC']} />
+                    <Tooltip formatter={(value, name) => [money(String(value)), name]} />
                     <Legend verticalAlign="bottom" height={24} />
                     <Bar yAxisId="left" dataKey="receita_numero" name="Receita liquida" fill="#253575" radius={[5, 5, 0, 0]} />
                     <Line yAxisId="right" type="monotone" dataKey="mcii_numero" name="MC" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
@@ -607,8 +609,9 @@ function App() {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="mes_label" />
                     <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                    <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
-                    <Line type="monotone" dataKey="preco_numero" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
+                    <Tooltip formatter={(value, name) => [money(String(value)), name]} />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Line type="monotone" dataKey="preco_numero" name="Preço médio R$/kg" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
                   </ReLineChart>
                 </ResponsiveContainer>
               </ChartFrame>
@@ -771,10 +774,10 @@ function App() {
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="mes_label" />
                   <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
-                  <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Toneladas']} />
+                  <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name]} />
                   <Legend verticalAlign="bottom" height={24} iconType="line" />
                   {topSegments.map((segment, index) => (
-                    <Line key={segment} type="monotone" dataKey={segment} stroke={['#253575', '#F18800', '#12805C', '#B42318'][index]} strokeWidth={2.5} dot={{ r: 2 }} />
+                    <Line key={segment} type="monotone" dataKey={segment} name={segment} stroke={['#253575', '#F18800', '#12805C', '#B42318'][index]} strokeWidth={2.5} dot={{ r: 2 }} />
                   ))}
                 </ReLineChart>
               </ResponsiveContainer>
@@ -891,8 +894,9 @@ function App() {
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="mes_label" />
                   <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
-                  <Line type="monotone" dataKey="avg_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                  <Tooltip formatter={(value, name) => [money(String(value)), name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Line type="monotone" dataKey="avg_numero" name="Preço médio R$/kg" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
                 </ReLineChart>
               </ResponsiveContainer>
             </ChartFrame>
@@ -904,10 +908,11 @@ function App() {
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="mes_label" />
                   <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <Tooltip formatter={(value) => [money(String(value)), 'R$/kg']} />
-                  <Line type="monotone" dataKey="min_numero" stroke="#8EA0D8" strokeWidth={2} dot={{ r: 2 }} />
-                  <Line type="monotone" dataKey="avg_numero" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
-                  <Line type="monotone" dataKey="max_numero" stroke="#F18800" strokeWidth={2} dot={{ r: 2 }} />
+                  <Tooltip formatter={(value, name) => [money(String(value)), name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Line type="monotone" dataKey="min_numero" name="Mínimo R$/kg" stroke="#8EA0D8" strokeWidth={2} dot={{ r: 2 }} />
+                  <Line type="monotone" dataKey="avg_numero" name="Médio R$/kg" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="max_numero" name="Máximo R$/kg" stroke="#F18800" strokeWidth={2} dot={{ r: 2 }} />
                 </ReLineChart>
               </ResponsiveContainer>
             </ChartFrame>
@@ -1016,7 +1021,7 @@ function App() {
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="mes_label" />
                   <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
-                  <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name === 'cotado_toneladas' ? 'Cotado' : 'Vendido']} />
+                  <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name]} />
                   <Legend verticalAlign="bottom" height={24} />
                   <Line type="monotone" dataKey="cotado_toneladas" name="Cotado" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
                   <Line type="monotone" dataKey="vendido_toneladas" name="Vendido" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
@@ -1031,8 +1036,9 @@ function App() {
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="mes_label" />
                   <YAxis tickFormatter={(value) => `${Number(value).toFixed(1)}%`} />
-                  <Tooltip formatter={(value) => [`${Number(value).toFixed(2)}%`, 'Conversao']} />
-                  <Line type="monotone" dataKey="conversao_numero" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
+                  <Tooltip formatter={(value, name) => [`${Number(value).toFixed(2)}%`, name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Line type="monotone" dataKey="conversao_numero" name="Conversão" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
                 </ReLineChart>
               </ResponsiveContainer>
             </ChartFrame>
@@ -1158,9 +1164,10 @@ function App() {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="mes_label" />
                     <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
-                    <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name === 'real_toneladas' ? 'Real' : 'Forecast']} />
-                    <Line type="monotone" dataKey="real_toneladas" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} connectNulls={false} />
-                    <Line type="monotone" dataKey="forecast_toneladas" stroke="#F18800" strokeWidth={3} strokeDasharray="6 5" dot={{ r: 3 }} connectNulls={false} />
+                    <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name]} />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Line type="monotone" dataKey="real_toneladas" name="Real" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} connectNulls={false} />
+                    <Line type="monotone" dataKey="forecast_toneladas" name="Forecast" stroke="#F18800" strokeWidth={3} strokeDasharray="6 5" dot={{ r: 3 }} connectNulls={false} />
                   </ReLineChart>
                 </ResponsiveContainer>
               </ChartFrame>
@@ -1173,9 +1180,10 @@ function App() {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="mes_label" />
                     <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
-                    <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name === 'media_movel' ? 'Media movel 3 meses' : 'Vendido']} />
-                    <Line type="monotone" dataKey="toneladas" stroke="#8EA0D8" strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="media_movel" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+                    <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name]} />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Line type="monotone" dataKey="toneladas" name="Vendido" stroke="#8EA0D8" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="media_movel" name="Média móvel 3 meses" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
                   </ReLineChart>
                 </ResponsiveContainer>
               </ChartFrame>
@@ -1244,9 +1252,10 @@ function App() {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="mes_label" />
                     <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
-                    <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name === 'cotado_toneladas' ? 'Cotado' : 'Vendido']} />
-                    <Line type="monotone" dataKey="cotado_toneladas" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
-                    <Line type="monotone" dataKey="vendido_toneladas" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+                    <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name]} />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Line type="monotone" dataKey="cotado_toneladas" name="Cotado" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                    <Line type="monotone" dataKey="vendido_toneladas" name="Vendido" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
                   </ReLineChart>
                 </ResponsiveContainer>
               </ChartFrame>
