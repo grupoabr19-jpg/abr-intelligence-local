@@ -38,6 +38,8 @@ import abrLogoWhite from './abr-logo-white.svg'
 
 const DEFAULT_DATE_FROM = '2026-01-01'
 const DEFAULT_DATE_TO = new Date().toISOString().slice(0, 10)
+const BAR_LIMIT = 6
+const SCATTER_LIMIT = 14
 
 type IntelligenceTab =
   | 'executive'
@@ -75,7 +77,7 @@ function monthLabel(value: string) {
   return `${month}/${year.slice(2)}`
 }
 
-function abbreviateLabel(value: string, maxLength = 24) {
+function abbreviateLabel(value: string, maxLength = 18) {
   const normalized = value.replace(/\s+/g, ' ').trim()
   if (normalized.length <= maxLength) return normalized
   const ignored = new Set(['DE', 'DA', 'DO', 'DAS', 'DOS', 'E'])
@@ -196,13 +198,13 @@ function App() {
   })).sort((a, b) => b.peso_numero - a.peso_numero)
   const clientAbcRows = (summary?.sales_summary?.clients_abc ?? []).map((item) => ({
     name: item.cliente,
-    shortName: abbreviateLabel(item.cliente),
+    shortName: abbreviateLabel(item.cliente, 16),
     valor_numero: Number(item.valor_total),
     peso_numero: Number(item.peso_total),
   }))
   const clientDeclineRows = (summary?.sales_summary?.clients_decline ?? []).map((item) => ({
     name: item.cliente,
-    shortName: abbreviateLabel(item.cliente),
+    shortName: abbreviateLabel(item.cliente, 16),
     queda_numero: Number(item.queda_peso),
   }))
   const segmentRows: ChartRow[] = (summary?.sales_summary?.segments ?? [])
@@ -229,14 +231,14 @@ function App() {
   )
   const itemRows: ChartRow[] = (summary?.sales_summary?.items ?? []).map((item) => ({
     name: item.produto,
-    shortName: abbreviateLabel(item.produto, 28),
+    shortName: abbreviateLabel(item.produto, 18),
     valor_numero: Number(item.valor_total),
     peso_numero: Number(item.peso_total),
     linhas: item.linhas,
   })).sort((a, b) => b.peso_numero - a.peso_numero)
   const itemDeclineRows = (summary?.sales_summary?.item_decline ?? []).map((item) => ({
     name: item.produto,
-    shortName: abbreviateLabel(item.produto, 28),
+    shortName: abbreviateLabel(item.produto, 18),
     queda_numero: Number(item.queda_peso),
   })).sort((a, b) => b.queda_numero - a.queda_numero)
   const familySegmentRows: ChartRow[] = (summary?.sales_summary?.family_segments ?? []).map((item) => ({
@@ -254,7 +256,7 @@ function App() {
   }))
   const priceOutlierRows = (summary?.sales_summary?.price_outliers ?? []).map((item) => ({
     name: item.produto,
-    shortName: abbreviateLabel(item.produto, 28),
+    shortName: abbreviateLabel(item.produto, 18),
     familia: item.familia,
     preco_numero: Number(item.preco_kg),
     media_familia_numero: Number(item.media_familia_kg),
@@ -279,7 +281,7 @@ function App() {
   }))
   const marginClientRows = (summary?.sales_summary?.margin_clients ?? []).map((item) => ({
     name: item.cliente,
-    shortName: abbreviateLabel(item.cliente),
+    shortName: abbreviateLabel(item.cliente, 16),
     receita_numero: Number(item.receita_liquida),
     lucro_numero: Number(item.lucro_bruto),
     mcii_numero: Number(item.margem_contribuicao ?? item.lucro_bruto),
@@ -311,7 +313,7 @@ function App() {
   }))
   const quoteSellerRows = (summary?.sales_summary?.quote_sellers ?? []).map((item) => ({
     name: item.vendedor,
-    shortName: abbreviateLabel(item.vendedor, 24),
+    shortName: abbreviateLabel(item.vendedor, 16),
     kg_cotado_numero: Number(item.kg_cotado),
     kg_vendido_numero: Number(item.kg_vendido),
     kg_perdido_numero: Number(item.kg_perdido),
@@ -325,7 +327,7 @@ function App() {
   }))
   const cityRows = (summary?.sales_summary?.cities ?? []).map((item) => ({
     name: `${item.cidade}/${item.estado}`,
-    shortName: abbreviateLabel(`${item.cidade}/${item.estado}`, 24),
+    shortName: abbreviateLabel(`${item.cidade}/${item.estado}`, 16),
     cidade: item.cidade,
     clientes: item.clientes,
     valor_numero: Number(item.valor_total),
@@ -584,10 +586,10 @@ function App() {
           <Panel title="Curva ABC" icon={<BarChart3 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={clientAbcRows.slice(0, 8)} layout="vertical" margin={{ left: 128 }}>
+                <BarChart data={clientAbcRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 94 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="shortName" width={150} />
+                  <YAxis type="category" dataKey="shortName" width={112} />
                   <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey="valor_numero" fill="#253575" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -598,10 +600,10 @@ function App() {
           <Panel title="Principais clientes em queda" icon={<AlertTriangle size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={clientDeclineRows.slice(0, 8)} layout="vertical" margin={{ left: 128 }}>
+                <BarChart data={clientDeclineRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 94 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
-                  <YAxis type="category" dataKey="shortName" width={150} />
+                  <YAxis type="category" dataKey="shortName" width={112} />
                   <Tooltip formatter={(value) => [`${formatNumber(String(value))} t`, 'Queda']} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
                   <Bar dataKey={(row) => row.queda_numero / 1000} fill="#B42318" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -644,7 +646,7 @@ function App() {
           <Panel title="Segmento x toneladas" icon={<BarChart3 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={segmentRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={segmentRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
                   <YAxis type="category" dataKey="name" width={120} />
@@ -674,7 +676,7 @@ function App() {
           <Panel title="Preco/kg por segmento" icon={<CircleDollarSign size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={segmentRows.slice(0, 10).map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={segmentRows.slice(0, BAR_LIMIT).map((item) => ({ ...item, preco_numero: item.peso_numero ? item.valor_numero / item.peso_numero : 0 }))} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                   <YAxis type="category" dataKey="name" width={120} />
@@ -688,7 +690,7 @@ function App() {
           <Panel title="Margem por segmento" icon={<AreaIcon size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={[...segmentRows].sort((a, b) => (b.lucro_numero ?? 0) - (a.lucro_numero ?? 0)).slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={[...segmentRows].sort((a, b) => (b.lucro_numero ?? 0) - (a.lucro_numero ?? 0)).slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                   <YAxis type="category" dataKey="name" width={120} />
@@ -706,7 +708,7 @@ function App() {
           <Panel title="Familia x toneladas" icon={<Boxes size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={familyRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={familyRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
                   <YAxis type="category" dataKey="name" width={120} />
@@ -719,7 +721,7 @@ function App() {
           <Panel title="Top SKU" icon={<CircleDollarSign size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={itemRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={itemRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
                   <YAxis type="category" dataKey="shortName" width={120} />
@@ -732,7 +734,7 @@ function App() {
           <Panel title="SKU em queda" icon={<AlertTriangle size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={itemDeclineRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={itemDeclineRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
                   <YAxis type="category" dataKey="shortName" width={120} />
@@ -745,7 +747,7 @@ function App() {
           <Panel title="Familia x segmento" icon={<BarChart3 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={familySegmentRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={familySegmentRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
                   <YAxis type="category" dataKey="name" width={120} />
@@ -800,7 +802,7 @@ function App() {
                     formatter={(value, name) => [name === 'Toneladas' ? `${formatNumber(String(value))} t` : money(String(value)), name]}
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
                   />
-                  <Scatter data={priceStatsRows.slice(0, 12)} fill="#12805C" />
+                  <Scatter data={priceStatsRows.slice(0, SCATTER_LIMIT)} fill="#12805C" />
                 </ScatterChart>
               </ResponsiveContainer>
             </ChartFrame>
@@ -808,7 +810,7 @@ function App() {
           <Panel title="Outliers comerciais" icon={<AlertTriangle size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={priceOutlierRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={priceOutlierRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
                   <YAxis type="category" dataKey="shortName" width={120} />
@@ -855,7 +857,7 @@ function App() {
           <Panel title="MCII/kg por cliente" icon={<CircleDollarSign size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={marginClientRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={marginClientRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                   <YAxis type="category" dataKey="shortName" width={120} />
@@ -877,7 +879,7 @@ function App() {
                     formatter={(value, name) => [name === 'Toneladas' ? `${formatNumber(String(value))} t` : `${Number(value).toFixed(2)}%`, name]}
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
                   />
-                  <Scatter data={marginClientRows.slice(0, 30)} fill="#253575" />
+                  <Scatter data={marginClientRows.slice(0, SCATTER_LIMIT)} fill="#253575" />
                 </ScatterChart>
               </ResponsiveContainer>
             </ChartFrame>
@@ -917,7 +919,7 @@ function App() {
           <Panel title="Conversao por vendedor" icon={<CheckCircle2 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={quoteSellerRows.slice(0, 10)} layout="vertical" margin={{ left: 92 }}>
+                <BarChart data={quoteSellerRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => `${Number(value).toFixed(1)}%`} />
                   <YAxis type="category" dataKey="shortName" width={120} />
@@ -948,10 +950,10 @@ function App() {
           <Panel title="Motivo das perdas" icon={<AlertTriangle size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={lossRows.slice(0, 8)} layout="vertical" margin={{ left: 128 }}>
+                <BarChart data={lossRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 94 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="name" width={150} />
+                  <YAxis type="category" dataKey="name" width={112} />
                   <Tooltip formatter={(value) => [money(String(value)), 'Valor perdido']} />
                   <Bar dataKey="valor_numero" fill="#B42318" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -978,7 +980,7 @@ function App() {
                     formatter={(value, name) => [name === 'Clientes' ? formatNumber(String(value)) : money(String(value)), name]}
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
                   />
-                  <Scatter data={cityRows.slice(0, 25)} fill="#253575" />
+                  <Scatter data={cityRows.slice(0, SCATTER_LIMIT)} fill="#253575" />
                 </ScatterChart>
               </ResponsiveContainer>
             </ChartFrame>
@@ -986,10 +988,10 @@ function App() {
           <Panel title="Faturamento por municipio" icon={<CircleDollarSign size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={cityRows.slice(0, 8)} layout="vertical" margin={{ left: 110 }}>
+                <BarChart data={cityRows.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                  <YAxis type="category" dataKey="shortName" width={132} />
+                  <YAxis type="category" dataKey="shortName" width={108} />
                   <Tooltip formatter={(value) => [money(String(value)), 'Valor total']} />
                   <Bar dataKey="valor_numero" fill="#F18800" radius={[0, 5, 5, 0]} />
                 </BarChart>
@@ -999,10 +1001,10 @@ function App() {
           <Panel title="Clientes por cidade" icon={<CheckCircle2 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <BarChart data={[...cityRows].sort((a, b) => b.clientes - a.clientes).slice(0, 8)} layout="vertical" margin={{ left: 110 }}>
+                <BarChart data={[...cityRows].sort((a, b) => b.clientes - a.clientes).slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 86 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" allowDecimals={false} />
-                  <YAxis type="category" dataKey="shortName" width={132} />
+                  <YAxis type="category" dataKey="shortName" width={108} />
                   <Tooltip />
                   <Bar dataKey="clientes" fill="#12805C" radius={[0, 5, 5, 0]} />
                 </BarChart>

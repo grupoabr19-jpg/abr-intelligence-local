@@ -441,12 +441,12 @@ h1 {
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .panel {
   min-width: 0;
-  padding: 13px;
+  padding: 11px;
 }
 
 .panel.wide {
@@ -456,16 +456,24 @@ h1 {
 .panel-title {
   gap: 8px;
   color: var(--abr-blue);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .panel-title h2 {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .chart-frame {
-  height: 240px;
+  height: 188px;
   width: 100%;
+}
+
+.recharts-cartesian-axis-tick-value {
+  font-size: 10px;
+}
+
+.recharts-default-tooltip {
+  font-size: 12px;
 }
 
 .table-wrap {
@@ -511,7 +519,7 @@ tbody tr:hover {
 }
 
 .empty-state {
-  min-height: 150px;
+  min-height: 120px;
   display: grid;
   align-content: center;
   gap: 6px;
@@ -529,7 +537,7 @@ tbody tr:hover {
 }
 
 .empty-state.compact {
-  min-height: 210px;
+  min-height: 158px;
   justify-items: center;
   text-align: center;
 }
@@ -678,6 +686,6 @@ tbody tr:hover {
   }
 
   .chart-frame {
-    height: 220px;
+    height: 200px;
   }
 }
