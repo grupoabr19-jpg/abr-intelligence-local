@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
 from functools import lru_cache
+from statistics import median
 from typing import Any
 
 from backend.aster_collector.commercial_regions import classify_sale
@@ -1002,6 +1005,430 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
     }
 
 
+def normalize_attendance_text(value: Any) -> str:
+    text = str(value or "").strip()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = re.sub(r"\s+", " ", text)
+    return text.upper()
+
+
+def attendance_field(row: dict[str, Any], aliases: tuple[str, ...]) -> Any:
+    normalized = {normalize_attendance_text(key): value for key, value in row.items()}
+    for alias in aliases:
+        value = normalized.get(normalize_attendance_text(alias))
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def parse_attendance_datetime(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y",
+    ):
+        try:
+            return datetime.strptime(text[: len(datetime.now().strftime(fmt))], fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def parse_attendance_number(value: Any) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    text = re.sub(r"[^0-9,.-]", "", text)
+    if not text:
+        return None
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
+    try:
+        return Decimal(text)
+    except Exception:
+        return None
+
+
+ATTENDANCE_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "lead_id": ("ID do lead", "ID Lead", "Lead ID", "id", "ID"),
+    "created_at": ("Criado em", "Data de criacao", "Data criação", "Created at"),
+    "closed_at": ("Fechado em", "Data fechamento", "Closed at"),
+    "situation": ("Situacao", "Situação", "Status", "Aberto/Fechado"),
+    "pipeline": ("Funil", "Pipeline", "Funil original"),
+    "stage": ("Etapa", "Etapa atual", "Status do lead", "Etapa original"),
+    "status_id": ("Status ID", "ID Status", "status_id", "Kommo status id"),
+    "first_contact": ("Primeiro contato recebido", "1o contato recebido", "Primeiro contato"),
+    "first_response": ("Primeira resposta humana", "Primeira resposta"),
+    "wait_minutes": ("Espera em minutos", "Tempo primeira resposta", "Tempo de resposta"),
+    "value": ("Valor", "Valor do lead", "Valor informado"),
+    "next_task": ("Proxima tarefa", "Próxima tarefa", "Data proxima tarefa"),
+    "last_interaction": ("Ultima interacao", "Última interação", "Ultima atividade"),
+    "origin": ("Origem", "Origem do lead"),
+    "region": ("Regiao", "Região"),
+    "segment": ("Segmento",),
+    "temperature": ("Temperatura",),
+    "owner": ("Responsavel", "Responsável", "Responsavel atual", "Responsável atual"),
+    "first_responder": ("Quem respondeu primeiro", "Primeiro respondente"),
+    "link": ("Link Kommo", "Link", "URL"),
+}
+
+VAREJO_REGION_FALLBACK: tuple[tuple[str, str, str], ...] = (
+    ("ALESSANDRO", "VENDEDOR EXTERNO", "BRAGANÇA"),
+    ("DYOVANA", "VENDEDOR EXTERNO", "JUNDIAÍ"),
+    ("PETERSON", "VENDEDOR EXTERNO", "VARGINHA"),
+    ("PAOLA", "VENDEDOR EXTERNO", "POUSO ALEGRE"),
+    ("JOSÉ FELIPE", "VENDEDOR EXTERNO", "POÇOS DE CALDAS"),
+    ("JENNIFER", "VENDEDOR EXTERNO", "ITAJUBÁ"),
+    ("GUSTAVO", "VENDEDOR EXTERNO", "EXTREMA"),
+    ("JULIANO", "VENDEDOR EXTERNO", "CAMBUÍ"),
+    ("LEIZ", "ESPECIALISTA", "BRAGANÇA"),
+    ("JOSIANE FRAZÃO", "ESPECIALISTA", "JUNDIAÍ"),
+    ("BRUNA", "ESPECIALISTA", "VARGINHA"),
+    ("RAFAELA", "ESPECIALISTA", "POUSO ALEGRE"),
+    ("MILENA", "ESPECIALISTA", "POÇOS DE CALDAS"),
+    ("GABRIELA", "ESPECIALISTA", "ITAJUBÁ"),
+    ("INAYARA", "ESPECIALISTA", "EXTREMA"),
+    ("EDMILA", "ESPECIALISTA", "CAMBUÍ"),
+    ("HELOA", "CORPORATIVO", "BRAGANÇA"),
+    ("KAYLANE", "CORPORATIVO", "JUNDIAÍ"),
+    ("THAIS", "CORPORATIVO", "VARGINHA"),
+    ("VITORIA", "CORPORATIVO", "POUSO ALEGRE"),
+    ("CAMILA GUIMENTI", "CORPORATIVO", "POÇOS DE CALDAS"),
+    ("JESSICA.S", "CORPORATIVO", "ITAJUBÁ"),
+    ("TAINARA", "CORPORATIVO", "EXTREMA"),
+    ("MATHEUS TEIXEIRA", "CORPORATIVO", "CAMBUÍ"),
+    ("ARIANE", "CONSTRUÇÃO CIVIL", "CAMBUÍ"),
+)
+
+
+def attendance_person_key(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]", "", normalize_attendance_text(value))
+
+
+def load_varejo_region_dimension(cur: Any) -> dict[str, dict[str, str]]:
+    dimension = {
+        attendance_person_key(colaborador): {
+            "colaborador": colaborador,
+            "funcao": funcao.title(),
+            "regiao_polo": regiao,
+        }
+        for colaborador, funcao, regiao in VAREJO_REGION_FALLBACK
+    }
+    try:
+        cur.execute(
+            """
+            select colaborador, funcao, regiao_polo
+            from public.dim_regiao_varejo
+            """
+        )
+        for colaborador, funcao, regiao in cur.fetchall():
+            dimension[attendance_person_key(colaborador)] = {
+                "colaborador": str(colaborador),
+                "funcao": str(funcao).title(),
+                "regiao_polo": str(regiao),
+            }
+    except Exception:
+        cur.connection.rollback()
+    return dimension
+
+
+def new_attendance_metric() -> dict[str, Any]:
+    return {
+        "leads": set(),
+        "ganhas": set(),
+        "perdidas": set(),
+        "sla_validos": set(),
+        "sla_5": set(),
+        "abertos": set(),
+        "abertos_com_tarefa": set(),
+        "pipeline_valores": {},
+    }
+
+
+def attendance_metric_row(metric: dict[str, Any]) -> dict[str, Any]:
+    ganhas = len(metric["ganhas"])
+    perdidas = len(metric["perdidas"])
+    abertas = len(metric["abertos"])
+    sla_validos = len(metric["sla_validos"])
+    pipeline_valor = sum(metric["pipeline_valores"].values(), Decimal("0"))
+    return {
+        "leads": len(metric["leads"]),
+        "ganhas": ganhas,
+        "perdidas": perdidas,
+        "win_rate": (ganhas / (ganhas + perdidas) * 100) if ganhas + perdidas else None,
+        "sla_5_min": (len(metric["sla_5"]) / sla_validos * 100) if sla_validos else None,
+        "pipeline_aberto_qtd": abertas,
+        "pipeline_aberto_valor": f"{pipeline_valor:.2f}",
+        "follow_up_cobertura": (len(metric["abertos_com_tarefa"]) / abertas * 100) if abertas else None,
+    }
+
+
+def attendance_summary(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any]:
+    env = load_env()
+    with connect_database(env) as conn:
+        with conn.cursor() as cur:
+            region_dimension = load_varejo_region_dimension(cur)
+            cur.execute(
+                """
+                select source_id, payload_original, imported_at
+                from public.staging_dados
+                where entidade = 'atendimento_kommo'
+                order by imported_at desc
+                limit 50000
+                """
+            )
+            rows = [{"source_id": row[0], "payload": row[1], "imported_at": row[2]} for row in cur.fetchall()]
+
+    def source_order(item: dict[str, Any]) -> int:
+        source_id = str(item.get("source_id") or "")
+        try:
+            return int(source_id.rsplit(":", 1)[-1])
+        except ValueError:
+            return 0
+
+    ordered_rows = sorted(rows, key=source_order)
+    payloads: list[dict[str, Any]] = [dict(item["payload"]) for item in ordered_rows if isinstance(item["payload"], dict)]
+    headers = sorted({key for payload in payloads for key in payload.keys()})
+    latest_import = max((item["imported_at"] for item in rows if item["imported_at"]), default=None)
+    sample_rows = payloads[:5]
+    region_dimension_rows = sorted(
+        region_dimension.values(),
+        key=lambda item: (item["regiao_polo"], item["funcao"], item["colaborador"]),
+    )
+
+    summary_rows = []
+    if headers and len(headers) <= 3 and any("RELAT" in normalize_attendance_text(key) for key in headers):
+        metric_key = next((key for key in headers if "RELAT" in normalize_attendance_text(key)), headers[0])
+        value_key = next((key for key in headers if normalize_attendance_text(key) == "STATUS"), headers[-1])
+        for payload in payloads:
+            summary_rows.append({"metrica": payload.get(metric_key), "valor": payload.get(value_key)})
+
+    missing_fields = [
+        label
+        for label, key in (
+            ("ID do lead", "lead_id"),
+            ("Criado em", "created_at"),
+            ("Funil", "pipeline"),
+            ("Etapa", "stage"),
+            ("Situação", "situation"),
+            ("Primeiro contato recebido", "first_contact"),
+            ("Primeira resposta humana", "first_response"),
+            ("Espera em minutos", "wait_minutes"),
+            ("Próxima tarefa", "next_task"),
+        )
+        if not any(attendance_field(payload, ATTENDANCE_FIELD_ALIASES[key]) is not None for payload in payloads)
+    ]
+
+    has_granular_leads = "ID do lead" not in missing_fields and len(payloads) > 0
+    if not has_granular_leads:
+        return {
+            "data_available": False,
+            "source_grain": "resumo" if summary_rows else "desconhecido",
+            "rows": len(payloads),
+            "headers": headers,
+            "latest_imported_at": latest_import.isoformat() if latest_import else None,
+            "summary_rows": summary_rows,
+            "missing_required_fields": missing_fields,
+            "audit": {
+                "qtd_excluida_comunicacao_interna": 0,
+                "qtd_excluida_liderancas": 0,
+            },
+            "ranking_basis": "regiao_polo_por_colaborador",
+            "region_dimension": region_dimension_rows,
+            "ranking_colaboradores": [],
+            "ranking_regioes": [],
+            "unmapped_collaborators": [],
+            "message": "A planilha Kommo carregada ainda nao possui granularidade por lead para calcular SLA, funil, conversao e follow-up sem inventar metricas.",
+        }
+
+    valid: list[dict[str, Any]] = []
+    excluded_internal: set[str] = set()
+    excluded_leadership: set[str] = set()
+    for payload in payloads:
+        lead_id = str(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["lead_id"]) or "").strip()
+        if not lead_id:
+            continue
+        pipeline = attendance_field(payload, ATTENDANCE_FIELD_ALIASES["pipeline"])
+        stage = attendance_field(payload, ATTENDANCE_FIELD_ALIASES["stage"])
+        status_id = str(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["status_id"]) or "").strip()
+        normalized_pipeline = normalize_attendance_text(pipeline)
+        normalized_stage = normalize_attendance_text(stage)
+        if normalized_pipeline == "FUNIL DE LIDERANCAS":
+            excluded_leadership.add(lead_id)
+            continue
+        if normalized_stage == "COMUNICACAO INTERNA" or status_id == "109439252":
+            excluded_internal.add(lead_id)
+            continue
+        created_at = parse_attendance_datetime(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["created_at"]))
+        if created_at and date_from and created_at.date() < date_from:
+            continue
+        if created_at and date_to and created_at.date() > date_to:
+            continue
+        valid.append(payload)
+
+    lead_ids = {str(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["lead_id"]) or "").strip() for payload in valid}
+    open_leads = {
+        str(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["lead_id"]) or "").strip()
+        for payload in valid
+        if normalize_attendance_text(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["situation"])) == "ABERTO"
+    }
+    response_waits: list[float] = []
+    response_leads: set[str] = set()
+    fast_5: set[str] = set()
+    fast_15: set[str] = set()
+    contact_received: set[str] = set()
+    no_response: set[str] = set()
+    no_next_task: set[str] = set()
+    pipeline_value = Decimal("0")
+    wins_by_funnel: dict[str, int] = defaultdict(int)
+    losses_by_funnel: dict[str, int] = defaultdict(int)
+    collaborator_metrics: dict[str, dict[str, Any]] = defaultdict(new_attendance_metric)
+    collaborator_meta: dict[str, dict[str, str]] = {}
+    region_metrics: dict[str, dict[str, Any]] = defaultdict(new_attendance_metric)
+    unmapped_collaborators: set[str] = set()
+
+    for payload in valid:
+        lead_id = str(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["lead_id"]) or "").strip()
+        first_contact = attendance_field(payload, ATTENDANCE_FIELD_ALIASES["first_contact"])
+        first_response = attendance_field(payload, ATTENDANCE_FIELD_ALIASES["first_response"])
+        wait = parse_attendance_number(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["wait_minutes"]))
+        if first_contact:
+            contact_received.add(lead_id)
+        if first_contact and not first_response:
+            no_response.add(lead_id)
+        if first_contact and first_response and wait is not None and wait >= 0:
+            wait_float = float(wait)
+            response_waits.append(wait_float)
+            response_leads.add(lead_id)
+            if wait_float <= 5:
+                fast_5.add(lead_id)
+            if wait_float <= 15:
+                fast_15.add(lead_id)
+        if lead_id in open_leads:
+            value = parse_attendance_number(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["value"]))
+            if value and value > 0:
+                pipeline_value += value
+            if not attendance_field(payload, ATTENDANCE_FIELD_ALIASES["next_task"]):
+                no_next_task.add(lead_id)
+        stage = normalize_attendance_text(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["stage"]))
+        funnel = str(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["pipeline"]) or "Sem funil")
+        if stage == "VENDA GANHA":
+            wins_by_funnel[funnel] += 1
+        elif stage == "VENDA PERDIDA":
+            losses_by_funnel[funnel] += 1
+
+        collaborator_name = attendance_field(payload, ATTENDANCE_FIELD_ALIASES["owner"]) or attendance_field(
+            payload, ATTENDANCE_FIELD_ALIASES["first_responder"]
+        )
+        collaborator_key = attendance_person_key(collaborator_name)
+        if not collaborator_key:
+            continue
+        dimension_row = region_dimension.get(collaborator_key)
+        if not dimension_row:
+            unmapped_collaborators.add(str(collaborator_name).strip())
+        collaborator_meta[collaborator_key] = {
+            "nome": dimension_row["colaborador"] if dimension_row else str(collaborator_name).strip(),
+            "funcao": dimension_row["funcao"] if dimension_row else "Sem cadastro",
+            "regiao_polo": dimension_row["regiao_polo"] if dimension_row else "Sem cadastro",
+        }
+        metric_targets = [collaborator_metrics[collaborator_key]]
+        if dimension_row:
+            metric_targets.append(region_metrics[dimension_row["regiao_polo"]])
+        value = parse_attendance_number(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["value"])) or Decimal("0")
+        has_next_task = bool(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["next_task"]))
+        for metric in metric_targets:
+            metric["leads"].add(lead_id)
+            if stage == "VENDA GANHA":
+                metric["ganhas"].add(lead_id)
+            elif stage == "VENDA PERDIDA":
+                metric["perdidas"].add(lead_id)
+            if first_contact and first_response and wait is not None and wait >= 0:
+                metric["sla_validos"].add(lead_id)
+                if float(wait) <= 5:
+                    metric["sla_5"].add(lead_id)
+            if lead_id in open_leads:
+                metric["abertos"].add(lead_id)
+                if has_next_task:
+                    metric["abertos_com_tarefa"].add(lead_id)
+                if value > 0:
+                    metric["pipeline_valores"][lead_id] = value
+
+    win_rate_by_funnel = []
+    for funnel in sorted(set(wins_by_funnel) | set(losses_by_funnel)):
+        wins = wins_by_funnel.get(funnel, 0)
+        losses = losses_by_funnel.get(funnel, 0)
+        denominator = wins + losses
+        win_rate_by_funnel.append(
+            {
+                "funil": funnel,
+                "ganhas": wins,
+                "perdidas": losses,
+                "win_rate": (wins / denominator * 100) if denominator else 0,
+            }
+        )
+
+    ranking_colaboradores = []
+    for collaborator_key, metric in collaborator_metrics.items():
+        meta = collaborator_meta[collaborator_key]
+        ranking_colaboradores.append({**meta, **attendance_metric_row(metric)})
+    ranking_colaboradores.sort(key=lambda item: (item["ganhas"], item["win_rate"] or 0, item["leads"]), reverse=True)
+
+    ranking_regioes = []
+    for regiao, metric in region_metrics.items():
+        integrantes = sorted(
+            meta["nome"]
+            for meta in collaborator_meta.values()
+            if meta.get("regiao_polo") == regiao
+        )
+        ranking_regioes.append(
+            {
+                "regiao_polo": regiao,
+                "colaboradores": integrantes,
+                **attendance_metric_row(metric),
+            }
+        )
+    ranking_regioes.sort(key=lambda item: (item["ganhas"], item["win_rate"] or 0, item["leads"]), reverse=True)
+
+    return {
+        "data_available": True,
+        "source_grain": "lead",
+        "rows": len(payloads),
+        "valid_rows": len(valid),
+        "headers": headers,
+        "latest_imported_at": latest_import.isoformat() if latest_import else None,
+        "sample_rows": sample_rows,
+        "audit": {
+            "qtd_excluida_comunicacao_interna": len(excluded_internal),
+            "qtd_excluida_liderancas": len(excluded_leadership),
+        },
+        "kpis": {
+            "leads_novos": len(lead_ids),
+            "leads_abertos": len(open_leads),
+            "tempo_mediano_primeira_resposta": median(response_waits) if response_waits else None,
+            "sla_5_min": (len(fast_5) / len(response_leads) * 100) if response_leads else None,
+            "sla_15_min": (len(fast_15) / len(response_leads) * 100) if response_leads else None,
+            "taxa_nao_resposta": (len(no_response) / len(contact_received) * 100) if contact_received else None,
+            "pipeline_aberto_qtd": len(open_leads),
+            "pipeline_aberto_valor": f"{pipeline_value:.2f}",
+            "leads_sem_proxima_tarefa": len(no_next_task),
+            "leads_sem_proxima_tarefa_pct": (len(no_next_task) / len(open_leads) * 100) if open_leads else None,
+        },
+        "win_rate_by_funnel": win_rate_by_funnel,
+        "ranking_basis": "regiao_polo_por_colaborador",
+        "region_dimension": region_dimension_rows,
+        "ranking_colaboradores": ranking_colaboradores,
+        "ranking_regioes": ranking_regioes,
+        "unmapped_collaborators": sorted(unmapped_collaborators),
+    }
+
+
 def internal_dashboard_summary(
     date_from: date | None = None,
     date_to: date | None = None,
@@ -1083,6 +1510,13 @@ def internal_dashboard_summary(
         sales_summary = sales_period_summary(date_from=date_from, date_to=date_to)
     except BaseException as exc:
         warnings.append(f"Resumo de vendas indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+    attendance: dict[str, Any] = {}
+    try:
+        attendance = attendance_summary(date_from=date_from, date_to=date_to)
+        if not attendance.get("data_available"):
+            warnings.append(str(attendance.get("message", "Dados de atendimento ainda sem granularidade suficiente.")))
+    except BaseException as exc:
+        warnings.append(f"Resumo de atendimento indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
 
     return {
         "domain": "internal",
@@ -1109,6 +1543,7 @@ def internal_dashboard_summary(
         "staging_by_entity": staging_by_entity,
         "recent_history": history,
         "sales_summary": sales_summary,
+        "attendance_summary": attendance,
         "sales_regions": regions,
         "warnings": warnings,
     }

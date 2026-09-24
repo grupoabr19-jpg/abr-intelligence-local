@@ -69,6 +69,7 @@ type IntelligenceTab =
   | 'regional'
   | 'mills'
   | 'service-overview'
+  | 'ranking'
   | 'sla'
   | 'service-clients'
   | 'incidents'
@@ -93,6 +94,16 @@ function money(value: number | string | undefined) {
     currency: 'BRL',
     maximumFractionDigits: 0,
   }).format(number)
+}
+
+function percent(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Sem dados'
+  return `${Number(value).toFixed(1)}%`
+}
+
+function minutes(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Sem dados'
+  return `${Number(value).toFixed(0)} min`
 }
 
 function monthLabel(value: string) {
@@ -163,6 +174,7 @@ const TABS_BY_MACRO: Record<MacroArea, Array<{ key: IntelligenceTab; label: stri
   ],
   service: [
     { key: 'service-overview', label: 'Visao Geral' },
+    { key: 'ranking', label: 'Ranking' },
     { key: 'sla', label: 'SLA' },
     { key: 'service-clients', label: 'Clientes' },
     { key: 'incidents', label: 'Ocorrencias' },
@@ -516,6 +528,15 @@ function App() {
       forecast_toneladas: totalSalesWeight ? (forecastNextKg * item.peso_numero) / totalSalesWeight / 1000 : 0,
     }))
   const quotedKg = quoteMonthly.reduce((sum, item) => sum + item.kg_cotado_numero, 0)
+  const attendance = summary?.attendance_summary
+  const attendanceKpis = attendance?.kpis
+  const attendanceSummaryRows = attendance?.summary_rows ?? []
+  const attendanceMissingFields = attendance?.missing_required_fields ?? []
+  const attendanceHasGranularData = Boolean(attendance?.data_available && attendanceKpis)
+  const attendanceRegionDimension = attendance?.region_dimension ?? []
+  const attendanceCollaboratorRanking = attendance?.ranking_colaboradores ?? []
+  const attendanceRegionRanking = attendance?.ranking_regioes ?? []
+  const unmappedAttendanceCollaborators = attendance?.unmapped_collaborators ?? []
 
   return (
     <main className="app-shell">
@@ -1392,7 +1413,254 @@ function App() {
         <UnavailableTab title={activeTabLabel} />
       )}
 
-      {!needsLogin && macroArea === 'service' && (
+      {!needsLogin && macroArea === 'service' && intelligenceTab === 'service-overview' && (
+        <>
+          <section className="kpi-grid">
+            <Kpi
+              title="Leads novos"
+              displayValue={attendanceHasGranularData ? formatNumber(attendanceKpis?.leads_novos) : 'Sem base granular'}
+              detail={attendanceHasGranularData ? 'Depois das exclusoes do Kommo' : `${formatNumber(attendance?.rows)} linhas de resumo importadas`}
+              icon={<CheckCircle2 />}
+            />
+            <Kpi
+              title="Leads abertos"
+              displayValue={attendanceHasGranularData ? formatNumber(attendanceKpis?.leads_abertos) : 'Sem dados'}
+              detail="Depende de status por lead"
+              icon={<Gauge />}
+            />
+            <Kpi
+              title="Primeira resposta"
+              displayValue={attendanceHasGranularData ? minutes(attendanceKpis?.tempo_mediano_primeira_resposta) : 'Sem dados'}
+              detail="Mediana em minutos"
+              icon={<LineChartIcon />}
+            />
+            <Kpi
+              title="SLA ate 5 min"
+              displayValue={attendanceHasGranularData ? percent(attendanceKpis?.sla_5_min) : 'Sem dados'}
+              detail="Exige criado em e primeira resposta"
+              icon={<BarChart3 />}
+            />
+          </section>
+
+          <section className="dashboard-grid">
+            <Panel title="Status da fonte Kommo" icon={<Database size={17} />}>
+              <div className="empty-state compact">
+                <strong>{attendance?.data_available ? 'Base granular disponivel' : 'Faltam dados para cruzamentos'}</strong>
+                <span>
+                  {attendance?.message ??
+                    'A fonte de atendimento ainda nao retornou registros por lead suficientes para calcular SLA, funil, equipe, motivos e recorrencia.'}
+                </span>
+                <span>
+                  Grao da fonte: {attendance?.source_grain ?? 'nao informado'} | Linhas: {formatNumber(attendance?.rows)} | Ultima carga:{' '}
+                  {attendance?.latest_imported_at ? new Date(attendance.latest_imported_at).toLocaleString('pt-BR') : 'sem registro'}
+                </span>
+              </div>
+            </Panel>
+
+            <Panel title="Auditoria de exclusoes" icon={<AlertTriangle size={17} />}>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Regra</th>
+                      <th>Leads excluidos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Funil de Liderancas</td>
+                      <td>{formatNumber(attendance?.audit?.qtd_excluida_liderancas)}</td>
+                    </tr>
+                    <tr>
+                      <td>Comunicacao interna</td>
+                      <td>{formatNumber(attendance?.audit?.qtd_excluida_comunicacao_interna)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+
+            <Panel title="Resumo recebido do Kommo" icon={<TableProperties size={17} />}>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Metrica</th>
+                      <th>Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attendanceSummaryRows.length ? attendanceSummaryRows.slice(0, 10).map((item) => (
+                      <tr key={`${item.metrica}-${item.valor}`}>
+                        <td>{item.metrica}</td>
+                        <td>{item.valor}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={2} className="empty-cell">Sem resumo carregado</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+
+            <Panel title="Campos necessarios para calcular atendimento" icon={<SlidersHorizontal size={17} />}>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Campo esperado</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attendanceMissingFields.length ? attendanceMissingFields.map((field) => (
+                      <tr key={field}>
+                        <td>{field}</td>
+                        <td>Faltando na fonte atual</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={2} className="empty-cell">Campos minimos encontrados</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+
+            {attendanceHasGranularData && (
+              <>
+                <Panel title="Pipeline aberto" icon={<CircleDollarSign size={17} />}>
+                  <div className="empty-state compact">
+                    <strong>{money(attendanceKpis?.pipeline_aberto_valor)}</strong>
+                    <span>{formatNumber(attendanceKpis?.pipeline_aberto_qtd)} leads em aberto</span>
+                  </div>
+                </Panel>
+
+                <Panel title="Win rate por funil" icon={<BarChart3 size={17} />}>
+                  <ChartFrame>
+                    <ResponsiveContainer>
+                      <BarChart data={attendance?.win_rate_by_funnel ?? []} margin={{ top: 4, right: 12, left: 0, bottom: 16 }}>
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                        <XAxis dataKey="funil" tickFormatter={(value) => abbreviateLabel(String(value), 14)} />
+                        <YAxis tickFormatter={(value) => `${value}%`} />
+                        <Tooltip formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Win rate']} />
+                        <Bar dataKey="win_rate" name="Win rate" fill="#13875f" radius={[5, 5, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </ChartFrame>
+                </Panel>
+              </>
+            )}
+          </section>
+        </>
+      )}
+
+      {!needsLogin && macroArea === 'service' && intelligenceTab === 'ranking' && (
+        <section className="dashboard-grid">
+          <Panel title="Ranking por colaborador" icon={<BarChart3 size={17} />} wide>
+            {!attendanceHasGranularData && (
+              <div className="empty-state compact">
+                <strong>Faltam dados para cruzamentos</strong>
+                <span>
+                  A regra de regiao ja esta cadastrada por colaborador, mas os indicadores do ranking dependem de uma base granular por lead.
+                </span>
+              </div>
+            )}
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>Funcao</th>
+                    <th>Regiao/Polo</th>
+                    <th>Leads</th>
+                    <th>Ganhas</th>
+                    <th>Perdidas</th>
+                    <th>Win rate</th>
+                    <th>SLA 5 min</th>
+                    <th>Pipeline</th>
+                    <th>Valor pipeline</th>
+                    <th>Follow-up</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(attendanceHasGranularData ? attendanceCollaboratorRanking : attendanceRegionDimension).map((item) => {
+                    const row = item as typeof attendanceCollaboratorRanking[number] & typeof attendanceRegionDimension[number]
+                    return (
+                      <tr key={`${row.nome ?? row.colaborador}-${row.funcao}`}>
+                        <td>{row.nome ?? row.colaborador}</td>
+                        <td>{row.funcao}</td>
+                        <td>{row.regiao_polo}</td>
+                        <td>{attendanceHasGranularData ? formatNumber(row.leads) : '-'}</td>
+                        <td>{attendanceHasGranularData ? formatNumber(row.ganhas) : '-'}</td>
+                        <td>{attendanceHasGranularData ? formatNumber(row.perdidas) : '-'}</td>
+                        <td>{attendanceHasGranularData ? percent(row.win_rate) : '-'}</td>
+                        <td>{attendanceHasGranularData ? percent(row.sla_5_min) : '-'}</td>
+                        <td>{attendanceHasGranularData ? formatNumber(row.pipeline_aberto_qtd) : '-'}</td>
+                        <td>{attendanceHasGranularData ? money(row.pipeline_aberto_valor) : '-'}</td>
+                        <td>{attendanceHasGranularData ? percent(row.follow_up_cobertura) : '-'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          <Panel title="Ranking por regiao/polo" icon={<TableProperties size={17} />} wide>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Regiao/Polo</th>
+                    <th>Colaboradores</th>
+                    <th>Ganhas</th>
+                    <th>Perdidas</th>
+                    <th>Win rate</th>
+                    <th>SLA 5 min</th>
+                    <th>Pipeline</th>
+                    <th>Valor pipeline</th>
+                    <th>Follow-up</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attendanceRegionRanking.length ? attendanceRegionRanking.map((item) => (
+                    <tr key={item.regiao_polo}>
+                      <td>{item.regiao_polo}</td>
+                      <td>{item.colaboradores.join(', ')}</td>
+                      <td>{formatNumber(item.ganhas)}</td>
+                      <td>{formatNumber(item.perdidas)}</td>
+                      <td>{percent(item.win_rate)}</td>
+                      <td>{percent(item.sla_5_min)}</td>
+                      <td>{formatNumber(item.pipeline_aberto_qtd)}</td>
+                      <td>{money(item.pipeline_aberto_valor)}</td>
+                      <td>{percent(item.follow_up_cobertura)}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={9} className="empty-cell">Faltam dados para cruzamentos</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          {unmappedAttendanceCollaborators.length > 0 && (
+            <Panel title="Colaboradores sem cadastro de regiao" icon={<AlertTriangle size={17} />} wide>
+              <div className="empty-state compact">
+                <strong>{formatNumber(unmappedAttendanceCollaborators.length)} nomes sem correspondencia</strong>
+                <span>{unmappedAttendanceCollaborators.join(', ')}</span>
+              </div>
+            </Panel>
+          )}
+        </section>
+      )}
+
+      {!needsLogin && macroArea === 'service' && !['service-overview', 'ranking'].includes(intelligenceTab) && (
         <UnavailableTab title={activeTabLabel} />
       )}
 

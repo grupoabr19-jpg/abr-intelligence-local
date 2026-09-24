@@ -125,6 +125,62 @@ export type DashboardSummary = {
     quote_funnel?: Array<{ etapa: string; kg_total: string }>
     cities?: Array<{ cidade: string; estado: string; clientes: number; valor_total: string; peso_total: string }>
   }
+  attendance_summary?: {
+    data_available: boolean
+    source_grain: string
+    rows: number
+    valid_rows?: number
+    headers: string[]
+    latest_imported_at: string | null
+    message?: string
+    missing_required_fields?: string[]
+    summary_rows?: Array<{ metrica: string; valor: string }>
+    audit: {
+      qtd_excluida_comunicacao_interna: number
+      qtd_excluida_liderancas: number
+    }
+    kpis?: {
+      leads_novos: number
+      leads_abertos: number
+      tempo_mediano_primeira_resposta: number | null
+      sla_5_min: number | null
+      sla_15_min: number | null
+      taxa_nao_resposta: number | null
+      pipeline_aberto_qtd: number
+      pipeline_aberto_valor: string
+      leads_sem_proxima_tarefa: number
+      leads_sem_proxima_tarefa_pct: number | null
+    }
+    win_rate_by_funnel?: Array<{ funil: string; ganhas: number; perdidas: number; win_rate: number }>
+    ranking_basis?: string
+    region_dimension?: Array<{ colaborador: string; funcao: string; regiao_polo: string }>
+    ranking_colaboradores?: Array<{
+      nome: string
+      funcao: string
+      regiao_polo: string
+      leads: number
+      ganhas: number
+      perdidas: number
+      win_rate: number | null
+      sla_5_min: number | null
+      pipeline_aberto_qtd: number
+      pipeline_aberto_valor: string
+      follow_up_cobertura: number | null
+    }>
+    ranking_regioes?: Array<{
+      regiao_polo: string
+      colaboradores: string[]
+      leads: number
+      ganhas: number
+      perdidas: number
+      win_rate: number | null
+      sla_5_min: number | null
+      pipeline_aberto_qtd: number
+      pipeline_aberto_valor: string
+      follow_up_cobertura: number | null
+    }>
+    unmapped_collaborators?: string[]
+  }
   sales_regions: Array<{ canal: string; regiao: string; linhas: number; valor_total: string }>
   warnings: string[]
 }
