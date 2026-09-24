@@ -276,6 +276,13 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                       coalesce(nullif(payload_original->>'Estado', ''), 'Sem UF') as estado,
                       coalesce(nullif(payload_original->>'Vendedor', ''), 'Sem vendedor') as vendedor,
                       coalesce(nullif(payload_original->>'Tipo', ''), 'Sem tipo') as tipo,
+                      coalesce(
+                        nullif(payload_original->>'N° NF', ''),
+                        nullif(payload_original->>'Nº NF', ''),
+                        nullif(payload_original->>'NF', ''),
+                        nullif(payload_original->>'Nota fiscal', ''),
+                        nullif(payload_original->>'Nota Fiscal', '')
+                      ) as nota_fiscal,
                       {money_sql("Valor Venda Perdida")} as valor_perdido
                     from public.staging_dados
                     where entidade = 'aster_report_d0a4d301'
@@ -306,6 +313,8 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                         coalesce(sum(lucro_bruto), 0) as lucro_bruto,
                         coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
                         coalesce(sum(peso_total), 0) as peso_total,
+                        count(distinct nota_fiscal) filter (where nota_fiscal is not null)::int as notas_fiscais,
+                        count(distinct cliente)::int as clientes,
                         coalesce(sum(valor_perdido), 0) as valor_perdido
                       from sales
                       where sale_date is not null
@@ -761,6 +770,8 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
             "receita_liquida": f"{Decimal(str(item.get('receita_liquida', 0))):.2f}",
             "lucro_bruto": f"{Decimal(str(item.get('lucro_bruto', 0))):.2f}",
             "margem_contribuicao": f"{Decimal(str(item.get('margem_contribuicao', 0))):.2f}",
+            "notas_fiscais": item.get("notas_fiscais", 0),
+            "clientes": item.get("clientes", 0),
             "valor_perdido": f"{Decimal(str(item.get('valor_perdido', 0))):.2f}",
         }
         for item in monthly_rows

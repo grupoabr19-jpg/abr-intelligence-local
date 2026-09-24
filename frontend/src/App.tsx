@@ -16,7 +16,6 @@ import {
   LogIn,
   RefreshCw,
   Search,
-  ShieldCheck,
   SlidersHorizontal,
   TableProperties,
 } from 'lucide-react'
@@ -59,6 +58,28 @@ type IntelligenceTab =
   | 'forecast'
   | 'logistics'
   | 'map'
+  | 'market-overview'
+  | 'steel-market'
+  | 'market-prices'
+  | 'imports'
+  | 'construction'
+  | 'industry'
+  | 'agro'
+  | 'solar'
+  | 'regional'
+  | 'mills'
+  | 'service-overview'
+  | 'sla'
+  | 'service-clients'
+  | 'incidents'
+  | 'orders'
+  | 'deliveries'
+  | 'complaints'
+  | 'satisfaction'
+  | 'channels'
+  | 'team'
+
+type MacroArea = 'business' | 'market' | 'service'
 
 function formatNumber(value: number | string | undefined) {
   const number = Number(value || 0)
@@ -105,22 +126,60 @@ function cleanSegmentName(value: string) {
     .replace('N�o', 'Nao')
 }
 
-const INTELLIGENCE_TABS: Array<{ key: IntelligenceTab; label: string }> = [
-  { key: 'executive', label: 'Executivo' },
-  { key: 'commercial', label: 'Comercial' },
-  { key: 'clients', label: 'Clientes' },
-  { key: 'segments', label: 'Segmentos' },
-  { key: 'products', label: 'Produtos' },
-  { key: 'prices', label: 'Precos' },
-  { key: 'margin', label: 'Margem' },
-  { key: 'quotes', label: 'Cotacoes' },
-  { key: 'competition', label: 'Concorrencia' },
-  { key: 'stock', label: 'Estoque' },
-  { key: 'purchases', label: 'Compras' },
-  { key: 'forecast', label: 'Forecast' },
-  { key: 'logistics', label: 'Logistica' },
-  { key: 'map', label: 'Mapa Comercial' },
+const MACRO_AREAS: Array<{ key: MacroArea; label: string; title: string }> = [
+  { key: 'business', label: 'Negocio', title: 'Inteligencia do Negocio' },
+  { key: 'market', label: 'Mercado', title: 'Inteligencia de Mercado' },
+  { key: 'service', label: 'Atendimento', title: 'Inteligencia de Atendimento' },
 ]
+
+const TABS_BY_MACRO: Record<MacroArea, Array<{ key: IntelligenceTab; label: string }>> = {
+  business: [
+    { key: 'executive', label: 'Executivo' },
+    { key: 'commercial', label: 'Comercial' },
+    { key: 'clients', label: 'Clientes' },
+    { key: 'segments', label: 'Segmentos' },
+    { key: 'products', label: 'Produtos' },
+    { key: 'prices', label: 'Precos' },
+    { key: 'margin', label: 'Margem' },
+    { key: 'quotes', label: 'Cotacoes' },
+    { key: 'stock', label: 'Estoque' },
+    { key: 'purchases', label: 'Compras' },
+    { key: 'forecast', label: 'Forecast' },
+    { key: 'logistics', label: 'Logistica' },
+    { key: 'map', label: 'Mapa Comercial' },
+  ],
+  market: [
+    { key: 'market-overview', label: 'Visao Geral' },
+    { key: 'steel-market', label: 'Mercado do Aco' },
+    { key: 'market-prices', label: 'Precos' },
+    { key: 'imports', label: 'Importacoes' },
+    { key: 'construction', label: 'Construcao' },
+    { key: 'industry', label: 'Industria' },
+    { key: 'agro', label: 'Agro' },
+    { key: 'solar', label: 'Solar' },
+    { key: 'regional', label: 'Regional' },
+    { key: 'competition', label: 'Concorrencia' },
+    { key: 'mills', label: 'Usinas' },
+  ],
+  service: [
+    { key: 'service-overview', label: 'Visao Geral' },
+    { key: 'sla', label: 'SLA' },
+    { key: 'service-clients', label: 'Clientes' },
+    { key: 'incidents', label: 'Ocorrencias' },
+    { key: 'orders', label: 'Pedidos' },
+    { key: 'deliveries', label: 'Entregas' },
+    { key: 'complaints', label: 'Reclamacoes' },
+    { key: 'satisfaction', label: 'Satisfacao' },
+    { key: 'channels', label: 'Canais' },
+    { key: 'team', label: 'Equipe' },
+  ],
+}
+
+const DEFAULT_TAB_BY_MACRO: Record<MacroArea, IntelligenceTab> = {
+  business: 'executive',
+  market: 'market-overview',
+  service: 'service-overview',
+}
 
 type ChartRow = {
   name: string
@@ -136,6 +195,7 @@ function App() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [macroArea, setMacroArea] = useState<MacroArea>('business')
   const [intelligenceTab, setIntelligenceTab] = useState<IntelligenceTab>('executive')
   const [statusFilter, setStatusFilter] = useState('todos')
   const [areaFilter, setAreaFilter] = useState('todas')
@@ -190,6 +250,36 @@ function App() {
 
   const reports = summary?.reports ?? []
   const areas = useMemo(() => Array.from(new Set(reports.map((item) => item.area))).sort(), [reports])
+  const activeMacro = MACRO_AREAS.find((item) => item.key === macroArea) ?? MACRO_AREAS[0]
+  const activeTabs = TABS_BY_MACRO[macroArea]
+  const activeTabLabel = activeTabs.find((item) => item.key === intelligenceTab)?.label ?? 'Visao'
+  const filterCopy = {
+    business: {
+      search: 'Buscar cliente, vendedor, produto ou relatorio',
+      status: 'Todos os status',
+      group: 'Todas as areas',
+      options: areas,
+    },
+    market: {
+      search: 'Buscar fonte, indicador, segmento ou produto siderurgico',
+      status: 'Todos os indicadores',
+      group: 'Todos os segmentos',
+      options: ['Aco', 'Construcao', 'Industria', 'Agro', 'Solar', 'Importacoes', 'Usinas'],
+    },
+    service: {
+      search: 'Buscar cliente, canal, motivo ou ocorrencia',
+      status: 'Todos os atendimentos',
+      group: 'Todos os canais',
+      options: ['Comercial', 'Logistica', 'Telefone', 'E-mail', 'WhatsApp', 'Equipe interna'],
+    },
+  }[macroArea]
+  const selectMacroArea = (nextMacroArea: MacroArea) => {
+    setMacroArea(nextMacroArea)
+    setIntelligenceTab(DEFAULT_TAB_BY_MACRO[nextMacroArea])
+    setAreaFilter('todas')
+    setStatusFilter('todos')
+    setSearch('')
+  }
 
   const monthlySales = (summary?.sales_summary?.monthly ?? []).map((item) => ({
     ...item,
@@ -201,6 +291,9 @@ function App() {
     peso_numero: Number(item.peso_total),
     toneladas_numero: Number(item.peso_total) / 1000,
     perdido_numero: Number(item.valor_perdido ?? 0),
+    notas_numero: Number(item.notas_fiscais ?? 0),
+    clientes_numero: Number(item.clientes ?? 0),
+    ticket_medio_numero: Number(item.notas_fiscais ?? 0) ? Number(item.receita_liquida ?? 0) / Number(item.notas_fiscais ?? 0) : 0,
   }))
   const familyRows: ChartRow[] = (summary?.sales_summary?.families ?? []).map((item) => ({
     name: item.familia,
@@ -430,8 +523,8 @@ function App() {
         <div className="brand-block">
           <div>
             <span className="eyebrow">ABR Intelligence</span>
-            <h1>Inteligencia de Mercado</h1>
-            <p>Duas frentes conectadas: inteligencia interna da operacao e inteligencia externa do mercado.</p>
+            <h1>{activeMacro.title}</h1>
+            <p>Dados do negocio, movimentos do mercado e experiencia do cliente em uma unica visao.</p>
           </div>
         </div>
         <div className="topbar-actions">
@@ -439,15 +532,19 @@ function App() {
             <img src={abrLogoWhite} alt="Grupo ABR" />
           </div>
           <div className="header-controls">
-            <div className="front-switch" aria-label="Frentes da inteligencia de mercado">
-              <span className="front-pill active">Interna</span>
-              <span className="front-pill">Externa</span>
+            <div className="macro-switch" aria-label="Macroareas da plataforma">
+              {MACRO_AREAS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={macroArea === item.key ? 'macro-pill active' : 'macro-pill'}
+                  onClick={() => selectMacroArea(item.key)}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
             <div className="header-status">
-              <span className="status-pill">
-                <ShieldCheck size={15} />
-                Inteligencia interna
-              </span>
               <button className="icon-button" onClick={load} disabled={loading} title="Atualizar">
                 <RefreshCw size={17} className={loading ? 'spin' : ''} />
               </button>
@@ -459,7 +556,7 @@ function App() {
       <form className="toolbar" aria-label="Filtros do dashboard" onSubmit={submitFilters}>
         <div className="control search-control">
           <Search size={16} />
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar relatorio, area ou entidade" />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={filterCopy.search} />
         </div>
         <label className="control date-control">
           <CalendarDays size={16} />
@@ -474,19 +571,29 @@ function App() {
         <label className="control">
           <Filter size={16} />
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="todos">Todos os status</option>
-            <option value="validated">Validados</option>
-            <option value="validated_empty">Sem registro</option>
-            <option value="deprioritized">Fora da prioridade</option>
+            <option value="todos">{filterCopy.status}</option>
+            {macroArea === 'business' ? (
+              <>
+                <option value="validated">Validados</option>
+                <option value="validated_empty">Sem registro</option>
+                <option value="deprioritized">Fora da prioridade</option>
+              </>
+            ) : (
+              <>
+                <option value="active">Ativos</option>
+                <option value="attention">Pontos de atencao</option>
+                <option value="resolved">Resolvidos</option>
+              </>
+            )}
           </select>
         </label>
         <label className="control">
           <SlidersHorizontal size={16} />
           <select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>
-            <option value="todas">Todas as areas</option>
-            {areas.map((area) => (
-              <option value={area} key={area}>
-                {area}
+            <option value="todas">{filterCopy.group}</option>
+            {filterCopy.options.map((option) => (
+              <option value={option} key={option}>
+                {option}
               </option>
             ))}
           </select>
@@ -537,8 +644,8 @@ function App() {
         </section>
       ))}
 
-      {!needsLogin && <nav className="tabs intelligence-tabs" aria-label="Campos de atuacao">
-        {INTELLIGENCE_TABS.map((item) => (
+      {!needsLogin && <nav className="tabs intelligence-tabs" aria-label={`Dashboards de ${activeMacro.label}`}>
+        {activeTabs.map((item) => (
           <button key={item.key} className={intelligenceTab === item.key ? 'active' : ''} onClick={() => setIntelligenceTab(item.key)}>
             {item.label}
           </button>
@@ -632,15 +739,24 @@ function App() {
           </section>
 
           <section className="dashboard-grid">
-            <Panel title="Vendas por mes" icon={<BarChart3 size={17} />} wide>
+            <Panel title="Notas, ticket medio e clientes por mes" icon={<BarChart3 size={17} />} wide>
               <ChartFrame>
                 <ResponsiveContainer>
                   <BarChart data={monthlySales}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="mes_label" />
-                    <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
-                    <Tooltip formatter={(value, name) => [name === 'valor_numero' ? money(String(value)) : formatNumber(String(value)), name === 'valor_numero' ? 'Valor total' : 'Peso']} />
-                    <Bar dataKey="valor_numero" fill="#253575" radius={[5, 5, 0, 0]} />
+                    <YAxis yAxisId="count" allowDecimals={false} tickFormatter={(value) => formatNumber(value)} />
+                    <YAxis yAxisId="ticket" orientation="right" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                    <Tooltip
+                      formatter={(value, name) => [
+                        name === 'Ticket médio' ? money(String(value)) : formatNumber(String(value)),
+                        name,
+                      ]}
+                    />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Bar yAxisId="count" dataKey="notas_numero" name="Notas fiscais" fill="#253575" radius={[5, 5, 0, 0]} />
+                    <Bar yAxisId="ticket" dataKey="ticket_medio_numero" name="Ticket médio" fill="#F18800" radius={[5, 5, 0, 0]} />
+                    <Bar yAxisId="count" dataKey="clientes_numero" name="Clientes atendidos" fill="#12805C" radius={[5, 5, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </ChartFrame>
@@ -1268,8 +1384,16 @@ function App() {
         </>
       )}
 
-      {!needsLogin && ['stock', 'purchases', 'logistics'].includes(intelligenceTab) && (
-        <UnavailableTab title={INTELLIGENCE_TABS.find((item) => item.key === intelligenceTab)?.label.replace(/^\d+\s/, '') ?? 'Visao'} />
+      {!needsLogin && macroArea === 'business' && ['stock', 'purchases', 'logistics'].includes(intelligenceTab) && (
+        <UnavailableTab title={activeTabLabel} />
+      )}
+
+      {!needsLogin && macroArea === 'market' && intelligenceTab !== 'competition' && (
+        <UnavailableTab title={activeTabLabel} />
+      )}
+
+      {!needsLogin && macroArea === 'service' && (
+        <UnavailableTab title={activeTabLabel} />
       )}
 
     </main>

@@ -67,6 +67,8 @@ export type DashboardSummary = {
       receita_liquida?: string
       lucro_bruto?: string
       margem_contribuicao?: string
+      notas_fiscais?: number
+      clientes?: number
       peso_total: string
       valor_perdido?: string
     }>
