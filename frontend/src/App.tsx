@@ -534,7 +534,6 @@ function App() {
   const attendance = summary?.attendance_summary
   const attendanceKpis = attendance?.kpis
   const attendanceSummaryRows = attendance?.summary_rows ?? []
-  const attendanceMissingFields = attendance?.missing_required_fields ?? []
   const attendanceHasGranularData = Boolean(attendance?.data_available && attendanceKpis)
   const attendanceRegionDimension = attendance?.region_dimension ?? []
   const attendanceCollaboratorRanking = attendance?.ranking_colaboradores ?? []
@@ -1566,31 +1565,6 @@ function App() {
           </section>
 
           <section className="dashboard-grid">
-            <Panel title="Campos necessarios para calcular atendimento" icon={<SlidersHorizontal size={17} />}>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Campo esperado</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {attendanceMissingFields.length ? attendanceMissingFields.map((field) => (
-                      <tr key={field}>
-                        <td>{field}</td>
-                        <td>Faltando na fonte atual</td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={2} className="empty-cell">Campos minimos encontrados</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-
             {attendanceHasGranularData && (
               <>
                 <Panel title="Pipeline aberto" icon={<CircleDollarSign size={17} />}>
