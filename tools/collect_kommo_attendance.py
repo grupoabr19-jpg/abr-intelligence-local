@@ -291,7 +291,7 @@ def normalize_lead(
         "Status ID": str(status_id),
         "Pipeline ID": str(pipeline_id) if pipeline_id else None,
         "Primeiro contato recebido": first_contact,
-        "Primeira resposta humana": first_response,
+        "Primeira acao humana": first_response,
         "Espera em minutos": wait_minutes,
         "Valor": lead.get("price"),
         "Proxima tarefa": iso_from_unix((task or {}).get("complete_till") or lead.get("closest_task_at")),

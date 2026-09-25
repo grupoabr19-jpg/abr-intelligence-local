@@ -558,7 +558,7 @@ function App() {
     { key: 'ganhas', label: 'Vendas ganhas' },
     { key: 'win_rate', label: 'Win rate' },
     { key: 'follow_up', label: 'Follow-up' },
-    { key: 'sla_5', label: 'SLA 5 min' },
+    { key: 'sla_5', label: '1a acao ate 5 min' },
     { key: 'pipeline_value', label: 'Valor em pipeline' },
     { key: 'leads', label: 'Leads atendidos' },
   ]
@@ -608,7 +608,7 @@ function App() {
       value: bestFollow && bestFollow.follow_up_cobertura !== null ? percent(bestFollow.follow_up_cobertura) : 'Faltam tarefas',
     },
     {
-      label: 'Atendimento mais rapido',
+      label: 'Primeira acao mais rapida',
       name: highlightName(bestSla),
       value: bestSla && bestSla.sla_5_min !== null ? percent(bestSla.sla_5_min) : 'Aguardando eventos',
     },
@@ -619,7 +619,7 @@ function App() {
     },
   ]
   const slaMetricOptions: Array<{ key: RankingMetric; label: string }> = [
-    { key: 'sla_5', label: 'SLA 5 min' },
+    { key: 'sla_5', label: '1a acao ate 5 min' },
     { key: 'follow_up', label: 'Follow-up' },
     { key: 'leads', label: 'Leads atendidos' },
     { key: 'win_rate', label: 'Win rate' },
@@ -642,7 +642,7 @@ function App() {
   const bestSlaWin = slaBestBy('win_rate')
   const slaHighlightCards = [
     {
-      label: 'Quem atende mais rapido',
+      label: 'Mais rapido na 1a acao',
       name: highlightName(bestSlaFast),
       value: bestSlaFast && bestSlaFast.sla_5_min !== null ? percent(bestSlaFast.sla_5_min) : 'Aguardando eventos',
     },
@@ -1550,15 +1550,15 @@ function App() {
               icon={<Gauge />}
             />
             <Kpi
-              title="Primeira resposta"
+              title="Primeira acao"
               displayValue={attendanceKpis?.tempo_mediano_primeira_resposta !== null && attendanceKpis?.tempo_mediano_primeira_resposta !== undefined ? minutes(attendanceKpis.tempo_mediano_primeira_resposta) : 'Aguardando eventos'}
-              detail="Mediana calculada por evento de resposta"
+              detail="Mediana entre entrada do lead e primeira acao registrada"
               icon={<LineChartIcon />}
             />
             <Kpi
-              title="SLA ate 5 min"
+              title="1a acao ate 5 min"
               displayValue={attendanceKpis?.sla_5_min !== null && attendanceKpis?.sla_5_min !== undefined ? percent(attendanceKpis.sla_5_min) : 'Aguardando eventos'}
-              detail="Exige criado em e primeira resposta"
+              detail="Proxy operacional por evento humano do Kommo"
               icon={<BarChart3 />}
             />
           </section>
@@ -1660,7 +1660,7 @@ function App() {
                       <th>Ganhas</th>
                       <th>Perdidas</th>
                       <th>Win rate</th>
-                      <th>SLA 5 min</th>
+                      <th>1a acao ate 5 min</th>
                       <th>Pipeline</th>
                       <th>Valor pipeline</th>
                       <th>Follow-up</th>
@@ -1674,7 +1674,7 @@ function App() {
                       <th>Ganhas</th>
                       <th>Perdidas</th>
                       <th>Win rate</th>
-                      <th>SLA 5 min</th>
+                      <th>1a acao ate 5 min</th>
                       <th>Pipeline</th>
                       <th>Valor pipeline</th>
                       <th>Follow-up</th>
@@ -1740,7 +1740,11 @@ function App() {
 
       {macroArea === 'service' && intelligenceTab === 'sla' && (
         <section className="dashboard-grid">
-          <Panel title="SLA de atendimento" icon={<Gauge size={17} />} wide>
+          <Panel title="Tempo ate primeira acao" icon={<Gauge size={17} />} wide>
+            <div className="empty-state compact">
+              <strong>SLA operacional por evento do Kommo</strong>
+              <span>Conta o tempo entre a entrada do lead e a primeira acao humana registrada. Nao usa cidade, cliente ou planilha.</span>
+            </div>
             <div className="ranking-toolbar">
               <label>
                 <span>Ranking</span>
@@ -1778,7 +1782,7 @@ function App() {
                       <th>Regiao/Polo</th>
                       <th>Colaboradores</th>
                       <th>Leads</th>
-                      <th>SLA 5 min</th>
+                      <th>1a acao ate 5 min</th>
                       <th>Follow-up</th>
                       <th>Win rate</th>
                       <th>Pipeline</th>
@@ -1789,7 +1793,7 @@ function App() {
                       <th>Funcao</th>
                       <th>Regiao/Polo</th>
                       <th>Leads</th>
-                      <th>SLA 5 min</th>
+                      <th>1a acao ate 5 min</th>
                       <th>Follow-up</th>
                       <th>Win rate</th>
                       <th>Pipeline</th>

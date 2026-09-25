@@ -62,6 +62,14 @@ def iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
+def utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def load_active_staging(cur: Any) -> list[dict[str, Any]]:
     cur.execute(
         """
@@ -85,6 +93,24 @@ def load_active_staging(cur: Any) -> list[dict[str, Any]]:
         for row in cur.fetchall()
         if isinstance(row[1], dict)
     ]
+
+
+def load_first_human_event_by_lead(cur: Any) -> dict[str, datetime]:
+    cur.execute(
+        """
+        select
+          e.entity_id::text as lead_id,
+          min(e.created_at_kommo) as first_action_at
+        from public.raw_kommo_events e
+        where e.ativo = true
+          and lower(coalesce(e.entity_type, 'lead')) in ('lead', 'leads')
+          and e.created_at_kommo is not null
+          and coalesce(e.created_by, 0) <> 0
+          and coalesce(e.event_type, '') not in ('lead_added', 'lead_deleted')
+        group by e.entity_id::text
+        """
+    )
+    return {str(row[0]): row[1] for row in cur.fetchall() if row[0] and row[1]}
 
 
 def refresh_dimensions(cur: Any, staging_rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -245,6 +271,7 @@ def refresh_facts(cur: Any, staging_rows: list[dict[str, Any]]) -> dict[str, int
     missing_owner = 0
     missing_sla = 0
     excluded = 0
+    first_human_event_by_lead = load_first_human_event_by_lead(cur)
 
     for item in staging_rows:
         payload = item["payload"]
@@ -266,8 +293,17 @@ def refresh_facts(cur: Any, staging_rows: list[dict[str, Any]]) -> dict[str, int
         is_excluded = kind in {"interno", "lideranca"}
         if is_excluded:
             excluded += 1
+        created_at = parse_attendance_datetime(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["created_at"]))
         first_contact = parse_attendance_datetime(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["first_contact"]))
         first_response = parse_attendance_datetime(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["first_response"]))
+        if not first_contact:
+            first_contact = created_at
+        if not first_response:
+            first_response = first_human_event_by_lead.get(lead_id)
+        first_contact = utc_datetime(first_contact)
+        first_response = utc_datetime(first_response)
+        if first_contact and first_response and first_response < first_contact:
+            first_response = None
         wait = parse_attendance_number(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["wait_minutes"]))
         if wait is None and first_contact and first_response:
             wait = Decimal(str(max((first_response - first_contact).total_seconds() / 60, 0)))
@@ -283,7 +319,7 @@ def refresh_facts(cur: Any, staging_rows: list[dict[str, Any]]) -> dict[str, int
             (
                 lead_id,
                 payload_value(payload, "Nome do lead", "Lead", "name"),
-                iso(parse_attendance_datetime(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["created_at"]))),
+                iso(created_at),
                 iso(parse_attendance_datetime(payload_value(payload, "Atualizado em", "updated_at"))),
                 iso(parse_attendance_datetime(attendance_field(payload, ATTENDANCE_FIELD_ALIASES["closed_at"]))),
                 int(pipeline_id) if pipeline_id else None,

@@ -221,15 +221,15 @@ def refresh() -> dict[str, Any]:
                   occurrence_id, type, source, lead_id, responsible_id, opened_at, status, severity, details, refreshed_at
                 )
                 select
-                  'lead_sem_resposta:' || f.lead_id,
-                  'Lead sem resposta',
+                  'lead_sem_acao:' || f.lead_id,
+                  'Lead sem primeira acao',
                   'KOMMO',
                   f.lead_id,
                   f.colaborador_key,
                   coalesce(sla.primeiro_contato_em, f.created_at_kommo, now()),
                   'aberta',
                   'alta',
-                  jsonb_build_object('motivo', 'Primeiro contato existe sem primeira resposta humana'),
+                  jsonb_build_object('motivo', 'Lead criado sem primeira acao humana registrada'),
                   now()
                 from public.fato_atendimento_lead f
                 join public.fato_atendimento_sla sla on sla.lead_id = f.lead_id
