@@ -177,12 +177,22 @@ def open_tasks_by_lead(client: httpx.Client, limit: int, max_pages: int) -> dict
     return index
 
 
-def custom_field_value(lead: dict[str, Any], field_name: str | None) -> Any:
-    if not field_name:
+def custom_field_value(lead: dict[str, Any], field_reference: str | None) -> Any:
+    if not field_reference:
         return None
-    expected = field_name.strip().casefold()
+    reference = field_reference.strip()
+    expected_name = reference.casefold()
+    expected_id = int(reference) if reference.isdigit() else None
     for field in lead.get("custom_fields_values") or []:
-        if str(field.get("field_name") or "").strip().casefold() != expected:
+        field_id = field.get("field_id")
+        field_name = str(field.get("field_name") or "").strip().casefold()
+        if expected_id is not None:
+            try:
+                if int(field_id or 0) != expected_id:
+                    continue
+            except (TypeError, ValueError):
+                continue
+        elif field_name != expected_name:
             continue
         values = field.get("values") or []
         if not values:
