@@ -547,6 +547,28 @@ function App() {
   const attendanceOrigins = attendance?.origins ?? []
   const attendanceEventTypes = attendance?.event_types ?? []
   const attendanceEventStats = attendance?.event_stats
+  const teamBlocks = [
+    {
+      label: 'Varejo',
+      rows: attendanceRegionDimension.filter((item) => {
+        const funcao = item.funcao.toUpperCase()
+        const regiao = item.regiao_polo.toUpperCase()
+        return regiao !== 'ATACADO' && !funcao.includes('ATACADO') && !funcao.includes('REPRESENTANTE')
+      }),
+    },
+    {
+      label: 'Atacado',
+      rows: attendanceRegionDimension.filter((item) => {
+        const funcao = item.funcao.toUpperCase()
+        const regiao = item.regiao_polo.toUpperCase()
+        return regiao === 'ATACADO' || funcao.includes('ATACADO')
+      }),
+    },
+    {
+      label: 'Representantes',
+      rows: attendanceRegionDimension.filter((item) => item.funcao.toUpperCase().includes('REPRESENTANTE')),
+    },
+  ]
 
   return (
     <main className="app-shell">
@@ -1765,28 +1787,34 @@ function App() {
 
       {!needsLogin && macroArea === 'service' && intelligenceTab === 'team' && (
         <section className="dashboard-grid">
-          <Panel title="Equipe por praca/polo" icon={<TableProperties size={17} />} wide>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Nome</th>
-                    <th>Funcao</th>
-                    <th>Regiao/Polo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {attendanceRegionDimension.map((item) => (
-                    <tr key={`${item.colaborador}-${item.funcao}`}>
-                      <td>{item.colaborador}</td>
-                      <td>{item.funcao}</td>
-                      <td>{item.regiao_polo}</td>
+          {teamBlocks.map((block) => (
+            <Panel key={block.label} title={block.label} icon={<TableProperties size={17} />} wide>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Nome</th>
+                      <th>Funcao</th>
+                      <th>Regiao/Polo</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
+                  </thead>
+                  <tbody>
+                    {block.rows.length ? block.rows.map((item) => (
+                      <tr key={`${item.colaborador}-${item.funcao}`}>
+                        <td>{item.colaborador}</td>
+                        <td>{item.funcao}</td>
+                        <td>{item.regiao_polo}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={3} className="empty-cell">Sem colaboradores cadastrados neste bloco</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          ))}
         </section>
       )}
 
