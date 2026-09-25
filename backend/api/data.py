@@ -1207,7 +1207,259 @@ def attendance_metric_row(metric: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def attendance_summary_from_facts(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any] | None:
+    env = load_env()
+    with connect_database(env) as conn:
+        with conn.cursor() as cur:
+            try:
+                query = """
+                    select
+                      f.lead_id,
+                      f.created_at_kommo,
+                      f.is_aberto,
+                      f.is_ganho,
+                      f.is_perdido,
+                      f.valor,
+                      coalesce(c.nome, 'Sem cadastro') as colaborador,
+                      coalesce(c.funcao, 'Sem cadastro') as funcao,
+                      coalesce(c.regiao_polo, 'Sem cadastro') as regiao_polo,
+                      coalesce(p.nome, 'Sem funil') as funil,
+                      coalesce(s.nome, 'Sem etapa') as etapa,
+                      sla.espera_minutos,
+                      sla.sla_valido,
+                      sla.sla_5_min,
+                      sla.sla_15_min,
+                      sla.sem_resposta,
+                      fo.tem_followup
+                    from public.fato_atendimento_lead f
+                    left join public.dim_atendimento_colaborador c on c.colaborador_key = f.colaborador_key
+                    left join public.dim_kommo_pipeline p on p.pipeline_id = f.pipeline_id
+                    left join public.dim_kommo_status s on s.status_id = f.status_id
+                    left join public.fato_atendimento_sla sla on sla.lead_id = f.lead_id
+                    left join public.fato_atendimento_followup fo on fo.lead_id = f.lead_id
+                    where f.excluido = false
+                """
+                params: list[Any] = []
+                if date_from:
+                    query += " and (f.created_at_kommo is null or f.created_at_kommo::date >= %s)"
+                    params.append(date_from)
+                if date_to:
+                    query += " and (f.created_at_kommo is null or f.created_at_kommo::date <= %s)"
+                    params.append(date_to)
+                cur.execute(query, params)
+                rows = cur.fetchall()
+                cur.execute(
+                    """
+                    select colaborador_key, nome, funcao, regiao_polo
+                    from public.dim_atendimento_colaborador
+                    where ativo = true
+                    order by regiao_polo, funcao, nome
+                    """
+                )
+                dimension_rows = [
+                    {
+                        "colaborador": row[1],
+                        "funcao": row[2],
+                        "regiao_polo": row[3],
+                    }
+                    for row in cur.fetchall()
+                ]
+                cur.execute(
+                    """
+                    select regra, severidade, total, checked_at
+                    from public.atendimento_data_quality
+                    order by checked_at desc
+                    limit 20
+                    """
+                )
+                quality_rows = [
+                    {
+                        "regra": row[0],
+                        "severidade": row[1],
+                        "total": row[2],
+                        "checked_at": row[3].isoformat() if row[3] else None,
+                    }
+                    for row in cur.fetchall()
+                ]
+                cur.execute(
+                    """
+                    select sync_id, status, started_at, finished_at, leads_processados
+                    from public.atendimento_refresh_runs
+                    order by started_at desc
+                    limit 5
+                    """
+                )
+                refresh_runs = [
+                    {
+                        "sync_id": row[0],
+                        "status": row[1],
+                        "started_at": row[2].isoformat() if row[2] else None,
+                        "finished_at": row[3].isoformat() if row[3] else None,
+                        "leads_processados": row[4],
+                    }
+                    for row in cur.fetchall()
+                ]
+                cur.execute(
+                    """
+                    select motivo_exclusao, count(*)
+                    from public.fato_atendimento_lead
+                    where excluido = true
+                    group by motivo_exclusao
+                    """
+                )
+                excluded_counts = {str(row[0] or ""): int(row[1] or 0) for row in cur.fetchall()}
+            except Exception:
+                cur.connection.rollback()
+                return None
+
+    if not rows:
+        return None
+
+    metric_global = new_attendance_metric()
+    collaborator_metrics: dict[str, dict[str, Any]] = defaultdict(new_attendance_metric)
+    collaborator_meta: dict[str, dict[str, str]] = {}
+    region_metrics: dict[str, dict[str, Any]] = defaultdict(new_attendance_metric)
+    wins_by_funnel: dict[str, int] = defaultdict(int)
+    losses_by_funnel: dict[str, int] = defaultdict(int)
+    response_waits: list[float] = []
+    response_valid_count = 0
+    fast_5_count = 0
+    fast_15_count = 0
+    no_response_count = 0
+    no_followup_count = 0
+    unmapped: set[str] = set()
+
+    for row in rows:
+        (
+            lead_id,
+            _created_at,
+            is_aberto,
+            is_ganho,
+            is_perdido,
+            valor,
+            colaborador,
+            funcao,
+            regiao_polo,
+            funil,
+            _etapa,
+            espera_minutos,
+            sla_valido,
+            sla_5_min,
+            sla_15_min,
+            sem_resposta,
+            tem_followup,
+        ) = row
+        lead_id = str(lead_id)
+        value = Decimal(str(valor or 0))
+        collaborator_key = attendance_person_key(colaborador)
+        if funcao == "Sem cadastro" or regiao_polo == "Sem cadastro":
+            unmapped.add(str(colaborador))
+        collaborator_meta[collaborator_key] = {
+            "nome": colaborador,
+            "funcao": funcao,
+            "regiao_polo": regiao_polo,
+        }
+        targets = [metric_global, collaborator_metrics[collaborator_key], region_metrics[regiao_polo]]
+        for metric in targets:
+            metric["leads"].add(lead_id)
+            if is_ganho:
+                metric["ganhas"].add(lead_id)
+            if is_perdido:
+                metric["perdidas"].add(lead_id)
+            if sla_valido:
+                metric["sla_validos"].add(lead_id)
+                if sla_5_min:
+                    metric["sla_5"].add(lead_id)
+            if is_aberto:
+                metric["abertos"].add(lead_id)
+                if tem_followup:
+                    metric["abertos_com_tarefa"].add(lead_id)
+                if value > 0:
+                    metric["pipeline_valores"][lead_id] = value
+        if is_ganho:
+            wins_by_funnel[funil] += 1
+        if is_perdido:
+            losses_by_funnel[funil] += 1
+        if sla_valido and espera_minutos is not None:
+            wait_float = float(espera_minutos)
+            response_waits.append(wait_float)
+            response_valid_count += 1
+            if sla_5_min:
+                fast_5_count += 1
+            if sla_15_min:
+                fast_15_count += 1
+        if sem_resposta:
+            no_response_count += 1
+        if is_aberto and not tem_followup:
+            no_followup_count += 1
+
+    global_row = attendance_metric_row(metric_global)
+    ranking_colaboradores = []
+    for collaborator_key, metric in collaborator_metrics.items():
+        ranking_colaboradores.append({**collaborator_meta[collaborator_key], **attendance_metric_row(metric)})
+    ranking_colaboradores.sort(key=lambda item: (item["ganhas"], item["win_rate"] or 0, item["leads"]), reverse=True)
+
+    ranking_regioes = []
+    for regiao, metric in region_metrics.items():
+        integrantes = sorted(meta["nome"] for meta in collaborator_meta.values() if meta.get("regiao_polo") == regiao)
+        ranking_regioes.append({"regiao_polo": regiao, "colaboradores": integrantes, **attendance_metric_row(metric)})
+    ranking_regioes.sort(key=lambda item: (item["ganhas"], item["win_rate"] or 0, item["leads"]), reverse=True)
+
+    win_rate_by_funnel = []
+    for funil in sorted(set(wins_by_funnel) | set(losses_by_funnel)):
+        wins = wins_by_funnel.get(funil, 0)
+        losses = losses_by_funnel.get(funil, 0)
+        denominator = wins + losses
+        win_rate_by_funnel.append(
+            {
+                "funil": funil,
+                "ganhas": wins,
+                "perdidas": losses,
+                "win_rate": (wins / denominator * 100) if denominator else 0,
+            }
+        )
+
+    return {
+        "data_available": True,
+        "source_grain": "fato_atendimento",
+        "rows": len(rows),
+        "valid_rows": len(rows),
+        "headers": [],
+        "latest_imported_at": refresh_runs[0]["finished_at"] if refresh_runs else None,
+        "audit": {
+            "qtd_excluida_comunicacao_interna": excluded_counts.get("interno", 0),
+            "qtd_excluida_liderancas": excluded_counts.get("lideranca", 0),
+        },
+        "kpis": {
+            "leads_novos": global_row["leads"],
+            "leads_abertos": global_row["pipeline_aberto_qtd"],
+            "tempo_mediano_primeira_resposta": median(response_waits) if response_waits else None,
+            "sla_5_min": (fast_5_count / response_valid_count * 100) if response_valid_count else None,
+            "sla_15_min": (fast_15_count / response_valid_count * 100) if response_valid_count else None,
+            "taxa_nao_resposta": (no_response_count / len(rows) * 100) if rows else None,
+            "pipeline_aberto_qtd": global_row["pipeline_aberto_qtd"],
+            "pipeline_aberto_valor": global_row["pipeline_aberto_valor"],
+            "leads_sem_proxima_tarefa": no_followup_count,
+            "leads_sem_proxima_tarefa_pct": (no_followup_count / global_row["pipeline_aberto_qtd"] * 100)
+            if global_row["pipeline_aberto_qtd"]
+            else None,
+        },
+        "win_rate_by_funnel": win_rate_by_funnel,
+        "ranking_basis": "fatos_atendimento_regiao_polo_por_colaborador",
+        "region_dimension": dimension_rows,
+        "ranking_colaboradores": ranking_colaboradores,
+        "ranking_regioes": ranking_regioes,
+        "unmapped_collaborators": sorted(unmapped),
+        "data_quality": quality_rows,
+        "refresh_runs": refresh_runs,
+    }
+
+
 def attendance_summary(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any]:
+    fact_summary = attendance_summary_from_facts(date_from, date_to)
+    if fact_summary:
+        return fact_summary
+
     env = load_env()
     with connect_database(env) as conn:
         with conn.cursor() as cur:

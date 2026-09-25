@@ -180,6 +180,14 @@ export type DashboardSummary = {
       follow_up_cobertura: number | null
     }>
     unmapped_collaborators?: string[]
+    data_quality?: Array<{ regra: string; severidade: string; total: number; checked_at: string | null }>
+    refresh_runs?: Array<{
+      sync_id: string
+      status: string
+      started_at: string | null
+      finished_at: string | null
+      leads_processados: number
+    }>
   }
   sales_regions: Array<{ canal: string; regiao: string; linhas: number; valor_total: string }>
   warnings: string[]

@@ -94,6 +94,24 @@ def iso_from_unix(value: Any) -> str | None:
         return None
 
 
+def int_or_none(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def number_or_none(value: Any) -> Any:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def embedded_items(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
     value = payload.get("_embedded", {}).get(key)
     return value if isinstance(value, list) else []
@@ -133,17 +151,19 @@ def get_pages(
     return rows
 
 
-def user_index(client: httpx.Client, limit: int, max_pages: int) -> dict[int, str]:
+def fetch_users(client: httpx.Client, limit: int, max_pages: int) -> tuple[list[dict[str, Any]], dict[int, str]]:
     users = get_pages(client, "/api/v4/users", "users", params={"with": "role,group"}, limit=limit, max_pages=max_pages)
-    return {int(user["id"]): str(user.get("name") or user.get("email") or user["id"]) for user in users if user.get("id")}
+    index = {int(user["id"]): str(user.get("name") or user.get("email") or user["id"]) for user in users if user.get("id")}
+    return users, index
 
 
-def pipeline_indexes(client: httpx.Client) -> tuple[dict[int, str], dict[int, str]]:
+def fetch_pipelines(client: httpx.Client) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[int, str], dict[int, str]]:
     response = client.get("/api/v4/leads/pipelines")
     response.raise_for_status()
     pipelines = page_items(response.json(), "pipelines")
     pipeline_names: dict[int, str] = {}
     status_names: dict[int, str] = {}
+    statuses: list[dict[str, Any]] = []
     for pipeline in pipelines:
         pipeline_id = pipeline.get("id")
         if pipeline_id is None:
@@ -153,10 +173,11 @@ def pipeline_indexes(client: httpx.Client) -> tuple[dict[int, str], dict[int, st
             status_id = status.get("id")
             if status_id is not None:
                 status_names[int(status_id)] = str(status.get("name") or status_id)
-    return pipeline_names, status_names
+                statuses.append({**status, "_pipeline_id": int(pipeline_id)})
+    return pipelines, statuses, pipeline_names, status_names
 
 
-def open_tasks_by_lead(client: httpx.Client, limit: int, max_pages: int) -> dict[int, dict[str, Any]]:
+def fetch_open_tasks_by_lead(client: httpx.Client, limit: int, max_pages: int) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]:
     tasks = get_pages(
         client,
         "/api/v4/tasks",
@@ -174,7 +195,7 @@ def open_tasks_by_lead(client: httpx.Client, limit: int, max_pages: int) -> dict
         current = index.get(lead_id)
         if current is None or int(task.get("complete_till") or 0) < int(current.get("complete_till") or 0):
             index[lead_id] = task
-    return index
+    return tasks, index
 
 
 def custom_field_value(lead: dict[str, Any], field_reference: str | None) -> Any:
@@ -281,13 +302,13 @@ def collect_rows(
 
     with httpx.Client(base_url=base_url, headers=headers, timeout=timeout, follow_redirects=True) as client:
         progress("buscando usuarios")
-        users = user_index(client, limit, max_pages)
+        raw_users, users = fetch_users(client, limit, max_pages)
         progress(f"usuarios encontrados: {len(users)}")
         progress("buscando funis e etapas")
-        pipeline_names, status_names = pipeline_indexes(client)
+        raw_pipelines, raw_statuses, pipeline_names, status_names = fetch_pipelines(client)
         progress(f"funis encontrados: {len(pipeline_names)}")
         progress("buscando tarefas abertas")
-        tasks_by_lead = open_tasks_by_lead(client, limit, max_pages)
+        raw_tasks, tasks_by_lead = fetch_open_tasks_by_lead(client, limit, max_pages)
         progress(f"tarefas abertas vinculadas a leads: {len(tasks_by_lead)}")
         lead_params: dict[str, Any] = {
             "with": "contacts,source,loss_reason",
@@ -307,12 +328,261 @@ def collect_rows(
         "users_found": len(users),
         "pipelines_found": len(pipeline_names),
         "open_tasks_found": len(tasks_by_lead),
+        "raw": {
+            "users": raw_users,
+            "pipelines": raw_pipelines,
+            "statuses": raw_statuses,
+            "leads": leads,
+            "tasks": raw_tasks,
+            "events": [],
+        },
     }
 
 
-def insert_rows(rows: list[dict[str, Any]]) -> dict[str, int]:
+def insert_current_versions(
+    cur: Any,
+    *,
+    table: str,
+    id_column: str,
+    records: list[dict[str, Any]],
+    insert_sql: str,
+    insert_rows: list[tuple[Any, ...]],
+) -> dict[str, int]:
+    if not records:
+        return {"raw_inserted": 0, "raw_skipped": 0}
+
+    source_ids = [record[id_column] for record in records]
+    hashes = [record["raw_hash"] for record in records]
+    cur.execute(
+        f"""
+        select {id_column}, raw_hash
+        from public.{table}
+        where ativo = true
+          and {id_column} = any(%s)
+        """,
+        (source_ids,),
+    )
+    active_hashes = {(row[0], row[1]) for row in cur.fetchall()}
+    new_indexes = [idx for idx, record in enumerate(records) if (record[id_column], record["raw_hash"]) not in active_hashes]
+    skipped = len(records) - len(new_indexes)
+    if not new_indexes:
+        return {"raw_inserted": 0, "raw_skipped": skipped}
+
+    changed_source_ids = [records[idx][id_column] for idx in new_indexes]
+    cur.execute(
+        f"""
+        update public.{table}
+        set ativo = false,
+            updated_at = now()
+        where ativo = true
+          and {id_column} = any(%s)
+        """,
+        (changed_source_ids,),
+    )
+    cur.executemany(insert_sql, [insert_rows[idx] for idx in new_indexes])
+    return {"raw_inserted": len(new_indexes), "raw_skipped": skipped}
+
+
+def insert_raw_data(cur: Any, raw: dict[str, list[dict[str, Any]]], sync_id: str) -> dict[str, int]:
+    raw_inserted = 0
+    raw_skipped = 0
+
+    user_records = [
+        {
+            "kommo_user_id": int(user["id"]),
+            "raw_hash": row_hash(user),
+        }
+        for user in raw.get("users", [])
+        if user.get("id") is not None
+    ]
+    user_rows = [
+        (
+            int(user["id"]),
+            user.get("name"),
+            user.get("email"),
+            json.dumps(user, ensure_ascii=False),
+            row_hash(user),
+            sync_id,
+        )
+        for user in raw.get("users", [])
+        if user.get("id") is not None
+    ]
+    result = insert_current_versions(
+        cur,
+        table="raw_kommo_users",
+        id_column="kommo_user_id",
+        records=user_records,
+        insert_sql="""
+            insert into public.raw_kommo_users(
+              kommo_user_id, name, email, raw_payload, raw_hash, sync_id, ativo, fetched_at
+            )
+            values (%s, %s, %s, %s::jsonb, %s, %s, true, now())
+            on conflict (kommo_user_id, raw_hash) do update
+            set ativo = true, sync_id = excluded.sync_id, fetched_at = now(), updated_at = now()
+        """,
+        insert_rows=user_rows,
+    )
+    raw_inserted += result["raw_inserted"]
+    raw_skipped += result["raw_skipped"]
+
+    pipeline_records = [
+        {"kommo_pipeline_id": int(pipeline["id"]), "raw_hash": row_hash(pipeline)}
+        for pipeline in raw.get("pipelines", [])
+        if pipeline.get("id") is not None
+    ]
+    pipeline_rows = [
+        (
+            int(pipeline["id"]),
+            pipeline.get("name"),
+            json.dumps(pipeline, ensure_ascii=False),
+            row_hash(pipeline),
+            sync_id,
+        )
+        for pipeline in raw.get("pipelines", [])
+        if pipeline.get("id") is not None
+    ]
+    result = insert_current_versions(
+        cur,
+        table="raw_kommo_pipelines",
+        id_column="kommo_pipeline_id",
+        records=pipeline_records,
+        insert_sql="""
+            insert into public.raw_kommo_pipelines(
+              kommo_pipeline_id, name, raw_payload, raw_hash, sync_id, ativo, fetched_at
+            )
+            values (%s, %s, %s::jsonb, %s, %s, true, now())
+            on conflict (kommo_pipeline_id, raw_hash) do update
+            set ativo = true, sync_id = excluded.sync_id, fetched_at = now(), updated_at = now()
+        """,
+        insert_rows=pipeline_rows,
+    )
+    raw_inserted += result["raw_inserted"]
+    raw_skipped += result["raw_skipped"]
+
+    status_records = [
+        {"kommo_status_id": int(status["id"]), "raw_hash": row_hash(status)}
+        for status in raw.get("statuses", [])
+        if status.get("id") is not None
+    ]
+    status_rows = [
+        (
+            int(status["id"]),
+            int_or_none(status.get("_pipeline_id")),
+            status.get("name"),
+            json.dumps(status, ensure_ascii=False),
+            row_hash(status),
+            sync_id,
+        )
+        for status in raw.get("statuses", [])
+        if status.get("id") is not None
+    ]
+    result = insert_current_versions(
+        cur,
+        table="raw_kommo_statuses",
+        id_column="kommo_status_id",
+        records=status_records,
+        insert_sql="""
+            insert into public.raw_kommo_statuses(
+              kommo_status_id, kommo_pipeline_id, name, raw_payload, raw_hash, sync_id, ativo, fetched_at
+            )
+            values (%s, %s, %s, %s::jsonb, %s, %s, true, now())
+            on conflict (kommo_status_id, raw_hash) do update
+            set ativo = true, sync_id = excluded.sync_id, fetched_at = now(), updated_at = now()
+        """,
+        insert_rows=status_rows,
+    )
+    raw_inserted += result["raw_inserted"]
+    raw_skipped += result["raw_skipped"]
+
+    lead_records = [
+        {"kommo_lead_id": int(lead["id"]), "raw_hash": row_hash(lead)}
+        for lead in raw.get("leads", [])
+        if lead.get("id") is not None
+    ]
+    lead_rows = [
+        (
+            int(lead["id"]),
+            int_or_none(lead.get("pipeline_id")),
+            int_or_none(lead.get("status_id")),
+            int_or_none(lead.get("responsible_user_id")),
+            lead.get("name"),
+            number_or_none(lead.get("price")),
+            iso_from_unix(lead.get("created_at")),
+            iso_from_unix(lead.get("updated_at")),
+            iso_from_unix(lead.get("closed_at")),
+            json.dumps(lead, ensure_ascii=False),
+            row_hash(lead),
+            sync_id,
+        )
+        for lead in raw.get("leads", [])
+        if lead.get("id") is not None
+    ]
+    result = insert_current_versions(
+        cur,
+        table="raw_kommo_leads",
+        id_column="kommo_lead_id",
+        records=lead_records,
+        insert_sql="""
+            insert into public.raw_kommo_leads(
+              kommo_lead_id, kommo_pipeline_id, kommo_status_id, responsible_user_id,
+              name, price, created_at_kommo, updated_at_kommo, closed_at_kommo,
+              raw_payload, raw_hash, sync_id, ativo, fetched_at
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, true, now())
+            on conflict (kommo_lead_id, raw_hash) do update
+            set ativo = true, sync_id = excluded.sync_id, fetched_at = now(), updated_at = now()
+        """,
+        insert_rows=lead_rows,
+    )
+    raw_inserted += result["raw_inserted"]
+    raw_skipped += result["raw_skipped"]
+
+    task_records = [
+        {"kommo_task_id": int(task["id"]), "raw_hash": row_hash(task)}
+        for task in raw.get("tasks", [])
+        if task.get("id") is not None
+    ]
+    task_rows = [
+        (
+            int(task["id"]),
+            task.get("entity_type"),
+            int_or_none(task.get("entity_id")),
+            int_or_none(task.get("responsible_user_id")),
+            bool(task.get("is_completed")) if task.get("is_completed") is not None else None,
+            iso_from_unix(task.get("complete_till")),
+            json.dumps(task, ensure_ascii=False),
+            row_hash(task),
+            sync_id,
+        )
+        for task in raw.get("tasks", [])
+        if task.get("id") is not None
+    ]
+    result = insert_current_versions(
+        cur,
+        table="raw_kommo_tasks",
+        id_column="kommo_task_id",
+        records=task_records,
+        insert_sql="""
+            insert into public.raw_kommo_tasks(
+              kommo_task_id, entity_type, entity_id, responsible_user_id, is_completed,
+              complete_till_kommo, raw_payload, raw_hash, sync_id, ativo, fetched_at
+            )
+            values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, true, now())
+            on conflict (kommo_task_id, raw_hash) do update
+            set ativo = true, sync_id = excluded.sync_id, fetched_at = now(), updated_at = now()
+        """,
+        insert_rows=task_rows,
+    )
+    raw_inserted += result["raw_inserted"]
+    raw_skipped += result["raw_skipped"]
+
+    return {"raw_inserted": raw_inserted, "raw_skipped": raw_skipped}
+
+
+def insert_rows(collected: dict[str, Any], date_from: str | None = None, date_to: str | None = None) -> dict[str, int]:
     env = load_env()
     sync_id = f"kommo_api_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    rows = collected["rows"]
     records: list[tuple[str, str, str, str, str, str, str]] = []
     for row in rows:
         lead_id = row.get("ID do lead")
@@ -320,13 +590,53 @@ def insert_rows(rows: list[dict[str, Any]]) -> dict[str, int]:
         payload = json.dumps(row, ensure_ascii=False)
         records.append((SOURCE_SYSTEM, source_id, ENTITY, payload, payload, sync_id, row_hash(row)))
 
-    progress(f"gravando staging: {len(rows)} linhas")
-    if not records:
-        return {"inserted": 0, "skipped": 0}
+    progress(f"gravando raw e staging: {len(rows)} leads normalizados")
 
     source_ids = [record[1] for record in records]
     with connect_database(env) as conn:
         with conn.cursor() as cur:
+            raw_result = insert_raw_data(cur, collected.get("raw", {}), sync_id)
+            cur.execute(
+                """
+                insert into public.atendimento_ingestion_runs(
+                  sync_id, status, date_from, date_to, page_limit, max_pages,
+                  users_lidos, pipelines_lidos, statuses_lidos, leads_lidos, tasks_lidas, events_lidos,
+                  raw_inseridos, raw_ignorados, metadata
+                )
+                values (%s, 'processando', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                on conflict (sync_id) do nothing
+                """,
+                (
+                    sync_id,
+                    date_from,
+                    date_to,
+                    int(env.get("KOMMO_PAGE_LIMIT") or DEFAULT_LIMIT),
+                    int(env.get("KOMMO_MAX_PAGES") or DEFAULT_MAX_PAGES),
+                    len(collected.get("raw", {}).get("users", [])),
+                    len(collected.get("raw", {}).get("pipelines", [])),
+                    len(collected.get("raw", {}).get("statuses", [])),
+                    len(collected.get("raw", {}).get("leads", [])),
+                    len(collected.get("raw", {}).get("tasks", [])),
+                    len(collected.get("raw", {}).get("events", [])),
+                    raw_result["raw_inserted"],
+                    raw_result["raw_skipped"],
+                    json.dumps({"base_url": collected.get("base_url")}, ensure_ascii=False),
+                ),
+            )
+            if not records:
+                cur.execute(
+                    """
+                    update public.atendimento_ingestion_runs
+                    set status = 'sucesso',
+                        finished_at = now(),
+                        raw_inseridos = %s,
+                        raw_ignorados = %s
+                    where sync_id = %s
+                    """,
+                    (raw_result["raw_inserted"], raw_result["raw_skipped"], sync_id),
+                )
+                conn.commit()
+                return {"inserted": 0, "skipped": 0, **raw_result}
             cur.execute(
                 """
                 select source_id, hash_registro
@@ -374,10 +684,25 @@ def insert_rows(rows: list[dict[str, Any]]) -> dict[str, int]:
                     """,
                     new_records,
                 )
+            inserted = len(new_records)
+            cur.execute(
+                """
+                update public.atendimento_ingestion_runs
+                set status = 'sucesso',
+                    finished_at = now(),
+                    staging_inseridos = %s,
+                    staging_ignorados = %s
+                where sync_id = %s
+                """,
+                (inserted, skipped, sync_id),
+            )
             conn.commit()
-    inserted = len(new_records)
-    progress(f"staging concluido: inserted={inserted}, skipped={skipped}")
-    return {"inserted": inserted, "skipped": skipped}
+    progress(
+        "ingestao concluida: "
+        f"raw_inserted={raw_result['raw_inserted']}, raw_skipped={raw_result['raw_skipped']}, "
+        f"staging_inserted={inserted}, staging_skipped={skipped}"
+    )
+    return {"inserted": inserted, "skipped": skipped, **raw_result}
 
 
 def parse_args() -> argparse.Namespace:
@@ -410,7 +735,7 @@ def main() -> None:
         "fields": list(collected["rows"][0].keys()) if collected["rows"] else [],
     }
     if not args.dry_run:
-        result.update(insert_rows(collected["rows"]))
+        result.update(insert_rows(collected, args.date_from, args.date_to))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

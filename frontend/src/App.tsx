@@ -537,6 +537,8 @@ function App() {
   const attendanceCollaboratorRanking = attendance?.ranking_colaboradores ?? []
   const attendanceRegionRanking = attendance?.ranking_regioes ?? []
   const unmappedAttendanceCollaborators = attendance?.unmapped_collaborators ?? []
+  const attendanceQuality = attendance?.data_quality ?? []
+  const attendanceRefreshRuns = attendance?.refresh_runs ?? []
 
   return (
     <main className="app-shell">
@@ -1517,6 +1519,54 @@ function App() {
                 </Panel>
               </>
             )}
+
+            <Panel title="Fonte dos dados de atendimento" icon={<Database size={17} />}>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Camada</th>
+                      <th>Linhas</th>
+                      <th>Ultima atualizacao</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>{attendance?.source_grain ?? 'Sem fonte'}</td>
+                      <td>{formatNumber(attendance?.rows)}</td>
+                      <td>{attendance?.latest_imported_at ? new Date(attendance.latest_imported_at).toLocaleString('pt-BR') : 'Sem dados'}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+
+            <Panel title="Qualidade da base" icon={<AlertTriangle size={17} />}>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Regra</th>
+                      <th>Severidade</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attendanceQuality.length ? attendanceQuality.slice(0, 6).map((item) => (
+                      <tr key={`${item.regra}-${item.checked_at}`}>
+                        <td>{item.regra.replaceAll('_', ' ')}</td>
+                        <td>{item.severidade}</td>
+                        <td>{formatNumber(item.total)}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={3} className="empty-cell">Sem alertas de qualidade</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
           </section>
         </>
       )}
@@ -1623,7 +1673,100 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && macroArea === 'service' && !['service-overview', 'ranking'].includes(intelligenceTab) && (
+      {!needsLogin && macroArea === 'service' && intelligenceTab === 'sla' && (
+        <section className="dashboard-grid">
+          <Panel title="SLA por colaborador" icon={<Gauge size={17} />} wide>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>Funcao</th>
+                    <th>Regiao/Polo</th>
+                    <th>Leads</th>
+                    <th>SLA 5 min</th>
+                    <th>Follow-up</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attendanceCollaboratorRanking.length ? attendanceCollaboratorRanking.map((item) => (
+                    <tr key={`${item.nome}-${item.funcao}`}>
+                      <td>{item.nome}</td>
+                      <td>{item.funcao}</td>
+                      <td>{item.regiao_polo}</td>
+                      <td>{formatNumber(item.leads)}</td>
+                      <td>{percent(item.sla_5_min)}</td>
+                      <td>{percent(item.follow_up_cobertura)}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={6} className="empty-cell">Faltam dados para cruzamentos</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          <Panel title="Atualizacoes da base" icon={<RefreshCw size={17} />} wide>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Carga</th>
+                    <th>Status</th>
+                    <th>Leads</th>
+                    <th>Finalizada em</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attendanceRefreshRuns.length ? attendanceRefreshRuns.map((item) => (
+                    <tr key={item.sync_id}>
+                      <td>{item.sync_id}</td>
+                      <td>{item.status}</td>
+                      <td>{formatNumber(item.leads_processados)}</td>
+                      <td>{item.finished_at ? new Date(item.finished_at).toLocaleString('pt-BR') : 'Em processamento'}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={4} className="empty-cell">Sem historico de refresh</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && macroArea === 'service' && intelligenceTab === 'team' && (
+        <section className="dashboard-grid">
+          <Panel title="Equipe por praca/polo" icon={<TableProperties size={17} />} wide>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>Funcao</th>
+                    <th>Regiao/Polo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attendanceRegionDimension.map((item) => (
+                    <tr key={`${item.colaborador}-${item.funcao}`}>
+                      <td>{item.colaborador}</td>
+                      <td>{item.funcao}</td>
+                      <td>{item.regiao_polo}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && macroArea === 'service' && !['service-overview', 'ranking', 'sla', 'team'].includes(intelligenceTab) && (
         <UnavailableTab title={activeTabLabel} />
       )}
 
