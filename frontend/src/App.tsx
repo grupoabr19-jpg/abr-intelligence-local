@@ -550,17 +550,6 @@ function App() {
   const attendanceOrigins = attendance?.origins ?? []
   const attendanceEventTypes = attendance?.event_types ?? []
   const attendanceEventStats = attendance?.event_stats
-  const kommoSummaryRows = attendanceSummaryRows.length
-    ? attendanceSummaryRows
-    : [
-        { metrica: 'Fonte', valor: attendance?.source_grain ?? 'Sem fonte' },
-        { metrica: 'Leads processados', valor: formatNumber(attendance?.rows) },
-        { metrica: 'Leads abertos', valor: attendanceHasGranularData ? formatNumber(attendanceKpis?.leads_abertos) : 'Faltam dados para cruzamento' },
-        { metrica: 'Ganhas', valor: attendanceHasGranularData ? formatNumber(attendanceCollaboratorRanking.reduce((sum, item) => sum + Number(item.ganhas || 0), 0)) : 'Faltam dados para cruzamento' },
-        { metrica: 'Eventos Kommo coletados', valor: formatNumber(attendanceEventStats?.raw_events) },
-        { metrica: 'Eventos vinculados a leads', valor: formatNumber(attendanceEventStats?.linked_events) },
-        { metrica: 'Ultima carga', valor: attendance?.latest_imported_at ? new Date(attendance.latest_imported_at).toLocaleString('pt-BR') : 'Sem carga registrada' },
-      ]
   const rankingViewOptions: Array<{ key: RankingView; label: string }> = [
     { key: 'retail', label: '1. Varejo' },
     { key: 'retail-region', label: '2. Varejo por região' },
@@ -1577,27 +1566,6 @@ function App() {
           </section>
 
           <section className="dashboard-grid">
-            <Panel title="Resumo recebido do Kommo" icon={<TableProperties size={17} />}>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Metrica</th>
-                      <th>Valor</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {kommoSummaryRows.slice(0, 10).map((item) => (
-                      <tr key={`${item.metrica}-${item.valor}`}>
-                        <td>{item.metrica}</td>
-                        <td>{item.valor}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-
             <Panel title="Campos necessarios para calcular atendimento" icon={<SlidersHorizontal size={17} />}>
               <div className="table-wrap">
                 <table>
