@@ -12,8 +12,6 @@ import {
   Filter,
   Gauge,
   LineChart as LineChartIcon,
-  LockKeyhole,
-  LogIn,
   RefreshCw,
   Search,
   SlidersHorizontal,
@@ -34,7 +32,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { DashboardAuthError, DashboardSummary, fetchInternalDashboard, loginDashboard } from './api'
+import { DashboardSummary, fetchInternalDashboard } from './api'
 import abrLogoWhite from './abr-logo-white.svg'
 
 const DEFAULT_DATE_FROM = '2026-01-01'
@@ -214,23 +212,14 @@ function App() {
   const [dateFrom, setDateFrom] = useState(DEFAULT_DATE_FROM)
   const [dateTo, setDateTo] = useState(DEFAULT_DATE_TO)
   const [search, setSearch] = useState('')
-  const [needsLogin, setNeedsLogin] = useState(false)
-  const [password, setPassword] = useState('')
-  const [loginError, setLoginError] = useState<string | null>(null)
-  const [authenticating, setAuthenticating] = useState(false)
 
   const load = async () => {
     setLoading(true)
     setError(null)
     try {
       setSummary(await fetchInternalDashboard({ dateFrom, dateTo }))
-      setNeedsLogin(false)
     } catch (err) {
-      if (err instanceof DashboardAuthError) {
-        setNeedsLogin(true)
-      } else {
-        setError(err instanceof Error ? err.message : 'Falha ao carregar dados')
-      }
+      setError(err instanceof Error ? err.message : 'Falha ao carregar dados')
     } finally {
       setLoading(false)
     }
@@ -239,21 +228,6 @@ function App() {
   const submitFilters = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     void load()
-  }
-
-  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setAuthenticating(true)
-    setLoginError(null)
-    try {
-      await loginDashboard(password)
-      setPassword('')
-      await load()
-    } catch (err) {
-      setLoginError(err instanceof Error ? err.message : 'Falha ao autenticar')
-    } finally {
-      setAuthenticating(false)
-    }
   }
 
   useEffect(() => {
@@ -664,32 +638,6 @@ function App() {
         </section>
       )}
 
-      {needsLogin && (
-        <section className="login-panel">
-          <div className="login-panel-copy">
-            <LockKeyhole size={24} />
-            <div>
-              <h2>Acesso ao dashboard</h2>
-              <p>Informe a senha de leitura da Inteligencia de Mercado.</p>
-            </div>
-          </div>
-          <form onSubmit={submitLogin} className="login-form">
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Senha do dashboard"
-              autoComplete="current-password"
-            />
-            <button type="submit" disabled={authenticating || !password}>
-              <LogIn size={16} />
-              {authenticating ? 'Entrando' : 'Entrar'}
-            </button>
-          </form>
-          {loginError && <span className="login-error">{loginError}</span>}
-        </section>
-      )}
-
       {summary?.warnings.map((warning) => (
         <section className="notice" key={warning}>
           <AlertTriangle size={18} />
@@ -697,15 +645,15 @@ function App() {
         </section>
       ))}
 
-      {!needsLogin && <nav className="tabs intelligence-tabs" aria-label={`Dashboards de ${activeMacro.label}`}>
+      <nav className="tabs intelligence-tabs" aria-label={`Dashboards de ${activeMacro.label}`}>
         {activeTabs.map((item) => (
           <button key={item.key} className={intelligenceTab === item.key ? 'active' : ''} onClick={() => setIntelligenceTab(item.key)}>
             {item.label}
           </button>
         ))}
-      </nav>}
+      </nav>
 
-      {!needsLogin && intelligenceTab === 'executive' && (
+      {intelligenceTab === 'executive' && (
         <>
           <section className="kpi-grid">
             <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} vendas por item`} icon={<CircleDollarSign />} />
@@ -780,7 +728,7 @@ function App() {
         </>
       )}
 
-      {!needsLogin && intelligenceTab === 'commercial' && (
+      {intelligenceTab === 'commercial' && (
         <>
           <section className="kpi-grid sales-kpis">
             <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} linhas`} icon={<CircleDollarSign />} />
@@ -846,7 +794,7 @@ function App() {
         </>
       )}
 
-      {!needsLogin && intelligenceTab === 'clients' && (
+      {intelligenceTab === 'clients' && (
         <section className="dashboard-grid">
           <Panel title="Curva ABC" icon={<BarChart3 size={17} />}>
             <ChartFrame>
@@ -906,7 +854,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && intelligenceTab === 'segments' && (
+      {intelligenceTab === 'segments' && (
         <section className="dashboard-grid">
           <Panel title="Segmento x toneladas" icon={<BarChart3 size={17} />}>
             <ChartFrame>
@@ -997,7 +945,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && intelligenceTab === 'products' && (
+      {intelligenceTab === 'products' && (
         <section className="dashboard-grid">
           <Panel title="Familia x toneladas" icon={<Boxes size={17} />}>
             <ChartFrame>
@@ -1054,7 +1002,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && intelligenceTab === 'prices' && (
+      {intelligenceTab === 'prices' && (
         <section className="dashboard-grid">
           <Panel title="Preco medio R$/kg" icon={<LineChartIcon size={17} />}>
             <ChartFrame>
@@ -1122,7 +1070,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && intelligenceTab === 'margin' && (
+      {intelligenceTab === 'margin' && (
         <section className="dashboard-grid">
           <Panel title="Preço de venda e margem por mês" icon={<AreaIcon size={17} />} wide>
             <ChartFrame>
@@ -1181,7 +1129,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && intelligenceTab === 'quotes' && (
+      {intelligenceTab === 'quotes' && (
         <section className="dashboard-grid">
           <Panel title="Kg cotados x vendidos" icon={<BarChart3 size={17} />}>
             <ChartFrame>
@@ -1241,7 +1189,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && intelligenceTab === 'competition' && (
+      {intelligenceTab === 'competition' && (
         <section className="dashboard-grid">
           <Panel title="Valor perdido por motivo" icon={<AlertTriangle size={17} />}>
             <ChartFrame>
@@ -1272,7 +1220,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && intelligenceTab === 'map' && (
+      {intelligenceTab === 'map' && (
         <section className="dashboard-grid">
           <Panel title="Peso vendido por municipio" icon={<Boxes size={17} />}>
             <ChartFrame>
@@ -1316,7 +1264,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && intelligenceTab === 'forecast' && (
+      {intelligenceTab === 'forecast' && (
         <>
           <section className="kpi-grid">
             <Kpi title="Forecast proximo mes" displayValue={`${formatNumber(forecastNextKg / 1000)} t`} detail="Media ponderada recente ajustada por sazonalidade" icon={<Gauge />} />
@@ -1437,15 +1385,15 @@ function App() {
         </>
       )}
 
-      {!needsLogin && macroArea === 'business' && ['stock', 'purchases', 'logistics'].includes(intelligenceTab) && (
+      {macroArea === 'business' && ['stock', 'purchases', 'logistics'].includes(intelligenceTab) && (
         <UnavailableTab title={activeTabLabel} />
       )}
 
-      {!needsLogin && macroArea === 'market' && intelligenceTab !== 'competition' && (
+      {macroArea === 'market' && intelligenceTab !== 'competition' && (
         <UnavailableTab title={activeTabLabel} />
       )}
 
-      {!needsLogin && macroArea === 'service' && intelligenceTab === 'service-overview' && (
+      {macroArea === 'service' && intelligenceTab === 'service-overview' && (
         <>
           <section className="kpi-grid">
             <Kpi
@@ -1617,7 +1565,7 @@ function App() {
         </>
       )}
 
-      {!needsLogin && macroArea === 'service' && intelligenceTab === 'ranking' && (
+      {macroArea === 'service' && intelligenceTab === 'ranking' && (
         <section className="dashboard-grid">
           <Panel title="Ranking por colaborador" icon={<BarChart3 size={17} />} wide>
             {!attendanceHasGranularData && (
@@ -1719,7 +1667,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && macroArea === 'service' && intelligenceTab === 'sla' && (
+      {macroArea === 'service' && intelligenceTab === 'sla' && (
         <section className="dashboard-grid">
           <Panel title="SLA por colaborador" icon={<Gauge size={17} />} wide>
             <div className="table-wrap">
@@ -1785,7 +1733,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && macroArea === 'service' && intelligenceTab === 'team' && (
+      {macroArea === 'service' && intelligenceTab === 'team' && (
         <section className="dashboard-grid">
           {teamBlocks.map((block) => (
             <Panel key={block.label} title={block.label} icon={<TableProperties size={17} />} wide>
@@ -1818,7 +1766,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && macroArea === 'service' && intelligenceTab === 'channels' && (
+      {macroArea === 'service' && intelligenceTab === 'channels' && (
         <section className="dashboard-grid">
           <Panel title="Origem dos leads" icon={<BarChart3 size={17} />} wide>
             <ChartFrame>
@@ -1836,7 +1784,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && macroArea === 'service' && intelligenceTab === 'incidents' && (
+      {macroArea === 'service' && intelligenceTab === 'incidents' && (
         <section className="dashboard-grid">
           <Panel title="Eventos Kommo coletados" icon={<TableProperties size={17} />} wide>
             <div className="kpi-grid compact-grid">
@@ -1869,7 +1817,7 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && macroArea === 'service' && !['service-overview', 'ranking', 'sla', 'team', 'channels', 'incidents'].includes(intelligenceTab) && (
+      {macroArea === 'service' && !['service-overview', 'ranking', 'sla', 'team', 'channels', 'incidents'].includes(intelligenceTab) && (
         <UnavailableTab title={activeTabLabel} />
       )}
 

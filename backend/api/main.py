@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import hmac
 from datetime import date
 from pathlib import Path
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,8 +19,6 @@ from backend.api.data import (
 from backend.api.jobs import job_manager
 from backend.api.models import (
     DataRequirementsResponse,
-    DashboardLoginRequest,
-    DashboardSessionResponse,
     ExtractionRequest,
     ExtractionResponse,
     IntelligenceDomainsResponse,
@@ -31,15 +28,7 @@ from backend.api.models import (
     ReportInfo,
     SalesRegionRow,
 )
-from backend.api.security import (
-    clear_dashboard_session_cookie,
-    dashboard_password,
-    require_api_key,
-    require_dashboard_read_key,
-    set_dashboard_session_cookie,
-    valid_dashboard_session,
-    DASHBOARD_SESSION_COOKIE,
-)
+from backend.api.security import require_api_key
 from backend.aster_collector.local_spreadsheets import inspect_local_spreadsheet_sources
 
 
@@ -71,28 +60,6 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "service": "abr-data-api"}
 
 
-@app.post("/v1/auth/dashboard-login", response_model=DashboardSessionResponse, tags=["auth"])
-async def dashboard_login(request: DashboardLoginRequest, response: Response) -> DashboardSessionResponse:
-    expected_password = dashboard_password()
-    if not expected_password or not hmac.compare_digest(request.password, expected_password):
-        raise HTTPException(status_code=401, detail="Invalid dashboard password.")
-    session_token = set_dashboard_session_cookie(response)
-    return DashboardSessionResponse(authenticated=True, session_token=session_token)
-
-
-@app.post("/v1/auth/dashboard-logout", response_model=DashboardSessionResponse, tags=["auth"])
-async def dashboard_logout(response: Response) -> DashboardSessionResponse:
-    clear_dashboard_session_cookie(response)
-    return DashboardSessionResponse(authenticated=False)
-
-
-@app.get("/v1/auth/dashboard-session", response_model=DashboardSessionResponse, tags=["auth"])
-async def dashboard_session(
-    abr_dashboard_session: str | None = Cookie(default=None, alias=DASHBOARD_SESSION_COOKIE),
-) -> DashboardSessionResponse:
-    return DashboardSessionResponse(authenticated=valid_dashboard_session(abr_dashboard_session))
-
-
 @app.get("/v1/aster/reports", response_model=list[ReportInfo], tags=["aster"], dependencies=[Depends(require_api_key)])
 async def get_aster_reports() -> list[dict]:
     return list_reports()
@@ -122,7 +89,6 @@ async def get_intelligence_domains() -> dict:
     "/v1/dashboard/internal",
     response_model=dict,
     tags=["dashboard"],
-    dependencies=[Depends(require_dashboard_read_key)],
 )
 async def get_internal_dashboard(
     date_from: date | None = Query(default=None),

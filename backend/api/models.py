@@ -92,15 +92,6 @@ class LocalSpreadsheetInspectionResponse(BaseModel):
     summary: dict[str, Any] = Field(default_factory=dict)
 
 
-class DashboardLoginRequest(BaseModel):
-    password: str
-
-
-class DashboardSessionResponse(BaseModel):
-    authenticated: bool
-    session_token: str | None = None
-
-
 class IntelligenceDomainInfo(BaseModel):
     key: str
     title: str
