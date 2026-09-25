@@ -539,7 +539,6 @@ function App() {
   const attendanceCollaboratorRanking = attendance?.ranking_colaboradores ?? []
   const attendanceRegionRanking = attendance?.ranking_regioes ?? []
   const unmappedAttendanceCollaborators = attendance?.unmapped_collaborators ?? []
-  const attendanceQuality = attendance?.data_quality ?? []
   const attendanceRefreshRuns = attendance?.refresh_runs ?? []
   const attendanceDaily = (attendance?.daily ?? []).map((item) => ({
     ...item,
@@ -1589,54 +1588,6 @@ function App() {
                 </Panel>
               </>
             )}
-
-            <Panel title="Fonte dos dados de atendimento" icon={<Database size={17} />}>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Camada</th>
-                      <th>Linhas</th>
-                      <th>Ultima atualizacao</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>{attendance?.source_grain ?? 'Sem fonte'}</td>
-                      <td>{formatNumber(attendance?.rows)}</td>
-                      <td>{attendance?.latest_imported_at ? new Date(attendance.latest_imported_at).toLocaleString('pt-BR') : 'Sem dados'}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-
-            <Panel title="Qualidade da base" icon={<AlertTriangle size={17} />}>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Regra</th>
-                      <th>Severidade</th>
-                      <th>Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {attendanceQuality.length ? attendanceQuality.slice(0, 6).map((item) => (
-                      <tr key={`${item.regra}-${item.checked_at}`}>
-                        <td>{item.regra.replaceAll('_', ' ')}</td>
-                        <td>{item.severidade}</td>
-                        <td>{formatNumber(item.total)}</td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={3} className="empty-cell">Sem alertas de qualidade</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
 
             <Panel title="Evolucao diaria de leads" icon={<LineChartIcon size={17} />}>
               <ChartFrame>
