@@ -188,6 +188,23 @@ def read_sales_summary_cache(date_from: date | None = None, date_to: date | None
                     (sales_summary_cache_key(date_from=date_from, date_to=date_to),),
                 )
                 row = cur.fetchone()
+                served_date_to = date_to
+                if not row and date_from and date_to:
+                    cur.execute(
+                        """
+                        select payload, refreshed_at, date_to
+                        from public.dashboard_sales_summary_cache
+                        where date_from = %s
+                          and date_to <= %s
+                        order by date_to desc nulls last, refreshed_at desc
+                        limit 1
+                        """,
+                        (date_from, date_to),
+                    )
+                    fallback_row = cur.fetchone()
+                    if fallback_row:
+                        row = (fallback_row[0], fallback_row[1])
+                        served_date_to = fallback_row[2]
     except BaseException:
         return None
     if not row:
@@ -195,6 +212,9 @@ def read_sales_summary_cache(date_from: date | None = None, date_to: date | None
     payload, refreshed_at = row
     payload = dict(payload)
     payload["cache_refreshed_at"] = refreshed_at.isoformat() if refreshed_at else None
+    if served_date_to and served_date_to != date_to:
+        payload["cache_served_date_to"] = served_date_to.isoformat()
+        payload["cache_requested_date_to"] = date_to.isoformat() if date_to else None
     return payload
 
 
@@ -1107,9 +1127,19 @@ VAREJO_REGION_FALLBACK: tuple[tuple[str, str, str], ...] = (
     ("ARIANE", "CONSTRUÇÃO CIVIL", "CAMBUÍ"),
 )
 
+VAREJO_REGION_ALIASES: dict[str, str] = {
+    "CAMILA": "CAMILA GUIMENTI",
+    "HELOA LEITE": "HELOA",
+    "JESSICA": "JESSICA.S",
+    "JOSIANE": "JOSIANE FRAZAO",
+    "THAIS OLIVEIRA": "THAIS",
+}
+
 
 def attendance_person_key(value: Any) -> str:
-    return re.sub(r"[^A-Z0-9]", "", normalize_attendance_text(value))
+    normalized = normalize_attendance_text(value)
+    official = VAREJO_REGION_ALIASES.get(normalized, normalized)
+    return re.sub(r"[^A-Z0-9]", "", official)
 
 
 def load_varejo_region_dimension(cur: Any) -> dict[str, dict[str, str]]:
@@ -1180,6 +1210,8 @@ def attendance_summary(date_from: date | None = None, date_to: date | None = Non
                 select source_id, payload_original, imported_at
                 from public.staging_dados
                 where entidade = 'atendimento_kommo'
+                  and source_system = 'KOMMO_API'
+                  and ativo = true
                 order by imported_at desc
                 limit 50000
                 """
