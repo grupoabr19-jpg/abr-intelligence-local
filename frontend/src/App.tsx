@@ -1589,17 +1589,18 @@ function App() {
               </>
             )}
 
-            <Panel title="Evolucao diaria de leads" icon={<LineChartIcon size={17} />}>
+            <Panel title="Leads por dia e status atual" icon={<LineChartIcon size={17} />}>
               <ChartFrame>
                 <ResponsiveContainer>
                   <ComposedChart data={attendanceDaily} margin={{ top: 4, right: 12, left: 0, bottom: 16 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="data_label" />
                     <YAxis />
-                    <Tooltip />
+                    <Tooltip formatter={(value, name) => [formatNumber(String(value)), name]} />
                     <Legend verticalAlign="bottom" height={24} />
-                    <Bar dataKey="leads" name="Leads" fill="#253575" radius={[5, 5, 0, 0]} />
-                    <Line type="monotone" dataKey="abertos" name="Abertos" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                    <Bar dataKey="abertos" stackId="status" name="Abertos" fill="#F18800" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="ganhos" stackId="status" name="Ganhos" fill="#13875f" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="perdidos" stackId="status" name="Perdidos" fill="#C2261A" radius={[5, 5, 0, 0]} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </ChartFrame>
