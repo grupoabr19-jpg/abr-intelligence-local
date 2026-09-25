@@ -561,6 +561,78 @@ tbody tr:hover {
   text-align: center;
 }
 
+.ranking-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 260px));
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+
+.ranking-toolbar label {
+  display: grid;
+  gap: 5px;
+  color: #526079;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ranking-toolbar select {
+  min-height: 36px;
+  border: 1px solid var(--abr-border);
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--abr-blue);
+  background: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  text-transform: none;
+}
+
+.ranking-highlights {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ranking-highlight {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px;
+  background: #fbfcff;
+}
+
+.ranking-highlight span,
+.ranking-highlight strong,
+.ranking-highlight small {
+  display: block;
+}
+
+.ranking-highlight span {
+  color: #526079;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ranking-highlight strong {
+  overflow: hidden;
+  margin: 5px 0 2px;
+  color: var(--abr-blue);
+  font-size: 14px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranking-highlight small {
+  color: var(--abr-orange);
+  font-size: 13px;
+  font-weight: 900;
+}
+
 .source-stack {
   display: grid;
   gap: 9px;
@@ -716,6 +788,11 @@ tbody tr:hover {
 
   .login-form input {
     width: 100%;
+  }
+
+  .ranking-toolbar,
+  .ranking-highlights {
+    grid-template-columns: 1fr;
   }
 
   .panel.wide {

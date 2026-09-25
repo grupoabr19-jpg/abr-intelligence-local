@@ -79,6 +79,12 @@ type IntelligenceTab =
   | 'team'
 
 type MacroArea = 'business' | 'market' | 'service'
+type RankingView = 'retail' | 'retail-region' | 'wholesale' | 'representatives'
+type RankingMetric = 'ganhas' | 'win_rate' | 'follow_up' | 'sla_5' | 'pipeline_value' | 'leads'
+
+type AttendanceSummary = NonNullable<DashboardSummary['attendance_summary']>
+type CollaboratorRankingRow = NonNullable<AttendanceSummary['ranking_colaboradores']>[number]
+type RegionRankingRow = NonNullable<AttendanceSummary['ranking_regioes']>[number]
 
 function formatNumber(value: number | string | undefined) {
   const number = Number(value || 0)
@@ -102,6 +108,27 @@ function percent(value: number | null | undefined) {
 function minutes(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Sem dados'
   return `${Number(value).toFixed(0)} min`
+}
+
+function numericValue(value: number | string | null | undefined) {
+  if (value === null || value === undefined) return 0
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  const parsed = Number(value.replace(/[^\d,-.]/g, '').replace(/\./g, '').replace(',', '.'))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function isWholesale(row: { funcao?: string; regiao_polo?: string }) {
+  const funcao = String(row.funcao ?? '').toUpperCase()
+  const regiao = String(row.regiao_polo ?? '').toUpperCase()
+  return regiao === 'ATACADO' || funcao.includes('ATACADO')
+}
+
+function isRepresentative(row: { funcao?: string }) {
+  return String(row.funcao ?? '').toUpperCase().includes('REPRESENTANTE')
+}
+
+function isRetail(row: { funcao?: string; regiao_polo?: string }) {
+  return !isWholesale(row) && !isRepresentative(row) && String(row.regiao_polo ?? '').toUpperCase() !== 'SEM CADASTRO'
 }
 
 function monthLabel(value: string) {
@@ -212,6 +239,8 @@ function App() {
   const [dateFrom, setDateFrom] = useState(DEFAULT_DATE_FROM)
   const [dateTo, setDateTo] = useState(DEFAULT_DATE_TO)
   const [search, setSearch] = useState('')
+  const [rankingView, setRankingView] = useState<RankingView>('retail')
+  const [rankingMetric, setRankingMetric] = useState<RankingMetric>('ganhas')
 
   const load = async () => {
     setLoading(true)
@@ -521,6 +550,87 @@ function App() {
   const attendanceOrigins = attendance?.origins ?? []
   const attendanceEventTypes = attendance?.event_types ?? []
   const attendanceEventStats = attendance?.event_stats
+  const kommoSummaryRows = attendanceSummaryRows.length
+    ? attendanceSummaryRows
+    : [
+        { metrica: 'Fonte', valor: attendance?.source_grain ?? 'Sem fonte' },
+        { metrica: 'Leads processados', valor: formatNumber(attendance?.rows) },
+        { metrica: 'Leads abertos', valor: attendanceHasGranularData ? formatNumber(attendanceKpis?.leads_abertos) : 'Faltam dados para cruzamento' },
+        { metrica: 'Ganhas', valor: attendanceHasGranularData ? formatNumber(attendanceCollaboratorRanking.reduce((sum, item) => sum + Number(item.ganhas || 0), 0)) : 'Faltam dados para cruzamento' },
+        { metrica: 'Eventos Kommo coletados', valor: formatNumber(attendanceEventStats?.raw_events) },
+        { metrica: 'Eventos vinculados a leads', valor: formatNumber(attendanceEventStats?.linked_events) },
+        { metrica: 'Ultima carga', valor: attendance?.latest_imported_at ? new Date(attendance.latest_imported_at).toLocaleString('pt-BR') : 'Sem carga registrada' },
+      ]
+  const rankingViewOptions: Array<{ key: RankingView; label: string }> = [
+    { key: 'retail', label: '1. Varejo' },
+    { key: 'retail-region', label: '2. Varejo por região' },
+    { key: 'wholesale', label: '3. Atacado' },
+    { key: 'representatives', label: '4. Representantes fixos' },
+  ]
+  const rankingMetricOptions: Array<{ key: RankingMetric; label: string }> = [
+    { key: 'ganhas', label: 'Vendas ganhas' },
+    { key: 'win_rate', label: 'Win rate' },
+    { key: 'follow_up', label: 'Follow-up' },
+    { key: 'sla_5', label: 'SLA 5 min' },
+    { key: 'pipeline_value', label: 'Valor em pipeline' },
+    { key: 'leads', label: 'Leads atendidos' },
+  ]
+  const rankingMetricValue = (item: CollaboratorRankingRow | RegionRankingRow, metric: RankingMetric) => {
+    if (metric === 'win_rate') return Number(item.win_rate ?? -1)
+    if (metric === 'follow_up') return Number(item.follow_up_cobertura ?? -1)
+    if (metric === 'sla_5') return Number(item.sla_5_min ?? -1)
+    if (metric === 'pipeline_value') return numericValue(item.pipeline_aberto_valor)
+    return Number(item[metric] ?? 0)
+  }
+  const sortRankingRows = <T extends CollaboratorRankingRow | RegionRankingRow>(rows: T[]) =>
+    rows.slice().sort((a, b) => {
+      const primary = rankingMetricValue(b, rankingMetric) - rankingMetricValue(a, rankingMetric)
+      if (primary !== 0) return primary
+      return Number(b.ganhas ?? 0) - Number(a.ganhas ?? 0)
+    })
+  const retailCollaborators = attendanceCollaboratorRanking.filter(isRetail)
+  const wholesaleCollaborators = attendanceCollaboratorRanking.filter(isWholesale)
+  const representativeCollaborators = attendanceCollaboratorRanking.filter(isRepresentative)
+  const retailRegions = attendanceRegionRanking.filter((item) => isRetail({ regiao_polo: item.regiao_polo }))
+  const selectedCollaboratorRanking =
+    rankingView === 'wholesale'
+      ? sortRankingRows(wholesaleCollaborators)
+      : rankingView === 'representatives'
+        ? sortRankingRows(representativeCollaborators)
+        : sortRankingRows(retailCollaborators)
+  const selectedRegionRanking = sortRankingRows(retailRegions)
+  const rankingTitle = rankingViewOptions.find((item) => item.key === rankingView)?.label.replace(/^\d+\.\s*/, '') ?? 'Ranking'
+  const highlightRows: Array<CollaboratorRankingRow | RegionRankingRow> =
+    rankingView === 'retail-region' ? selectedRegionRanking : selectedCollaboratorRanking
+  const bestBy = (metric: RankingMetric) => sortRankingRows(highlightRows).sort((a, b) => rankingMetricValue(b, metric) - rankingMetricValue(a, metric))[0]
+  const bestWin = bestBy('win_rate')
+  const bestFollow = bestBy('follow_up')
+  const bestSla = bestBy('sla_5')
+  const bestPipeline = bestBy('pipeline_value')
+  const highlightName = (item: CollaboratorRankingRow | RegionRankingRow | undefined) =>
+    item ? ('nome' in item ? item.nome : item.regiao_polo) : 'Sem dados'
+  const highlightCards = [
+    {
+      label: 'Maior venda ganha',
+      name: highlightName(bestWin),
+      value: bestWin && bestWin.win_rate !== null ? percent(bestWin.win_rate) : 'Faltam eventos',
+    },
+    {
+      label: 'Melhor follow-up',
+      name: highlightName(bestFollow),
+      value: bestFollow && bestFollow.follow_up_cobertura !== null ? percent(bestFollow.follow_up_cobertura) : 'Faltam tarefas',
+    },
+    {
+      label: 'Atendimento mais rapido',
+      name: highlightName(bestSla),
+      value: bestSla && bestSla.sla_5_min !== null ? percent(bestSla.sla_5_min) : 'Aguardando eventos',
+    },
+    {
+      label: 'Maior pipeline aberto',
+      name: highlightName(bestPipeline),
+      value: bestPipeline ? money(bestPipeline.pipeline_aberto_valor) : 'Sem pipeline',
+    },
+  ]
   const teamBlocks = [
     {
       label: 'Varejo',
@@ -1410,13 +1520,13 @@ function App() {
             />
             <Kpi
               title="Primeira resposta"
-              displayValue={attendanceHasGranularData ? minutes(attendanceKpis?.tempo_mediano_primeira_resposta) : 'Sem dados'}
-              detail="Mediana em minutos"
+              displayValue={attendanceKpis?.tempo_mediano_primeira_resposta !== null && attendanceKpis?.tempo_mediano_primeira_resposta !== undefined ? minutes(attendanceKpis.tempo_mediano_primeira_resposta) : 'Aguardando eventos'}
+              detail="Mediana calculada por evento de resposta"
               icon={<LineChartIcon />}
             />
             <Kpi
               title="SLA ate 5 min"
-              displayValue={attendanceHasGranularData ? percent(attendanceKpis?.sla_5_min) : 'Sem dados'}
+              displayValue={attendanceKpis?.sla_5_min !== null && attendanceKpis?.sla_5_min !== undefined ? percent(attendanceKpis.sla_5_min) : 'Aguardando eventos'}
               detail="Exige criado em e primeira resposta"
               icon={<BarChart3 />}
             />
@@ -1433,16 +1543,12 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {attendanceSummaryRows.length ? attendanceSummaryRows.slice(0, 10).map((item) => (
+                    {kommoSummaryRows.slice(0, 10).map((item) => (
                       <tr key={`${item.metrica}-${item.valor}`}>
                         <td>{item.metrica}</td>
                         <td>{item.valor}</td>
                       </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={2} className="empty-cell">Sem resumo carregado</td>
-                      </tr>
-                    )}
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -1568,6 +1674,35 @@ function App() {
       {macroArea === 'service' && intelligenceTab === 'ranking' && (
         <section className="dashboard-grid">
           <Panel title="Ranking por colaborador" icon={<BarChart3 size={17} />} wide>
+            <div className="ranking-toolbar">
+              <label>
+                <span>Ranking</span>
+                <select value={rankingView} onChange={(event) => setRankingView(event.target.value as RankingView)}>
+                  {rankingViewOptions.map((item) => (
+                    <option key={item.key} value={item.key}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Ordenar por</span>
+                <select value={rankingMetric} onChange={(event) => setRankingMetric(event.target.value as RankingMetric)}>
+                  {rankingMetricOptions.map((item) => (
+                    <option key={item.key} value={item.key}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="ranking-highlights">
+              {highlightCards.map((item) => (
+                <div className="ranking-highlight" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.name}</strong>
+                  <small>{item.value}</small>
+                </div>
+              ))}
+            </div>
+
             {!attendanceHasGranularData && (
               <div className="empty-state compact">
                 <strong>Faltam dados para cruzamentos</strong>
@@ -1579,77 +1714,75 @@ function App() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr>
-                    <th>Nome</th>
-                    <th>Funcao</th>
-                    <th>Regiao/Polo</th>
-                    <th>Leads</th>
-                    <th>Ganhas</th>
-                    <th>Perdidas</th>
-                    <th>Win rate</th>
-                    <th>SLA 5 min</th>
-                    <th>Pipeline</th>
-                    <th>Valor pipeline</th>
-                    <th>Follow-up</th>
-                  </tr>
+                  {rankingView === 'retail-region' ? (
+                    <tr>
+                      <th>Regiao/Polo</th>
+                      <th>Colaboradores</th>
+                      <th>Leads</th>
+                      <th>Ganhas</th>
+                      <th>Perdidas</th>
+                      <th>Win rate</th>
+                      <th>SLA 5 min</th>
+                      <th>Pipeline</th>
+                      <th>Valor pipeline</th>
+                      <th>Follow-up</th>
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th>Nome</th>
+                      <th>Funcao</th>
+                      <th>Regiao/Polo</th>
+                      <th>Leads</th>
+                      <th>Ganhas</th>
+                      <th>Perdidas</th>
+                      <th>Win rate</th>
+                      <th>SLA 5 min</th>
+                      <th>Pipeline</th>
+                      <th>Valor pipeline</th>
+                      <th>Follow-up</th>
+                    </tr>
+                  )}
                 </thead>
                 <tbody>
-                  {(attendanceHasGranularData ? attendanceCollaboratorRanking : attendanceRegionDimension).map((item) => {
-                    const row = item as typeof attendanceCollaboratorRanking[number] & typeof attendanceRegionDimension[number]
-                    return (
-                      <tr key={`${row.nome ?? row.colaborador}-${row.funcao}`}>
-                        <td>{row.nome ?? row.colaborador}</td>
-                        <td>{row.funcao}</td>
-                        <td>{row.regiao_polo}</td>
-                        <td>{attendanceHasGranularData ? formatNumber(row.leads) : '-'}</td>
-                        <td>{attendanceHasGranularData ? formatNumber(row.ganhas) : '-'}</td>
-                        <td>{attendanceHasGranularData ? formatNumber(row.perdidas) : '-'}</td>
-                        <td>{attendanceHasGranularData ? percent(row.win_rate) : '-'}</td>
-                        <td>{attendanceHasGranularData ? percent(row.sla_5_min) : '-'}</td>
-                        <td>{attendanceHasGranularData ? formatNumber(row.pipeline_aberto_qtd) : '-'}</td>
-                        <td>{attendanceHasGranularData ? money(row.pipeline_aberto_valor) : '-'}</td>
-                        <td>{attendanceHasGranularData ? percent(row.follow_up_cobertura) : '-'}</td>
+                  {rankingView === 'retail-region' ? (
+                    selectedRegionRanking.length ? selectedRegionRanking.map((item) => (
+                      <tr key={item.regiao_polo}>
+                        <td>{item.regiao_polo}</td>
+                        <td>{item.colaboradores.join(', ')}</td>
+                        <td>{formatNumber(item.leads)}</td>
+                        <td>{formatNumber(item.ganhas)}</td>
+                        <td>{formatNumber(item.perdidas)}</td>
+                        <td>{percent(item.win_rate)}</td>
+                        <td>{percent(item.sla_5_min)}</td>
+                        <td>{formatNumber(item.pipeline_aberto_qtd)}</td>
+                        <td>{money(item.pipeline_aberto_valor)}</td>
+                        <td>{percent(item.follow_up_cobertura)}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={10} className="empty-cell">Faltam dados para cruzamentos em {rankingTitle}</td>
                       </tr>
                     )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-
-          <Panel title="Ranking por regiao/polo" icon={<TableProperties size={17} />} wide>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Regiao/Polo</th>
-                    <th>Colaboradores</th>
-                    <th>Ganhas</th>
-                    <th>Perdidas</th>
-                    <th>Win rate</th>
-                    <th>SLA 5 min</th>
-                    <th>Pipeline</th>
-                    <th>Valor pipeline</th>
-                    <th>Follow-up</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {attendanceRegionRanking.length ? attendanceRegionRanking.map((item) => (
-                    <tr key={item.regiao_polo}>
-                      <td>{item.regiao_polo}</td>
-                      <td>{item.colaboradores.join(', ')}</td>
-                      <td>{formatNumber(item.ganhas)}</td>
-                      <td>{formatNumber(item.perdidas)}</td>
-                      <td>{percent(item.win_rate)}</td>
-                      <td>{percent(item.sla_5_min)}</td>
-                      <td>{formatNumber(item.pipeline_aberto_qtd)}</td>
-                      <td>{money(item.pipeline_aberto_valor)}</td>
-                      <td>{percent(item.follow_up_cobertura)}</td>
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td colSpan={9} className="empty-cell">Faltam dados para cruzamentos</td>
-                    </tr>
+                  ) : (
+                    selectedCollaboratorRanking.length ? selectedCollaboratorRanking.map((row) => (
+                      <tr key={`${row.nome}-${row.funcao}`}>
+                        <td>{row.nome}</td>
+                        <td>{row.funcao}</td>
+                        <td>{row.regiao_polo}</td>
+                        <td>{formatNumber(row.leads)}</td>
+                        <td>{formatNumber(row.ganhas)}</td>
+                        <td>{formatNumber(row.perdidas)}</td>
+                        <td>{percent(row.win_rate)}</td>
+                        <td>{percent(row.sla_5_min)}</td>
+                        <td>{formatNumber(row.pipeline_aberto_qtd)}</td>
+                        <td>{money(row.pipeline_aberto_valor)}</td>
+                        <td>{percent(row.follow_up_cobertura)}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={11} className="empty-cell">Faltam dados para cruzamentos em {rankingTitle}</td>
+                      </tr>
+                    )
                   )}
                 </tbody>
               </table>
