@@ -241,6 +241,8 @@ function App() {
   const [search, setSearch] = useState('')
   const [rankingView, setRankingView] = useState<RankingView>('retail')
   const [rankingMetric, setRankingMetric] = useState<RankingMetric>('ganhas')
+  const [slaView, setSlaView] = useState<RankingView>('retail')
+  const [slaMetric, setSlaMetric] = useState<RankingMetric>('sla_5')
 
   const load = async () => {
     setLoading(true)
@@ -582,9 +584,9 @@ function App() {
     if (metric === 'pipeline_value') return numericValue(item.pipeline_aberto_valor)
     return Number(item[metric] ?? 0)
   }
-  const sortRankingRows = <T extends CollaboratorRankingRow | RegionRankingRow>(rows: T[]) =>
+  const sortRankingRows = <T extends CollaboratorRankingRow | RegionRankingRow>(rows: T[], metric: RankingMetric = rankingMetric) =>
     rows.slice().sort((a, b) => {
-      const primary = rankingMetricValue(b, rankingMetric) - rankingMetricValue(a, rankingMetric)
+      const primary = rankingMetricValue(b, metric) - rankingMetricValue(a, metric)
       if (primary !== 0) return primary
       return Number(b.ganhas ?? 0) - Number(a.ganhas ?? 0)
     })
@@ -629,6 +631,50 @@ function App() {
       label: 'Maior pipeline aberto',
       name: highlightName(bestPipeline),
       value: bestPipeline ? money(bestPipeline.pipeline_aberto_valor) : 'Sem pipeline',
+    },
+  ]
+  const slaMetricOptions: Array<{ key: RankingMetric; label: string }> = [
+    { key: 'sla_5', label: 'SLA 5 min' },
+    { key: 'follow_up', label: 'Follow-up' },
+    { key: 'leads', label: 'Leads atendidos' },
+    { key: 'win_rate', label: 'Win rate' },
+    { key: 'ganhas', label: 'Vendas ganhas' },
+  ]
+  const selectedSlaCollaborators =
+    slaView === 'wholesale'
+      ? sortRankingRows(wholesaleCollaborators, slaMetric)
+      : slaView === 'representatives'
+        ? sortRankingRows(representativeCollaborators, slaMetric)
+        : sortRankingRows(retailCollaborators, slaMetric)
+  const selectedSlaRegions = sortRankingRows(retailRegions, slaMetric)
+  const slaTitle = rankingViewOptions.find((item) => item.key === slaView)?.label.replace(/^\d+\.\s*/, '') ?? 'SLA'
+  const slaHighlightRows: Array<CollaboratorRankingRow | RegionRankingRow> =
+    slaView === 'retail-region' ? selectedSlaRegions : selectedSlaCollaborators
+  const slaBestBy = (metric: RankingMetric) => sortRankingRows(slaHighlightRows, metric)[0]
+  const bestSlaFast = slaBestBy('sla_5')
+  const bestSlaFollow = slaBestBy('follow_up')
+  const bestSlaVolume = slaBestBy('leads')
+  const bestSlaWin = slaBestBy('win_rate')
+  const slaHighlightCards = [
+    {
+      label: 'Quem atende mais rapido',
+      name: highlightName(bestSlaFast),
+      value: bestSlaFast && bestSlaFast.sla_5_min !== null ? percent(bestSlaFast.sla_5_min) : 'Aguardando eventos',
+    },
+    {
+      label: 'Melhor follow-up',
+      name: highlightName(bestSlaFollow),
+      value: bestSlaFollow && bestSlaFollow.follow_up_cobertura !== null ? percent(bestSlaFollow.follow_up_cobertura) : 'Faltam tarefas',
+    },
+    {
+      label: 'Maior volume atendido',
+      name: highlightName(bestSlaVolume),
+      value: bestSlaVolume ? `${formatNumber(bestSlaVolume.leads)} leads` : 'Sem leads',
+    },
+    {
+      label: 'Melhor conversao',
+      name: highlightName(bestSlaWin),
+      value: bestSlaWin && bestSlaWin.win_rate !== null ? percent(bestSlaWin.win_rate) : 'Sem conversao',
     },
   ]
   const teamBlocks = [
@@ -1802,33 +1848,96 @@ function App() {
 
       {macroArea === 'service' && intelligenceTab === 'sla' && (
         <section className="dashboard-grid">
-          <Panel title="SLA por colaborador" icon={<Gauge size={17} />} wide>
+          <Panel title="SLA de atendimento" icon={<Gauge size={17} />} wide>
+            <div className="ranking-toolbar">
+              <label>
+                <span>Ranking</span>
+                <select value={slaView} onChange={(event) => setSlaView(event.target.value as RankingView)}>
+                  {rankingViewOptions.map((item) => (
+                    <option key={item.key} value={item.key}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Ordenar por</span>
+                <select value={slaMetric} onChange={(event) => setSlaMetric(event.target.value as RankingMetric)}>
+                  {slaMetricOptions.map((item) => (
+                    <option key={item.key} value={item.key}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="ranking-highlights">
+              {slaHighlightCards.map((item) => (
+                <div className="ranking-highlight" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.name}</strong>
+                  <small>{item.value}</small>
+                </div>
+              ))}
+            </div>
+
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr>
-                    <th>Nome</th>
-                    <th>Funcao</th>
-                    <th>Regiao/Polo</th>
-                    <th>Leads</th>
-                    <th>SLA 5 min</th>
-                    <th>Follow-up</th>
-                  </tr>
+                  {slaView === 'retail-region' ? (
+                    <tr>
+                      <th>Regiao/Polo</th>
+                      <th>Colaboradores</th>
+                      <th>Leads</th>
+                      <th>SLA 5 min</th>
+                      <th>Follow-up</th>
+                      <th>Win rate</th>
+                      <th>Pipeline</th>
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th>Nome</th>
+                      <th>Funcao</th>
+                      <th>Regiao/Polo</th>
+                      <th>Leads</th>
+                      <th>SLA 5 min</th>
+                      <th>Follow-up</th>
+                      <th>Win rate</th>
+                      <th>Pipeline</th>
+                    </tr>
+                  )}
                 </thead>
                 <tbody>
-                  {attendanceCollaboratorRanking.length ? attendanceCollaboratorRanking.map((item) => (
-                    <tr key={`${item.nome}-${item.funcao}`}>
-                      <td>{item.nome}</td>
-                      <td>{item.funcao}</td>
-                      <td>{item.regiao_polo}</td>
-                      <td>{formatNumber(item.leads)}</td>
-                      <td>{percent(item.sla_5_min)}</td>
-                      <td>{percent(item.follow_up_cobertura)}</td>
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td colSpan={6} className="empty-cell">Faltam dados para cruzamentos</td>
-                    </tr>
+                  {slaView === 'retail-region' ? (
+                    selectedSlaRegions.length ? selectedSlaRegions.map((item) => (
+                      <tr key={item.regiao_polo}>
+                        <td>{item.regiao_polo}</td>
+                        <td>{item.colaboradores.join(', ')}</td>
+                        <td>{formatNumber(item.leads)}</td>
+                        <td>{percent(item.sla_5_min)}</td>
+                        <td>{percent(item.follow_up_cobertura)}</td>
+                        <td>{percent(item.win_rate)}</td>
+                        <td>{money(item.pipeline_aberto_valor)}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={7} className="empty-cell">Faltam dados para cruzamentos em {slaTitle}</td>
+                      </tr>
+                    )
+                  ) : (
+                    selectedSlaCollaborators.length ? selectedSlaCollaborators.map((item) => (
+                      <tr key={`${item.nome}-${item.funcao}`}>
+                        <td>{item.nome}</td>
+                        <td>{item.funcao}</td>
+                        <td>{item.regiao_polo}</td>
+                        <td>{formatNumber(item.leads)}</td>
+                        <td>{percent(item.sla_5_min)}</td>
+                        <td>{percent(item.follow_up_cobertura)}</td>
+                        <td>{percent(item.win_rate)}</td>
+                        <td>{money(item.pipeline_aberto_valor)}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={8} className="empty-cell">Faltam dados para cruzamentos em {slaTitle}</td>
+                      </tr>
+                    )
                   )}
                 </tbody>
               </table>
