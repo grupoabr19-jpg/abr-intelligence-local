@@ -198,6 +198,33 @@ def fetch_open_tasks_by_lead(client: httpx.Client, limit: int, max_pages: int) -
     return tasks, index
 
 
+def fetch_events(
+    client: httpx.Client,
+    date_from: str | None,
+    date_to: str | None,
+    limit: int,
+    max_pages: int,
+) -> tuple[list[dict[str, Any]], str | None]:
+    try:
+        events = get_pages(
+            client,
+            "/api/v4/events",
+            "events",
+            params={
+                "filter[entity]": "lead",
+                "filter[created_at][from]": unix_date(date_from),
+                "filter[created_at][to]": unix_date(date_to, end_of_day=True),
+            },
+            limit=limit,
+            max_pages=max_pages,
+        )
+        return events, None
+    except httpx.HTTPStatusError as exc:
+        return [], f"{exc.response.status_code}: {exc.response.text[:240]}"
+    except httpx.HTTPError as exc:
+        return [], str(exc)[:240]
+
+
 def custom_field_value(lead: dict[str, Any], field_reference: str | None) -> Any:
     if not field_reference:
         return None
@@ -310,6 +337,16 @@ def collect_rows(
         progress("buscando tarefas abertas")
         raw_tasks, tasks_by_lead = fetch_open_tasks_by_lead(client, limit, max_pages)
         progress(f"tarefas abertas vinculadas a leads: {len(tasks_by_lead)}")
+        raw_events: list[dict[str, Any]] = []
+        events_error = None
+        collect_events = (env.get("KOMMO_COLLECT_EVENTS") or "").strip().lower() in {"1", "true", "sim", "yes"}
+        if collect_events:
+            progress("buscando eventos de leads")
+            raw_events, events_error = fetch_events(client, date_from, date_to, limit, max_pages)
+            if events_error:
+                progress(f"eventos indisponiveis: {events_error}")
+            else:
+                progress(f"eventos encontrados: {len(raw_events)}")
         lead_params: dict[str, Any] = {
             "with": "contacts,source,loss_reason",
             "order[created_at]": "asc",
@@ -334,8 +371,9 @@ def collect_rows(
             "statuses": raw_statuses,
             "leads": leads,
             "tasks": raw_tasks,
-            "events": [],
+            "events": raw_events,
         },
+        "events_error": events_error,
     }
 
 
@@ -576,6 +614,45 @@ def insert_raw_data(cur: Any, raw: dict[str, list[dict[str, Any]]], sync_id: str
     raw_inserted += result["raw_inserted"]
     raw_skipped += result["raw_skipped"]
 
+    event_records = [
+        {"kommo_event_id": str(event["id"]), "raw_hash": row_hash(event)}
+        for event in raw.get("events", [])
+        if event.get("id") is not None
+    ]
+    event_rows = [
+        (
+            str(event["id"]),
+            event.get("entity_type"),
+            int_or_none(event.get("entity_id")),
+            event.get("type"),
+            int_or_none(event.get("created_by")),
+            iso_from_unix(event.get("created_at")),
+            json.dumps(event, ensure_ascii=False),
+            row_hash(event),
+            sync_id,
+        )
+        for event in raw.get("events", [])
+        if event.get("id") is not None
+    ]
+    result = insert_current_versions(
+        cur,
+        table="raw_kommo_events",
+        id_column="kommo_event_id",
+        records=event_records,
+        insert_sql="""
+            insert into public.raw_kommo_events(
+              kommo_event_id, entity_type, entity_id, event_type, created_by,
+              created_at_kommo, raw_payload, raw_hash, sync_id, ativo, fetched_at
+            )
+            values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, true, now())
+            on conflict (kommo_event_id, raw_hash) do update
+            set ativo = true, sync_id = excluded.sync_id, fetched_at = now(), updated_at = now()
+        """,
+        insert_rows=event_rows,
+    )
+    raw_inserted += result["raw_inserted"]
+    raw_skipped += result["raw_skipped"]
+
     return {"raw_inserted": raw_inserted, "raw_skipped": raw_skipped}
 
 
@@ -601,9 +678,9 @@ def insert_rows(collected: dict[str, Any], date_from: str | None = None, date_to
                 insert into public.atendimento_ingestion_runs(
                   sync_id, status, date_from, date_to, page_limit, max_pages,
                   users_lidos, pipelines_lidos, statuses_lidos, leads_lidos, tasks_lidas, events_lidos,
-                  raw_inseridos, raw_ignorados, metadata
+                  raw_inseridos, raw_ignorados, events_status, events_erro, metadata
                 )
-                values (%s, 'processando', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                values (%s, 'processando', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 on conflict (sync_id) do nothing
                 """,
                 (
@@ -620,6 +697,8 @@ def insert_rows(collected: dict[str, Any], date_from: str | None = None, date_to
                     len(collected.get("raw", {}).get("events", [])),
                     raw_result["raw_inserted"],
                     raw_result["raw_skipped"],
+                    "erro" if collected.get("events_error") else "sucesso",
+                    collected.get("events_error"),
                     json.dumps({"base_url": collected.get("base_url")}, ensure_ascii=False),
                 ),
             )
@@ -732,6 +811,8 @@ def main() -> None:
         "users_found": collected["users_found"],
         "pipelines_found": collected["pipelines_found"],
         "open_tasks_found": collected["open_tasks_found"],
+        "events_found": len(collected.get("raw", {}).get("events", [])),
+        "events_error": collected.get("events_error"),
         "fields": list(collected["rows"][0].keys()) if collected["rows"] else [],
     }
     if not args.dry_run:

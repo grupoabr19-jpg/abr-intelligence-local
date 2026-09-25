@@ -188,6 +188,20 @@ export type DashboardSummary = {
       finished_at: string | null
       leads_processados: number
     }>
+    daily?: Array<{
+      data: string | null
+      leads: number
+      abertos: number
+      ganhos: number
+      perdidos: number
+      pipeline_valor: string
+      sla_validos: number
+      sla_5: number
+      sla_15: number
+    }>
+    origins?: Array<{ origem: string; leads: number }>
+    event_types?: Array<{ tipo: string; eventos: number }>
+    event_stats?: { raw_events: number; linked_events: number }
   }
   sales_regions: Array<{ canal: string; regiao: string; linhas: number; valor_total: string }>
   warnings: string[]

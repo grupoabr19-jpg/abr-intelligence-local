@@ -1308,6 +1308,63 @@ def attendance_summary_from_facts(date_from: date | None = None, date_to: date |
                     """
                 )
                 excluded_counts = {str(row[0] or ""): int(row[1] or 0) for row in cur.fetchall()}
+                daily_query = """
+                    select data_referencia, leads, abertos, ganhos, perdidos, pipeline_valor, sla_validos, sla_5, sla_15
+                    from public.atendimento_agregado_diario
+                """
+                daily_params: list[Any] = []
+                daily_clauses = []
+                if date_from:
+                    daily_clauses.append("data_referencia >= %s")
+                    daily_params.append(date_from)
+                if date_to:
+                    daily_clauses.append("data_referencia <= %s")
+                    daily_params.append(date_to)
+                if daily_clauses:
+                    daily_query += " where " + " and ".join(daily_clauses)
+                daily_query += " order by data_referencia"
+                cur.execute(daily_query, daily_params)
+                daily_rows = [
+                    {
+                        "data": row[0].isoformat() if row[0] else None,
+                        "leads": row[1],
+                        "abertos": row[2],
+                        "ganhos": row[3],
+                        "perdidos": row[4],
+                        "pipeline_valor": f"{Decimal(str(row[5] or 0)):.2f}",
+                        "sla_validos": row[6],
+                        "sla_5": row[7],
+                        "sla_15": row[8],
+                    }
+                    for row in cur.fetchall()
+                ]
+                cur.execute(
+                    """
+                    select o.origem, count(*) as leads
+                    from public.fato_atendimento_lead f
+                    left join public.dim_atendimento_origem o on o.origem_key = f.origem_key
+                    where f.excluido = false
+                    group by o.origem
+                    order by leads desc, o.origem
+                    limit 12
+                    """
+                )
+                origin_rows = [{"origem": row[0] or "Sem origem", "leads": row[1]} for row in cur.fetchall()]
+                cur.execute(
+                    """
+                    select event_type, count(*)
+                    from public.raw_kommo_events
+                    where ativo = true
+                    group by event_type
+                    order by count(*) desc, event_type
+                    limit 12
+                    """
+                )
+                event_type_rows = [{"tipo": row[0] or "Sem tipo", "eventos": row[1]} for row in cur.fetchall()]
+                cur.execute("select count(*) from public.raw_kommo_events where ativo = true")
+                raw_events_count = int(cur.fetchone()[0] or 0)
+                cur.execute("select count(*) from public.atendimento_evento_resposta")
+                linked_events_count = int(cur.fetchone()[0] or 0)
             except Exception:
                 cur.connection.rollback()
                 return None
@@ -1452,6 +1509,13 @@ def attendance_summary_from_facts(date_from: date | None = None, date_to: date |
         "unmapped_collaborators": sorted(unmapped),
         "data_quality": quality_rows,
         "refresh_runs": refresh_runs,
+        "daily": daily_rows,
+        "origins": origin_rows,
+        "event_types": event_type_rows,
+        "event_stats": {
+            "raw_events": raw_events_count,
+            "linked_events": linked_events_count,
+        },
     }
 
 

@@ -539,6 +539,14 @@ function App() {
   const unmappedAttendanceCollaborators = attendance?.unmapped_collaborators ?? []
   const attendanceQuality = attendance?.data_quality ?? []
   const attendanceRefreshRuns = attendance?.refresh_runs ?? []
+  const attendanceDaily = (attendance?.daily ?? []).map((item) => ({
+    ...item,
+    data_label: item.data ? new Date(`${item.data}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : 'Sem data',
+    pipeline_numero: Number(item.pipeline_valor),
+  }))
+  const attendanceOrigins = attendance?.origins ?? []
+  const attendanceEventTypes = attendance?.event_types ?? []
+  const attendanceEventStats = attendance?.event_stats
 
   return (
     <main className="app-shell">
@@ -1567,6 +1575,22 @@ function App() {
                 </table>
               </div>
             </Panel>
+
+            <Panel title="Evolucao diaria de leads" icon={<LineChartIcon size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ComposedChart data={attendanceDaily} margin={{ top: 4, right: 12, left: 0, bottom: 16 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="data_label" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Bar dataKey="leads" name="Leads" fill="#253575" radius={[5, 5, 0, 0]} />
+                    <Line type="monotone" dataKey="abertos" name="Abertos" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
           </section>
         </>
       )}
@@ -1766,7 +1790,58 @@ function App() {
         </section>
       )}
 
-      {!needsLogin && macroArea === 'service' && !['service-overview', 'ranking', 'sla', 'team'].includes(intelligenceTab) && (
+      {!needsLogin && macroArea === 'service' && intelligenceTab === 'channels' && (
+        <section className="dashboard-grid">
+          <Panel title="Origem dos leads" icon={<BarChart3 size={17} />} wide>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={attendanceOrigins} layout="vertical" margin={{ top: 4, right: 16, left: 120, bottom: 12 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" />
+                  <YAxis type="category" dataKey="origem" width={118} tickFormatter={(value) => abbreviateLabel(String(value), 18)} />
+                  <Tooltip formatter={(value) => [formatNumber(String(value)), 'Leads']} />
+                  <Bar dataKey="leads" name="Leads" fill="#13875f" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && macroArea === 'service' && intelligenceTab === 'incidents' && (
+        <section className="dashboard-grid">
+          <Panel title="Eventos Kommo coletados" icon={<TableProperties size={17} />} wide>
+            <div className="kpi-grid compact-grid">
+              <Kpi title="Eventos RAW" displayValue={formatNumber(attendanceEventStats?.raw_events)} detail="Eventos preservados da API Kommo" icon={<Database />} />
+              <Kpi title="Eventos vinculados" displayValue={formatNumber(attendanceEventStats?.linked_events)} detail="Eventos ligados a leads em fato" icon={<CheckCircle2 />} />
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tipo de evento</th>
+                    <th>Eventos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attendanceEventTypes.length ? attendanceEventTypes.map((item) => (
+                    <tr key={item.tipo}>
+                      <td>{item.tipo}</td>
+                      <td>{formatNumber(item.eventos)}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={2} className="empty-cell">Nenhum evento Kommo coletado no periodo</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        </section>
+      )}
+
+      {!needsLogin && macroArea === 'service' && !['service-overview', 'ranking', 'sla', 'team', 'channels', 'incidents'].includes(intelligenceTab) && (
         <UnavailableTab title={activeTabLabel} />
       )}
 

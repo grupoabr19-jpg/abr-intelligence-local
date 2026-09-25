@@ -396,6 +396,137 @@ def refresh_facts(cur: Any, staging_rows: list[dict[str, Any]]) -> dict[str, int
     }
 
 
+def refresh_events(cur: Any) -> dict[str, int]:
+    cur.execute(
+        """
+        insert into public.atendimento_evento_resposta(
+          lead_id, evento_id, event_type, created_by, created_at_kommo, raw_hash, sync_id, refreshed_at
+        )
+        select
+          e.entity_id::text as lead_id,
+          e.kommo_event_id,
+          e.event_type,
+          e.created_by,
+          e.created_at_kommo,
+          e.raw_hash,
+          e.sync_id,
+          now()
+        from public.raw_kommo_events e
+        join public.fato_atendimento_lead f on f.lead_id = e.entity_id::text
+        where e.ativo = true
+          and lower(coalesce(e.entity_type, 'lead')) in ('lead', 'leads')
+        on conflict (lead_id, evento_id) do update
+        set event_type = excluded.event_type,
+            created_by = excluded.created_by,
+            created_at_kommo = excluded.created_at_kommo,
+            raw_hash = excluded.raw_hash,
+            sync_id = excluded.sync_id,
+            refreshed_at = now()
+        """
+    )
+    cur.execute("select count(*) from public.atendimento_evento_resposta")
+    return {"eventos_resposta": int(cur.fetchone()[0] or 0)}
+
+
+def refresh_aggregates(cur: Any) -> dict[str, int]:
+    cur.execute("truncate table public.atendimento_agregado_diario")
+    cur.execute("truncate table public.atendimento_agregado_colaborador")
+    cur.execute("truncate table public.atendimento_agregado_regiao")
+    cur.execute(
+        """
+        insert into public.atendimento_agregado_diario(
+          data_referencia, leads, abertos, ganhos, perdidos, pipeline_valor,
+          sla_validos, sla_5, sla_15, sem_resposta, abertos_com_followup, refreshed_at
+        )
+        select
+          coalesce(f.created_at_kommo::date, current_date),
+          count(*)::int,
+          count(*) filter (where f.is_aberto)::int,
+          count(*) filter (where f.is_ganho)::int,
+          count(*) filter (where f.is_perdido)::int,
+          coalesce(sum(f.valor) filter (where f.is_aberto), 0),
+          count(*) filter (where s.sla_valido)::int,
+          count(*) filter (where s.sla_5_min)::int,
+          count(*) filter (where s.sla_15_min)::int,
+          count(*) filter (where s.sem_resposta)::int,
+          count(*) filter (where f.is_aberto and fo.tem_followup)::int,
+          now()
+        from public.fato_atendimento_lead f
+        left join public.fato_atendimento_sla s on s.lead_id = f.lead_id
+        left join public.fato_atendimento_followup fo on fo.lead_id = f.lead_id
+        where f.excluido = false
+        group by 1
+        """
+    )
+    cur.execute(
+        """
+        insert into public.atendimento_agregado_colaborador(
+          colaborador_key, data_referencia, leads, abertos, ganhos, perdidos, pipeline_valor,
+          sla_validos, sla_5, sla_15, sem_resposta, abertos_com_followup, refreshed_at
+        )
+        select
+          coalesce(f.colaborador_key, 'sem_cadastro'),
+          coalesce(f.created_at_kommo::date, current_date),
+          count(*)::int,
+          count(*) filter (where f.is_aberto)::int,
+          count(*) filter (where f.is_ganho)::int,
+          count(*) filter (where f.is_perdido)::int,
+          coalesce(sum(f.valor) filter (where f.is_aberto), 0),
+          count(*) filter (where s.sla_valido)::int,
+          count(*) filter (where s.sla_5_min)::int,
+          count(*) filter (where s.sla_15_min)::int,
+          count(*) filter (where s.sem_resposta)::int,
+          count(*) filter (where f.is_aberto and fo.tem_followup)::int,
+          now()
+        from public.fato_atendimento_lead f
+        left join public.fato_atendimento_sla s on s.lead_id = f.lead_id
+        left join public.fato_atendimento_followup fo on fo.lead_id = f.lead_id
+        where f.excluido = false
+          and f.colaborador_key is not null
+        group by 1, 2
+        """
+    )
+    cur.execute(
+        """
+        insert into public.atendimento_agregado_regiao(
+          regiao_polo, data_referencia, leads, abertos, ganhos, perdidos, pipeline_valor,
+          sla_validos, sla_5, sla_15, sem_resposta, abertos_com_followup, refreshed_at
+        )
+        select
+          coalesce(c.regiao_polo, 'Sem cadastro'),
+          coalesce(f.created_at_kommo::date, current_date),
+          count(*)::int,
+          count(*) filter (where f.is_aberto)::int,
+          count(*) filter (where f.is_ganho)::int,
+          count(*) filter (where f.is_perdido)::int,
+          coalesce(sum(f.valor) filter (where f.is_aberto), 0),
+          count(*) filter (where s.sla_valido)::int,
+          count(*) filter (where s.sla_5_min)::int,
+          count(*) filter (where s.sla_15_min)::int,
+          count(*) filter (where s.sem_resposta)::int,
+          count(*) filter (where f.is_aberto and fo.tem_followup)::int,
+          now()
+        from public.fato_atendimento_lead f
+        left join public.dim_atendimento_colaborador c on c.colaborador_key = f.colaborador_key
+        left join public.fato_atendimento_sla s on s.lead_id = f.lead_id
+        left join public.fato_atendimento_followup fo on fo.lead_id = f.lead_id
+        where f.excluido = false
+        group by 1, 2
+        """
+    )
+    cur.execute("select count(*) from public.atendimento_agregado_diario")
+    diarios = int(cur.fetchone()[0] or 0)
+    cur.execute("select count(*) from public.atendimento_agregado_colaborador")
+    colaboradores = int(cur.fetchone()[0] or 0)
+    cur.execute("select count(*) from public.atendimento_agregado_regiao")
+    regioes = int(cur.fetchone()[0] or 0)
+    return {
+        "agregados_diarios": diarios,
+        "agregados_colaboradores": colaboradores,
+        "agregados_regioes": regioes,
+    }
+
+
 def refresh() -> dict[str, Any]:
     sync_id = f"atendimento_refresh_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     env = load_env()
@@ -408,6 +539,8 @@ def refresh() -> dict[str, Any]:
             staging_rows = load_active_staging(cur)
             dimensions = refresh_dimensions(cur, staging_rows)
             facts = refresh_facts(cur, staging_rows)
+            events = refresh_events(cur)
+            aggregates = refresh_aggregates(cur)
             cur.execute(
                 """
                 update public.atendimento_refresh_runs
@@ -418,7 +551,11 @@ def refresh() -> dict[str, Any]:
                     regioes = %s,
                     pipelines = %s,
                     status_kommo = %s,
-                    origens = %s
+                    origens = %s,
+                    agregados_diarios = %s,
+                    agregados_colaboradores = %s,
+                    agregados_regioes = %s,
+                    eventos_resposta = %s
                 where sync_id = %s
                 """,
                 (
@@ -428,11 +565,15 @@ def refresh() -> dict[str, Any]:
                     dimensions["pipelines"],
                     dimensions["status_kommo"],
                     dimensions["origens"],
+                    aggregates["agregados_diarios"],
+                    aggregates["agregados_colaboradores"],
+                    aggregates["agregados_regioes"],
+                    events["eventos_resposta"],
                     sync_id,
                 ),
             )
             conn.commit()
-    return {"sync_id": sync_id, **dimensions, **facts}
+    return {"sync_id": sync_id, **dimensions, **facts, **events, **aggregates}
 
 
 def main() -> None:
