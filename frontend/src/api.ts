@@ -181,13 +181,6 @@ export type DashboardSummary = {
     }>
     unmapped_collaborators?: string[]
     data_quality?: Array<{ regra: string; severidade: string; total: number; checked_at: string | null }>
-    refresh_runs?: Array<{
-      sync_id: string
-      status: string
-      started_at: string | null
-      finished_at: string | null
-      leads_processados: number
-    }>
     daily?: Array<{
       data: string | null
       leads: number

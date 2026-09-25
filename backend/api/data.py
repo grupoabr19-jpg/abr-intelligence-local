@@ -1283,22 +1283,15 @@ def attendance_summary_from_facts(date_from: date | None = None, date_to: date |
                 ]
                 cur.execute(
                     """
-                    select sync_id, status, started_at, finished_at, leads_processados
+                    select finished_at
                     from public.atendimento_refresh_runs
+                    where finished_at is not null
                     order by started_at desc
-                    limit 5
+                    limit 1
                     """
                 )
-                refresh_runs = [
-                    {
-                        "sync_id": row[0],
-                        "status": row[1],
-                        "started_at": row[2].isoformat() if row[2] else None,
-                        "finished_at": row[3].isoformat() if row[3] else None,
-                        "leads_processados": row[4],
-                    }
-                    for row in cur.fetchall()
-                ]
+                latest_refresh_row = cur.fetchone()
+                latest_refresh_at = latest_refresh_row[0].isoformat() if latest_refresh_row and latest_refresh_row[0] else None
                 cur.execute(
                     """
                     select motivo_exclusao, count(*)
@@ -1482,7 +1475,7 @@ def attendance_summary_from_facts(date_from: date | None = None, date_to: date |
         "rows": len(rows),
         "valid_rows": len(rows),
         "headers": [],
-        "latest_imported_at": refresh_runs[0]["finished_at"] if refresh_runs else None,
+        "latest_imported_at": latest_refresh_at,
         "audit": {
             "qtd_excluida_comunicacao_interna": excluded_counts.get("interno", 0),
             "qtd_excluida_liderancas": excluded_counts.get("lideranca", 0),
@@ -1508,7 +1501,6 @@ def attendance_summary_from_facts(date_from: date | None = None, date_to: date |
         "ranking_regioes": ranking_regioes,
         "unmapped_collaborators": sorted(unmapped),
         "data_quality": quality_rows,
-        "refresh_runs": refresh_runs,
         "daily": daily_rows,
         "origins": origin_rows,
         "event_types": event_type_rows,
