@@ -69,7 +69,6 @@ type IntelligenceTab =
   | 'service-overview'
   | 'ranking'
   | 'sla'
-  | 'service-clients'
   | 'incidents'
   | 'orders'
   | 'deliveries'
@@ -201,7 +200,6 @@ const TABS_BY_MACRO: Record<MacroArea, Array<{ key: IntelligenceTab; label: stri
     { key: 'service-overview', label: 'Visao Geral' },
     { key: 'ranking', label: 'Ranking' },
     { key: 'sla', label: 'SLA' },
-    { key: 'service-clients', label: 'Clientes' },
     { key: 'incidents', label: 'Ocorrencias' },
     { key: 'orders', label: 'Pedidos' },
     { key: 'deliveries', label: 'Entregas' },
