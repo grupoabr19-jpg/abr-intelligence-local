@@ -1443,43 +1443,6 @@ function App() {
           </section>
 
           <section className="dashboard-grid">
-            <Panel title="Status da fonte Kommo" icon={<Database size={17} />}>
-              <div className="empty-state compact">
-                <strong>{attendance?.data_available ? 'Base granular disponivel' : 'Faltam dados para cruzamentos'}</strong>
-                <span>
-                  {attendance?.message ??
-                    'A fonte de atendimento ainda nao retornou registros por lead suficientes para calcular SLA, funil, equipe, motivos e recorrencia.'}
-                </span>
-                <span>
-                  Grao da fonte: {attendance?.source_grain ?? 'nao informado'} | Linhas: {formatNumber(attendance?.rows)} | Ultima carga:{' '}
-                  {attendance?.latest_imported_at ? new Date(attendance.latest_imported_at).toLocaleString('pt-BR') : 'sem registro'}
-                </span>
-              </div>
-            </Panel>
-
-            <Panel title="Auditoria de exclusoes" icon={<AlertTriangle size={17} />}>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Regra</th>
-                      <th>Leads excluidos</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>Funil de Liderancas</td>
-                      <td>{formatNumber(attendance?.audit?.qtd_excluida_liderancas)}</td>
-                    </tr>
-                    <tr>
-                      <td>Comunicacao interna</td>
-                      <td>{formatNumber(attendance?.audit?.qtd_excluida_comunicacao_interna)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-
             <Panel title="Resumo recebido do Kommo" icon={<TableProperties size={17} />}>
               <div className="table-wrap">
                 <table>
