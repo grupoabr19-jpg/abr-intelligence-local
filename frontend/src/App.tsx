@@ -539,7 +539,6 @@ function App() {
   const attendanceCollaboratorRanking = attendance?.ranking_colaboradores ?? []
   const attendanceRegionRanking = attendance?.ranking_regioes ?? []
   const unmappedAttendanceCollaborators = attendance?.unmapped_collaborators ?? []
-  const attendanceRefreshRuns = attendance?.refresh_runs ?? []
   const attendanceDaily = (attendance?.daily ?? []).map((item) => ({
     ...item,
     data_label: item.data ? new Date(`${item.data}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : 'Sem data',
@@ -1834,35 +1833,6 @@ function App() {
                         <td colSpan={8} className="empty-cell">Faltam dados para cruzamentos em {slaTitle}</td>
                       </tr>
                     )
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-
-          <Panel title="Atualizacoes da base" icon={<RefreshCw size={17} />} wide>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Carga</th>
-                    <th>Status</th>
-                    <th>Leads</th>
-                    <th>Finalizada em</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {attendanceRefreshRuns.length ? attendanceRefreshRuns.map((item) => (
-                    <tr key={item.sync_id}>
-                      <td>{item.sync_id}</td>
-                      <td>{item.status}</td>
-                      <td>{formatNumber(item.leads_processados)}</td>
-                      <td>{item.finished_at ? new Date(item.finished_at).toLocaleString('pt-BR') : 'Em processamento'}</td>
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td colSpan={4} className="empty-cell">Sem historico de refresh</td>
-                    </tr>
                   )}
                 </tbody>
               </table>
