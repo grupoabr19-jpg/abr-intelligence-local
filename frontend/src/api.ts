@@ -205,6 +205,11 @@ const DEFAULT_API_BASE_URL =
     ? 'http://127.0.0.1:8000'
     : window.location.origin
 const API_BASE_URL = import.meta.env.VITE_ABR_API_BASE_URL || DEFAULT_API_BASE_URL
+const ABR_API_KEY = import.meta.env.VITE_ABR_API_KEY || ''
+
+function apiHeaders(): HeadersInit {
+  return ABR_API_KEY ? { 'x-api-key': ABR_API_KEY } : {}
+}
 
 export async function fetchInternalDashboard(filters?: { dateFrom?: string; dateTo?: string }): Promise<DashboardSummary> {
   const params = new URLSearchParams()
@@ -213,6 +218,25 @@ export async function fetchInternalDashboard(filters?: { dateFrom?: string; date
   const query = params.toString()
   const response = await fetch(`${API_BASE_URL}/v1/dashboard/internal${query ? `?${query}` : ''}`, {
     credentials: 'include',
+    headers: apiHeaders(),
+  })
+
+  if (!response.ok) {
+    throw new Error(`API respondeu ${response.status}`)
+  }
+
+  return response.json()
+}
+
+export async function refreshDashboardData(filters?: { dateFrom?: string; dateTo?: string }) {
+  const params = new URLSearchParams()
+  if (filters?.dateFrom) params.set('date_from', filters.dateFrom)
+  if (filters?.dateTo) params.set('date_to', filters.dateTo)
+  params.set('force', 'true')
+  const response = await fetch(`${API_BASE_URL}/v1/dashboard/refresh?${params.toString()}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: apiHeaders(),
   })
 
   if (!response.ok) {

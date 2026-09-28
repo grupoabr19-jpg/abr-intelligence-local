@@ -32,7 +32,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { DashboardSummary, fetchInternalDashboard } from './api'
+import { DashboardSummary, fetchInternalDashboard, refreshDashboardData } from './api'
 import abrLogoWhite from './abr-logo-white.svg'
 
 const DEFAULT_DATE_FROM = '2026-01-01'
@@ -69,13 +69,11 @@ type IntelligenceTab =
   | 'service-overview'
   | 'ranking'
   | 'sla'
-  | 'incidents'
   | 'orders'
   | 'deliveries'
   | 'complaints'
   | 'satisfaction'
   | 'channels'
-  | 'team'
 
 type MacroArea = 'business' | 'market' | 'service'
 type RankingView = 'retail' | 'retail-region' | 'wholesale' | 'representatives'
@@ -200,13 +198,11 @@ const TABS_BY_MACRO: Record<MacroArea, Array<{ key: IntelligenceTab; label: stri
     { key: 'service-overview', label: 'Visao Geral' },
     { key: 'ranking', label: 'Ranking' },
     { key: 'sla', label: 'SLA' },
-    { key: 'incidents', label: 'Ocorrencias' },
     { key: 'orders', label: 'Pedidos' },
     { key: 'deliveries', label: 'Entregas' },
     { key: 'complaints', label: 'Reclamacoes' },
     { key: 'satisfaction', label: 'Satisfacao' },
     { key: 'channels', label: 'Canais' },
-    { key: 'team', label: 'Equipe' },
   ],
 }
 
@@ -241,6 +237,8 @@ function App() {
   const [rankingMetric, setRankingMetric] = useState<RankingMetric>('ganhas')
   const [slaView, setSlaView] = useState<RankingView>('retail')
   const [slaMetric, setSlaMetric] = useState<RankingMetric>('sla_5')
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null)
+  const [refreshingSources, setRefreshingSources] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -257,6 +255,21 @@ function App() {
   const submitFilters = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     void load()
+  }
+
+  const refreshSources = async () => {
+    setRefreshingSources(true)
+    setRefreshMessage(null)
+    setError(null)
+    try {
+      const payload = await refreshDashboardData({ dateFrom, dateTo })
+      const status = payload?.job?.status === 'running' ? 'em andamento' : 'iniciada'
+      setRefreshMessage(`Atualizacao de dados ${status}. O dashboard usa o ultimo dado valido enquanto a carga roda.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao iniciar atualizacao')
+    } finally {
+      setRefreshingSources(false)
+    }
   }
 
   useEffect(() => {
@@ -535,7 +548,6 @@ function App() {
   const attendanceKpis = attendance?.kpis
   const attendanceSummaryRows = attendance?.summary_rows ?? []
   const attendanceHasGranularData = Boolean(attendance?.data_available && attendanceKpis)
-  const attendanceRegionDimension = attendance?.region_dimension ?? []
   const attendanceCollaboratorRanking = attendance?.ranking_colaboradores ?? []
   const attendanceRegionRanking = attendance?.ranking_regioes ?? []
   const unmappedAttendanceCollaborators = attendance?.unmapped_collaborators ?? []
@@ -545,8 +557,6 @@ function App() {
     pipeline_numero: Number(item.pipeline_valor),
   }))
   const attendanceOrigins = attendance?.origins ?? []
-  const attendanceEventTypes = attendance?.event_types ?? []
-  const attendanceEventStats = attendance?.event_stats
   const rankingViewOptions: Array<{ key: RankingView; label: string }> = [
     { key: 'retail', label: '1. Varejo' },
     { key: 'retail-region', label: '2. Varejo por região' },
@@ -661,29 +671,6 @@ function App() {
       value: bestSlaWin && bestSlaWin.win_rate !== null ? percent(bestSlaWin.win_rate) : 'Sem conversao',
     },
   ]
-  const teamBlocks = [
-    {
-      label: 'Varejo',
-      rows: attendanceRegionDimension.filter((item) => {
-        const funcao = item.funcao.toUpperCase()
-        const regiao = item.regiao_polo.toUpperCase()
-        return regiao !== 'ATACADO' && !funcao.includes('ATACADO') && !funcao.includes('REPRESENTANTE')
-      }),
-    },
-    {
-      label: 'Atacado',
-      rows: attendanceRegionDimension.filter((item) => {
-        const funcao = item.funcao.toUpperCase()
-        const regiao = item.regiao_polo.toUpperCase()
-        return regiao === 'ATACADO' || funcao.includes('ATACADO')
-      }),
-    },
-    {
-      label: 'Representantes',
-      rows: attendanceRegionDimension.filter((item) => item.funcao.toUpperCase().includes('REPRESENTANTE')),
-    },
-  ]
-
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -712,8 +699,14 @@ function App() {
               ))}
             </div>
             <div className="header-status">
-              <button className="icon-button" onClick={load} disabled={loading} title="Atualizar">
-                <RefreshCw size={17} className={loading ? 'spin' : ''} />
+              <button
+                className="icon-button"
+                onClick={refreshSources}
+                disabled={refreshingSources}
+                title="Atualizar dados das fontes"
+                type="button"
+              >
+                <RefreshCw size={17} className={refreshingSources ? 'spin' : ''} />
               </button>
             </div>
           </div>
@@ -775,6 +768,13 @@ function App() {
         <section className="notice error">
           <AlertTriangle size={18} />
           <span>{error}. Confira se o backend esta rodando e se o deploy terminou.</span>
+        </section>
+      )}
+
+      {refreshMessage && (
+        <section className="notice">
+          <RefreshCw size={18} />
+          <span>{refreshMessage}</span>
         </section>
       )}
 
@@ -1841,39 +1841,6 @@ function App() {
         </section>
       )}
 
-      {macroArea === 'service' && intelligenceTab === 'team' && (
-        <section className="dashboard-grid">
-          {teamBlocks.map((block) => (
-            <Panel key={block.label} title={block.label} icon={<TableProperties size={17} />} wide>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Nome</th>
-                      <th>Funcao</th>
-                      <th>Regiao/Polo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {block.rows.length ? block.rows.map((item) => (
-                      <tr key={`${item.colaborador}-${item.funcao}`}>
-                        <td>{item.colaborador}</td>
-                        <td>{item.funcao}</td>
-                        <td>{item.regiao_polo}</td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={3} className="empty-cell">Sem colaboradores cadastrados neste bloco</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-          ))}
-        </section>
-      )}
-
       {macroArea === 'service' && intelligenceTab === 'channels' && (
         <section className="dashboard-grid">
           <Panel title="Origem dos leads" icon={<BarChart3 size={17} />} wide>
@@ -1892,40 +1859,7 @@ function App() {
         </section>
       )}
 
-      {macroArea === 'service' && intelligenceTab === 'incidents' && (
-        <section className="dashboard-grid">
-          <Panel title="Eventos Kommo coletados" icon={<TableProperties size={17} />} wide>
-            <div className="kpi-grid compact-grid">
-              <Kpi title="Eventos RAW" displayValue={formatNumber(attendanceEventStats?.raw_events)} detail="Eventos preservados da API Kommo" icon={<Database />} />
-              <Kpi title="Eventos vinculados" displayValue={formatNumber(attendanceEventStats?.linked_events)} detail="Eventos ligados a leads em fato" icon={<CheckCircle2 />} />
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Tipo de evento</th>
-                    <th>Eventos</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {attendanceEventTypes.length ? attendanceEventTypes.map((item) => (
-                    <tr key={item.tipo}>
-                      <td>{item.tipo}</td>
-                      <td>{formatNumber(item.eventos)}</td>
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td colSpan={2} className="empty-cell">Nenhum evento Kommo coletado no periodo</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-        </section>
-      )}
-
-      {macroArea === 'service' && !['service-overview', 'ranking', 'sla', 'team', 'channels', 'incidents'].includes(intelligenceTab) && (
+      {macroArea === 'service' && !['service-overview', 'ranking', 'sla', 'channels'].includes(intelligenceTab) && (
         <UnavailableTab title={activeTabLabel} />
       )}
 

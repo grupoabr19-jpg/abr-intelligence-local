@@ -29,6 +29,7 @@ from backend.api.models import (
     SalesRegionRow,
 )
 from backend.api.security import require_api_key
+from backend.api.update_orchestrator import dashboard_refresh_manager
 from backend.aster_collector.local_spreadsheets import inspect_local_spreadsheet_sources
 
 
@@ -97,11 +98,44 @@ async def get_internal_dashboard(
 ) -> dict:
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before or equal to date_to.")
+    await dashboard_refresh_manager.ensure_daily_refresh(date_from=date_from, date_to=date_to)
     return internal_dashboard_summary(
         date_from=date_from,
         date_to=date_to,
         include_sales_regions=include_sales_regions,
     )
+
+
+@app.post(
+    "/v1/dashboard/refresh",
+    response_model=dict,
+    tags=["dashboard"],
+    dependencies=[Depends(require_api_key)],
+)
+async def refresh_dashboard_data(
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    force: bool = Query(default=True),
+) -> dict:
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=422, detail="date_from must be before or equal to date_to.")
+    job = await dashboard_refresh_manager.start_refresh(
+        mode="manual",
+        date_from=date_from,
+        date_to=date_to,
+        force=force,
+    )
+    return {"job": dashboard_refresh_manager.serialize_job(job)}
+
+
+@app.get(
+    "/v1/dashboard/refresh",
+    response_model=dict,
+    tags=["dashboard"],
+    dependencies=[Depends(require_api_key)],
+)
+async def get_dashboard_refresh_status() -> dict:
+    return await dashboard_refresh_manager.status()
 
 
 @app.post(
