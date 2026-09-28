@@ -14,7 +14,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_crm_database, load_env
 
 
 DEFAULT_TIMEOUT = 60
@@ -670,7 +670,7 @@ def insert_rows(collected: dict[str, Any], date_from: str | None = None, date_to
     progress(f"gravando raw e staging: {len(rows)} leads normalizados")
 
     source_ids = [record[1] for record in records]
-    with connect_database(env) as conn:
+    with connect_crm_database(env) as conn:
         with conn.cursor() as cur:
             raw_result = insert_raw_data(cur, collected.get("raw", {}), sync_id)
             cur.execute(

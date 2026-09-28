@@ -21,7 +21,7 @@ from backend.api.data import (
     parse_attendance_datetime,
     parse_attendance_number,
 )
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_crm_database, load_env
 
 
 def key_text(value: Any, fallback: str = "sem_valor") -> str:
@@ -566,7 +566,7 @@ def refresh_aggregates(cur: Any) -> dict[str, int]:
 def refresh() -> dict[str, Any]:
     sync_id = f"atendimento_refresh_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     env = load_env()
-    with connect_database(env) as conn:
+    with connect_crm_database(env) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "insert into public.atendimento_refresh_runs(sync_id, status) values (%s, 'processando')",

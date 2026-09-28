@@ -55,22 +55,27 @@ def project_ref_from_url(value: str) -> str | None:
     return None
 
 
-def connect_database(env: dict[str, str]) -> psycopg.Connection:
-    database_url = env.get("DATABASE_URL", "")
-    database_url_pooler = env.get("DATABASE_URL_POOLER", "")
+def connect_database(
+    env: dict[str, str],
+    *,
+    database_url_key: str = "DATABASE_URL",
+    database_url_pooler_key: str = "DATABASE_URL_POOLER",
+) -> psycopg.Connection:
+    database_url = env.get(database_url_key, "")
+    database_url_pooler = env.get(database_url_pooler_key, "")
 
     candidates: list[tuple[str, str]] = []
     if database_url_pooler:
         pooler_ref = project_ref_from_url(database_url_pooler)
         direct_ref = project_ref_from_url(database_url)
         if direct_ref and pooler_ref and direct_ref != pooler_ref:
-            print("skip DATABASE_URL_POOLER: project-ref diferente do DATABASE_URL")
+            print(f"skip {database_url_pooler_key}: project-ref diferente do {database_url_key}")
         else:
-            candidates.append(("DATABASE_URL_POOLER", database_url_pooler))
+            candidates.append((database_url_pooler_key, database_url_pooler))
 
     parsed = urlparse(database_url)
     if parsed.hostname and ".pooler.supabase.com" in parsed.hostname:
-        candidates.append(("DATABASE_URL", database_url))
+        candidates.append((database_url_key, database_url))
     else:
         candidates.extend(pooler_candidates_from_direct_url(database_url))
 
@@ -85,6 +90,16 @@ def connect_database(env: dict[str, str]) -> psycopg.Connection:
             print(f"failed {label}: {type(exc).__name__}: {str(exc)[:180]}")
 
     raise SystemExit("Nao foi possivel conectar pelo pooler IPv4. Verifique senha, project-ref e regiao do pooler.")
+
+
+def connect_crm_database(env: dict[str, str]) -> psycopg.Connection:
+    if env.get("DATABASE_CRM_URL_POOLER") or env.get("DATABASE_CRM_URL"):
+        return connect_database(
+            env,
+            database_url_key="DATABASE_CRM_URL",
+            database_url_pooler_key="DATABASE_CRM_URL_POOLER",
+        )
+    return connect_database(env)
 
 
 def main() -> None:

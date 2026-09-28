@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_crm_database, connect_database, load_env
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -288,46 +288,56 @@ class DashboardRefreshManager:
                 "key": "aster_sales",
                 "label": "Aster ERP - vendas por item",
                 "required_for_daily": True,
+                "database": "core",
                 "sql": "select max(imported_at) from public.staging_dados where entidade = 'aster_report_d0a4d301'",
             },
             {
                 "key": "sales_cache",
                 "label": "Cache comercial do dashboard",
                 "required_for_daily": True,
+                "database": "core",
                 "sql": "select max(refreshed_at) from public.dashboard_sales_summary_cache",
             },
             {
                 "key": "kommo",
                 "label": "Kommo API - atendimento",
                 "required_for_daily": True,
+                "database": "crm",
                 "sql": "select max(finished_at) from public.atendimento_ingestion_runs where status = 'sucesso'",
             },
             {
                 "key": "market_public",
                 "label": "Mercado publico - Aco Brasil, CNI e INDA",
                 "required_for_daily": False,
+                "database": "core",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso'",
             },
         ]
         try:
-            with connect_database(env) as conn:
-                with conn.cursor() as cur:
-                    rows = []
-                    for item in checks:
-                        cur.execute(item["sql"])
-                        value = cur.fetchone()[0]
-                        value_date = value.date() if value else None
-                        rows.append(
-                            {
-                                "key": item["key"],
-                                "label": item["label"],
-                                "required_for_daily": item["required_for_daily"],
-                                "last_success_at": value.isoformat() if value else None,
-                                "days_without_update": (today - value_date).days if value_date else None,
-                                "updated_today": value_date == today,
-                            }
-                        )
-                    return rows
+            rows = []
+            grouped = {
+                "core": [item for item in checks if item["database"] == "core"],
+                "crm": [item for item in checks if item["database"] == "crm"],
+            }
+            for database, items in grouped.items():
+                connector = connect_crm_database if database == "crm" else connect_database
+                with connector(env) as conn:
+                    with conn.cursor() as cur:
+                        for item in items:
+                            cur.execute(item["sql"])
+                            value = cur.fetchone()[0]
+                            value_date = value.date() if value else None
+                            rows.append(
+                                {
+                                    "key": item["key"],
+                                    "label": item["label"],
+                                    "required_for_daily": item["required_for_daily"],
+                                    "last_success_at": value.isoformat() if value else None,
+                                    "days_without_update": (today - value_date).days if value_date else None,
+                                    "updated_today": value_date == today,
+                                }
+                            )
+            return rows
         except Exception as exc:
             return [
                 {

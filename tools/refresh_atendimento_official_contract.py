@@ -11,7 +11,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_crm_database, load_env
 
 
 def key(value: Any) -> str:
@@ -23,7 +23,7 @@ def key(value: Any) -> str:
 def refresh() -> dict[str, Any]:
     batch_id = f"official_atendimento_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     env = load_env()
-    with connect_database(env) as conn:
+    with connect_crm_database(env) as conn:
         with conn.cursor() as cur:
             cur.execute("truncate table public.colaboradores_nao_mapeados")
             cur.execute(
