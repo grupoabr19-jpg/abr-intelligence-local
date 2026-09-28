@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from backend.archive_storage import (
-    access_token_from_service_account,
     archive_config,
+    drive_access_token,
     ensure_drive_folder,
     file_sha256,
     json_default,
@@ -174,7 +174,7 @@ def archive_query_jsonl(
 
 def archive_all(conn: Any, env: dict[str, str], sync_id: str) -> list[dict[str, Any]]:
     config = archive_config(env)
-    token = access_token_from_service_account(config) if config.provider == "google_drive" else None
+    token = drive_access_token(config) if config.provider == "google_drive" else None
     archived: list[dict[str, Any]] = []
     with conn.cursor() as cur:
         if table_exists(cur, "staging_dados"):
@@ -226,6 +226,7 @@ def prune(cur: Any) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Arquiva e remove copias antigas de atendimento/Kommo do banco core.")
     parser.add_argument("--execute", action="store_true", help="Executa a limpeza depois do arquivo.")
+    parser.add_argument("--skip-archive", action="store_true", help="Pula o archive e executa apenas a limpeza/contagem.")
     parser.add_argument("--allow-drive-error", action="store_true", help="Permite limpeza mesmo se upload ao Drive falhar.")
     args = parser.parse_args()
 
@@ -234,18 +235,23 @@ def main() -> None:
 
     with connect_database(env) as conn:
         before = count_rows_with_connection(conn)
-        archived = archive_all(conn, env, sync_id)
+
+    archived: list[dict[str, Any]] = []
+    if not args.skip_archive:
+        with connect_database(env) as conn:
+            archived = archive_all(conn, env, sync_id)
+            conn.rollback()
         drive_errors = [item for item in archived if item.get("drive_error")]
         if drive_errors and not args.allow_drive_error:
             raise SystemExit(json.dumps({"status": "aborted_drive_error", "errors": drive_errors}, ensure_ascii=False, indent=2))
 
-        if args.execute:
+    if args.execute:
+        with connect_database(env) as conn:
             with conn.cursor() as cur:
                 prune(cur)
             conn.commit()
-        else:
-            conn.rollback()
 
+    with connect_database(env) as conn:
         after = count_rows_with_connection(conn)
 
     print(

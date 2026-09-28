@@ -29,6 +29,9 @@ class ArchiveConfig:
     local_dir: Path
     write_local_copy: bool
     drive_folder_id: str
+    oauth_client_id: str
+    oauth_client_secret: str
+    oauth_refresh_token: str
     service_account_json: str
     service_account_json_base64: str
     service_account_json_path: str
@@ -41,6 +44,9 @@ def archive_config(env: dict[str, str] | None = None) -> ArchiveConfig:
         local_dir=Path(values.get("ARCHIVE_LOCAL_DIR", "archive")),
         write_local_copy=values.get("ARCHIVE_WRITE_LOCAL_COPY", "true").strip().lower() not in {"0", "false", "no"},
         drive_folder_id=values.get("ARCHIVE_GOOGLE_DRIVE_FOLDER_ID", "").strip(),
+        oauth_client_id=values.get("GOOGLE_OAUTH_CLIENT_ID", "").strip(),
+        oauth_client_secret=values.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip(),
+        oauth_refresh_token=values.get("GOOGLE_OAUTH_REFRESH_TOKEN", "").strip(),
         service_account_json=values.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip(),
         service_account_json_base64=values.get("GOOGLE_SERVICE_ACCOUNT_JSON_BASE64", "").strip(),
         service_account_json_path=values.get("GOOGLE_SERVICE_ACCOUNT_JSON_PATH", "").strip(),
@@ -126,6 +132,27 @@ def access_token_from_service_account(config: ArchiveConfig) -> str | None:
     credentials = service_account.Credentials.from_service_account_info(info, scopes=[DRIVE_SCOPE])
     credentials.refresh(Request())
     return credentials.token
+
+
+def access_token_from_oauth(config: ArchiveConfig) -> str | None:
+    if not (config.oauth_client_id and config.oauth_client_secret and config.oauth_refresh_token):
+        return None
+    with httpx.Client(timeout=60) as client:
+        response = client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": config.oauth_client_id,
+                "client_secret": config.oauth_client_secret,
+                "refresh_token": config.oauth_refresh_token,
+                "grant_type": "refresh_token",
+            },
+        )
+        response.raise_for_status()
+        return str(response.json()["access_token"])
+
+
+def drive_access_token(config: ArchiveConfig) -> str | None:
+    return access_token_from_oauth(config) or access_token_from_service_account(config)
 
 
 def drive_headers(token: str) -> dict[str, str]:
@@ -245,7 +272,7 @@ def archive_records(
     drive_error = None
     if config.provider == "google_drive" and config.drive_folder_id:
         try:
-            token = access_token_from_service_account(config)
+            token = drive_access_token(config)
             if token:
                 parent_id = config.drive_folder_id
                 for folder_name in relative_dir.parts:

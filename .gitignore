@@ -53,6 +53,9 @@ screenshot.png
 !.env.example
 *service-account*.json
 *service_account*.json
+client_secret*.json
+credentials*.json
+token*.json
 *-f1a8b9f2e93f.json
 
 # Operational inputs and exported packages
