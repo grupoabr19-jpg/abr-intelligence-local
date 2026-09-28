@@ -367,7 +367,6 @@ class DashboardRefreshManager:
             for key, value in updates.items():
                 setattr(step, key, value)
 
-    @staticmethod
     def serialize_job(self, job: DashboardRefreshJob | None) -> dict[str, Any] | None:
         return self._serialize_job(job)
 

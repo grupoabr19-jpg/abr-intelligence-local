@@ -229,6 +229,9 @@ export async function fetchInternalDashboard(filters?: { dateFrom?: string; date
 }
 
 export async function refreshDashboardData(filters?: { dateFrom?: string; dateTo?: string }) {
+  if (!ABR_API_KEY) {
+    throw new Error('VITE_ABR_API_KEY nao configurada no frontend')
+  }
   const params = new URLSearchParams()
   if (filters?.dateFrom) params.set('date_from', filters.dateFrom)
   if (filters?.dateTo) params.set('date_to', filters.dateTo)
@@ -238,6 +241,10 @@ export async function refreshDashboardData(filters?: { dateFrom?: string; dateTo
     credentials: 'include',
     headers: apiHeaders(),
   })
+
+  if (response.status === 401) {
+    throw new Error('VITE_ABR_API_KEY nao confere com ABR_API_KEY no backend')
+  }
 
   if (!response.ok) {
     throw new Error(`API respondeu ${response.status}`)
