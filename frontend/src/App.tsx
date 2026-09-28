@@ -598,6 +598,7 @@ function App() {
   const rankingTitle = rankingViewOptions.find((item) => item.key === rankingView)?.label.replace(/^\d+\.\s*/, '') ?? 'Ranking'
   const highlightRows: Array<CollaboratorRankingRow | RegionRankingRow> =
     rankingView === 'retail-region' ? selectedRegionRanking : selectedCollaboratorRanking
+  const rankingRowsCount = highlightRows.length
   const bestBy = (metric: RankingMetric) => sortRankingRows(highlightRows).sort((a, b) => rankingMetricValue(b, metric) - rankingMetricValue(a, metric))[0]
   const bestWin = bestBy('win_rate')
   const bestFollow = bestBy('follow_up')
@@ -644,6 +645,7 @@ function App() {
   const slaTitle = rankingViewOptions.find((item) => item.key === slaView)?.label.replace(/^\d+\.\s*/, '') ?? 'SLA'
   const slaHighlightRows: Array<CollaboratorRankingRow | RegionRankingRow> =
     slaView === 'retail-region' ? selectedSlaRegions : selectedSlaCollaborators
+  const slaRowsCount = slaHighlightRows.length
   const slaBestBy = (metric: RankingMetric) => sortRankingRows(slaHighlightRows, metric)[0]
   const bestSlaFast = slaBestBy('sla_5')
   const bestSlaFollow = slaBestBy('follow_up')
@@ -1648,82 +1650,88 @@ function App() {
                 </span>
               </div>
             )}
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  {rankingView === 'retail-region' ? (
-                    <tr>
-                      <th>Regiao/Polo</th>
-                      <th>Colaboradores</th>
-                      <th>Leads</th>
-                      <th>Ganhas</th>
-                      <th>Perdidas</th>
-                      <th>Win rate</th>
-                      <th>1a acao ate 5 min</th>
-                      <th>Pipeline</th>
-                      <th>Valor pipeline</th>
-                      <th>Follow-up</th>
-                    </tr>
-                  ) : (
-                    <tr>
-                      <th>Nome</th>
-                      <th>Funcao</th>
-                      <th>Regiao/Polo</th>
-                      <th>Leads</th>
-                      <th>Ganhas</th>
-                      <th>Perdidas</th>
-                      <th>Win rate</th>
-                      <th>1a acao ate 5 min</th>
-                      <th>Pipeline</th>
-                      <th>Valor pipeline</th>
-                      <th>Follow-up</th>
-                    </tr>
-                  )}
-                </thead>
-                <tbody>
-                  {rankingView === 'retail-region' ? (
-                    selectedRegionRanking.length ? selectedRegionRanking.map((item) => (
-                      <tr key={item.regiao_polo}>
-                        <td>{item.regiao_polo}</td>
-                        <td>{item.colaboradores.join(', ')}</td>
-                        <td>{formatNumber(item.leads)}</td>
-                        <td>{formatNumber(item.ganhas)}</td>
-                        <td>{formatNumber(item.perdidas)}</td>
-                        <td>{percent(item.win_rate)}</td>
-                        <td>{percent(item.sla_5_min)}</td>
-                        <td>{formatNumber(item.pipeline_aberto_qtd)}</td>
-                        <td>{money(item.pipeline_aberto_valor)}</td>
-                        <td>{percent(item.follow_up_cobertura)}</td>
-                      </tr>
-                    )) : (
+            <details className="list-dropdown">
+              <summary>
+                <span>Ver lista completa</span>
+                <strong>{formatNumber(rankingRowsCount)} registros</strong>
+              </summary>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    {rankingView === 'retail-region' ? (
                       <tr>
-                        <td colSpan={10} className="empty-cell">Faltam dados para cruzamentos em {rankingTitle}</td>
+                        <th>Regiao/Polo</th>
+                        <th>Colaboradores</th>
+                        <th>Leads</th>
+                        <th>Ganhas</th>
+                        <th>Perdidas</th>
+                        <th>Win rate</th>
+                        <th>1a acao ate 5 min</th>
+                        <th>Pipeline</th>
+                        <th>Valor pipeline</th>
+                        <th>Follow-up</th>
                       </tr>
-                    )
-                  ) : (
-                    selectedCollaboratorRanking.length ? selectedCollaboratorRanking.map((row) => (
-                      <tr key={`${row.nome}-${row.funcao}`}>
-                        <td>{row.nome}</td>
-                        <td>{row.funcao}</td>
-                        <td>{row.regiao_polo}</td>
-                        <td>{formatNumber(row.leads)}</td>
-                        <td>{formatNumber(row.ganhas)}</td>
-                        <td>{formatNumber(row.perdidas)}</td>
-                        <td>{percent(row.win_rate)}</td>
-                        <td>{percent(row.sla_5_min)}</td>
-                        <td>{formatNumber(row.pipeline_aberto_qtd)}</td>
-                        <td>{money(row.pipeline_aberto_valor)}</td>
-                        <td>{percent(row.follow_up_cobertura)}</td>
-                      </tr>
-                    )) : (
+                    ) : (
                       <tr>
-                        <td colSpan={11} className="empty-cell">Faltam dados para cruzamentos em {rankingTitle}</td>
+                        <th>Nome</th>
+                        <th>Funcao</th>
+                        <th>Regiao/Polo</th>
+                        <th>Leads</th>
+                        <th>Ganhas</th>
+                        <th>Perdidas</th>
+                        <th>Win rate</th>
+                        <th>1a acao ate 5 min</th>
+                        <th>Pipeline</th>
+                        <th>Valor pipeline</th>
+                        <th>Follow-up</th>
                       </tr>
-                    )
-                  )}
-                </tbody>
-              </table>
-            </div>
+                    )}
+                  </thead>
+                  <tbody>
+                    {rankingView === 'retail-region' ? (
+                      selectedRegionRanking.length ? selectedRegionRanking.map((item) => (
+                        <tr key={item.regiao_polo}>
+                          <td>{item.regiao_polo}</td>
+                          <td>{item.colaboradores.join(', ')}</td>
+                          <td>{formatNumber(item.leads)}</td>
+                          <td>{formatNumber(item.ganhas)}</td>
+                          <td>{formatNumber(item.perdidas)}</td>
+                          <td>{percent(item.win_rate)}</td>
+                          <td>{percent(item.sla_5_min)}</td>
+                          <td>{formatNumber(item.pipeline_aberto_qtd)}</td>
+                          <td>{money(item.pipeline_aberto_valor)}</td>
+                          <td>{percent(item.follow_up_cobertura)}</td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan={10} className="empty-cell">Faltam dados para cruzamentos em {rankingTitle}</td>
+                        </tr>
+                      )
+                    ) : (
+                      selectedCollaboratorRanking.length ? selectedCollaboratorRanking.map((row) => (
+                        <tr key={`${row.nome}-${row.funcao}`}>
+                          <td>{row.nome}</td>
+                          <td>{row.funcao}</td>
+                          <td>{row.regiao_polo}</td>
+                          <td>{formatNumber(row.leads)}</td>
+                          <td>{formatNumber(row.ganhas)}</td>
+                          <td>{formatNumber(row.perdidas)}</td>
+                          <td>{percent(row.win_rate)}</td>
+                          <td>{percent(row.sla_5_min)}</td>
+                          <td>{formatNumber(row.pipeline_aberto_qtd)}</td>
+                          <td>{money(row.pipeline_aberto_valor)}</td>
+                          <td>{percent(row.follow_up_cobertura)}</td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan={11} className="empty-cell">Faltam dados para cruzamentos em {rankingTitle}</td>
+                        </tr>
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           </Panel>
 
           {unmappedAttendanceCollaborators.length > 0 && (
@@ -1773,70 +1781,76 @@ function App() {
               ))}
             </div>
 
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  {slaView === 'retail-region' ? (
-                    <tr>
-                      <th>Regiao/Polo</th>
-                      <th>Colaboradores</th>
-                      <th>Leads</th>
-                      <th>1a acao ate 5 min</th>
-                      <th>Follow-up</th>
-                      <th>Win rate</th>
-                      <th>Pipeline</th>
-                    </tr>
-                  ) : (
-                    <tr>
-                      <th>Nome</th>
-                      <th>Funcao</th>
-                      <th>Regiao/Polo</th>
-                      <th>Leads</th>
-                      <th>1a acao ate 5 min</th>
-                      <th>Follow-up</th>
-                      <th>Win rate</th>
-                      <th>Pipeline</th>
-                    </tr>
-                  )}
-                </thead>
-                <tbody>
-                  {slaView === 'retail-region' ? (
-                    selectedSlaRegions.length ? selectedSlaRegions.map((item) => (
-                      <tr key={item.regiao_polo}>
-                        <td>{item.regiao_polo}</td>
-                        <td>{item.colaboradores.join(', ')}</td>
-                        <td>{formatNumber(item.leads)}</td>
-                        <td>{percent(item.sla_5_min)}</td>
-                        <td>{percent(item.follow_up_cobertura)}</td>
-                        <td>{percent(item.win_rate)}</td>
-                        <td>{money(item.pipeline_aberto_valor)}</td>
-                      </tr>
-                    )) : (
+            <details className="list-dropdown">
+              <summary>
+                <span>Ver lista completa</span>
+                <strong>{formatNumber(slaRowsCount)} registros</strong>
+              </summary>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    {slaView === 'retail-region' ? (
                       <tr>
-                        <td colSpan={7} className="empty-cell">Faltam dados para cruzamentos em {slaTitle}</td>
+                        <th>Regiao/Polo</th>
+                        <th>Colaboradores</th>
+                        <th>Leads</th>
+                        <th>1a acao ate 5 min</th>
+                        <th>Follow-up</th>
+                        <th>Win rate</th>
+                        <th>Pipeline</th>
                       </tr>
-                    )
-                  ) : (
-                    selectedSlaCollaborators.length ? selectedSlaCollaborators.map((item) => (
-                      <tr key={`${item.nome}-${item.funcao}`}>
-                        <td>{item.nome}</td>
-                        <td>{item.funcao}</td>
-                        <td>{item.regiao_polo}</td>
-                        <td>{formatNumber(item.leads)}</td>
-                        <td>{percent(item.sla_5_min)}</td>
-                        <td>{percent(item.follow_up_cobertura)}</td>
-                        <td>{percent(item.win_rate)}</td>
-                        <td>{money(item.pipeline_aberto_valor)}</td>
-                      </tr>
-                    )) : (
+                    ) : (
                       <tr>
-                        <td colSpan={8} className="empty-cell">Faltam dados para cruzamentos em {slaTitle}</td>
+                        <th>Nome</th>
+                        <th>Funcao</th>
+                        <th>Regiao/Polo</th>
+                        <th>Leads</th>
+                        <th>1a acao ate 5 min</th>
+                        <th>Follow-up</th>
+                        <th>Win rate</th>
+                        <th>Pipeline</th>
                       </tr>
-                    )
-                  )}
-                </tbody>
-              </table>
-            </div>
+                    )}
+                  </thead>
+                  <tbody>
+                    {slaView === 'retail-region' ? (
+                      selectedSlaRegions.length ? selectedSlaRegions.map((item) => (
+                        <tr key={item.regiao_polo}>
+                          <td>{item.regiao_polo}</td>
+                          <td>{item.colaboradores.join(', ')}</td>
+                          <td>{formatNumber(item.leads)}</td>
+                          <td>{percent(item.sla_5_min)}</td>
+                          <td>{percent(item.follow_up_cobertura)}</td>
+                          <td>{percent(item.win_rate)}</td>
+                          <td>{money(item.pipeline_aberto_valor)}</td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan={7} className="empty-cell">Faltam dados para cruzamentos em {slaTitle}</td>
+                        </tr>
+                      )
+                    ) : (
+                      selectedSlaCollaborators.length ? selectedSlaCollaborators.map((item) => (
+                        <tr key={`${item.nome}-${item.funcao}`}>
+                          <td>{item.nome}</td>
+                          <td>{item.funcao}</td>
+                          <td>{item.regiao_polo}</td>
+                          <td>{formatNumber(item.leads)}</td>
+                          <td>{percent(item.sla_5_min)}</td>
+                          <td>{percent(item.follow_up_cobertura)}</td>
+                          <td>{percent(item.win_rate)}</td>
+                          <td>{money(item.pipeline_aberto_valor)}</td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan={8} className="empty-cell">Faltam dados para cruzamentos em {slaTitle}</td>
+                        </tr>
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           </Panel>
         </section>
       )}
@@ -1929,7 +1943,7 @@ function SupportDetails({ title, children }: { title: string; children: ReactNod
 }
 
 function DataTable({ columns, rows, empty }: { columns: string[]; rows: string[][]; empty: string }) {
-  return (
+  const table = (
     <div className="table-wrap">
       <table>
         <thead>
@@ -1948,6 +1962,16 @@ function DataTable({ columns, rows, empty }: { columns: string[]; rows: string[]
         </tbody>
       </table>
     </div>
+  )
+  if (rows.length <= 6) return table
+  return (
+    <details className="list-dropdown">
+      <summary>
+        <span>Ver lista completa</span>
+        <strong>{formatNumber(rows.length)} registros</strong>
+      </summary>
+      {table}
+    </details>
   )
 }
 

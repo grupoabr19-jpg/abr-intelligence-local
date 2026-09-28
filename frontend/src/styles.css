@@ -501,6 +501,53 @@ h1 {
   border-radius: 6px;
 }
 
+.list-dropdown {
+  margin-top: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.list-dropdown summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 0 12px;
+  color: var(--abr-blue);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  list-style: none;
+}
+
+.list-dropdown summary::-webkit-details-marker {
+  display: none;
+}
+
+.list-dropdown summary::after {
+  content: "Abrir";
+  color: var(--abr-orange);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.list-dropdown[open] summary::after {
+  content: "Fechar";
+}
+
+.list-dropdown summary strong {
+  margin-left: auto;
+  color: #526079;
+  font-size: 12px;
+}
+
+.list-dropdown .table-wrap {
+  border-width: 1px 0 0;
+  border-radius: 0 0 6px 6px;
+}
+
 table {
   width: 100%;
   min-width: 760px;
