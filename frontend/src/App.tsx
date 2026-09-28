@@ -32,7 +32,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { DashboardSummary, fetchInternalDashboard, refreshDashboardData } from './api'
+import { DashboardSummary, fetchDashboardRefreshStatus, fetchInternalDashboard, refreshDashboardData } from './api'
 import abrLogoWhite from './abr-logo-white.svg'
 
 const DEFAULT_DATE_FROM = '2026-01-01'
@@ -40,6 +40,8 @@ const DEFAULT_DATE_TO = new Date().toISOString().slice(0, 10)
 const BAR_LIMIT = 6
 const SCATTER_LIMIT = 14
 const FORECAST_WEIGHTS = [0.5, 0.3, 0.2]
+const REFRESH_TERMINAL_STATUSES = new Set(['succeeded', 'partial', 'failed', 'skipped'])
+const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 
 type IntelligenceTab =
   | 'executive'
@@ -263,8 +265,35 @@ function App() {
     setError(null)
     try {
       const payload = await refreshDashboardData({ dateFrom, dateTo })
-      const status = payload?.job?.status === 'running' ? 'em andamento' : 'iniciada'
-      setRefreshMessage(`Atualizacao de dados ${status}. O dashboard usa o ultimo dado valido enquanto a carga roda.`)
+      let job = payload?.job
+      if (!job) {
+        setRefreshMessage('Atualizacao de dados iniciada. Recarregando indicadores.')
+        await load()
+        return
+      }
+
+      setRefreshMessage('Atualizacao de dados em andamento. O dashboard sera recarregado ao terminar.')
+      for (let attempt = 0; attempt < 120 && !REFRESH_TERMINAL_STATUSES.has(job.status); attempt += 1) {
+        await wait(5000)
+        const statusPayload = await fetchDashboardRefreshStatus()
+        job = statusPayload?.current ?? statusPayload?.history?.[0] ?? job
+      }
+
+      if (!REFRESH_TERMINAL_STATUSES.has(job.status)) {
+        setRefreshMessage('Atualizacao ainda em andamento. O dashboard continua usando o ultimo dado valido.')
+        return
+      }
+
+      if (job.status === 'failed') {
+        throw new Error('Atualizacao de dados falhou. Confira os logs do backend no Render.')
+      }
+
+      await load()
+      const message =
+        job.status === 'partial'
+          ? 'Atualizacao concluida com pendencias em alguma fonte. Indicadores recarregados.'
+          : 'Atualizacao concluida. Indicadores recarregados.'
+      setRefreshMessage(message)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao iniciar atualizacao')
     } finally {

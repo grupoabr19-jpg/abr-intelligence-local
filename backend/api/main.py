@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,7 +28,7 @@ from backend.api.models import (
     ReportInfo,
     SalesRegionRow,
 )
-from backend.api.security import require_api_key
+from backend.api.security import require_api_key, require_dashboard_read_key, set_dashboard_session_cookie
 from backend.api.update_orchestrator import dashboard_refresh_manager
 from backend.aster_collector.local_spreadsheets import inspect_local_spreadsheet_sources
 
@@ -92,12 +92,14 @@ async def get_intelligence_domains() -> dict:
     tags=["dashboard"],
 )
 async def get_internal_dashboard(
+    response: Response,
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     include_sales_regions: bool = Query(default=False),
 ) -> dict:
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before or equal to date_to.")
+    set_dashboard_session_cookie(response)
     await dashboard_refresh_manager.ensure_daily_refresh(date_from=date_from, date_to=date_to)
     return internal_dashboard_summary(
         date_from=date_from,
@@ -110,7 +112,7 @@ async def get_internal_dashboard(
     "/v1/dashboard/refresh",
     response_model=dict,
     tags=["dashboard"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_dashboard_read_key)],
 )
 async def refresh_dashboard_data(
     date_from: date | None = Query(default=None),
@@ -132,7 +134,7 @@ async def refresh_dashboard_data(
     "/v1/dashboard/refresh",
     response_model=dict,
     tags=["dashboard"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_dashboard_read_key)],
 )
 async def get_dashboard_refresh_status() -> dict:
     return await dashboard_refresh_manager.status()
