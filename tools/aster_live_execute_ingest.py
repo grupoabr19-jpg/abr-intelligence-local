@@ -20,6 +20,7 @@ from backend.aster_collector.manual_auth import has_auth_tokens, save_current_as
 from backend.aster_collector.browser_capture import try_login
 from backend.aster_collector.report_registry import DateFieldBinding, StaticFieldBinding, TextFieldBinding, get_report_config
 from backend.aster_collector.settings import get_settings
+from backend.archive_storage import archive_records
 
 
 EVIDENCE_DIR = ROOT / "docs" / "evidence"
@@ -806,6 +807,14 @@ async def main_async(
         "ingested_at": datetime.now(timezone.utc).isoformat(),
         "ingestion_mode": "live_execute_memory",
     }
+    archive = archive_records(
+        source_system="aster",
+        entity=report_config.entity,
+        sync_id=sync_id,
+        rows=rows,
+        metadata=metadata,
+        env=env,
+    )
 
     responses = []
     for index, batch in enumerate(chunks(rows, 1000), start=1):
@@ -830,6 +839,19 @@ async def main_async(
         "columns_count": len(columns),
         "filters": post_params,
         "automation": execute.get("automation"),
+        "archive": {
+            "relative_dir": archive.get("relative_dir"),
+            "files": [
+                {
+                    "format": item.get("format"),
+                    "relative_path": item.get("relative_path"),
+                    "bytes": item.get("bytes"),
+                    "drive_file_id": (item.get("drive") or {}).get("id"),
+                }
+                for item in archive.get("files", [])
+            ],
+            "drive_error": archive.get("drive_error"),
+        },
         "skipped_empty_execute_count": execute.get("skipped_empty_execute_count", 0),
     }
     output = EVIDENCE_DIR / f"aster_live_ingest_summary_{query_id}.json"

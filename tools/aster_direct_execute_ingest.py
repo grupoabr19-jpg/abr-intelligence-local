@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 from backend.aster_collector.manual_auth import AUTH_STATE_PATH, parse_persist_state
 from backend.aster_collector.report_registry import DateFieldBinding, ReportConfig, get_report_config
+from backend.archive_storage import archive_records
 from tools.aster_live_execute_ingest import chunks, load_env, post_ingest, static_param_overrides
 
 
@@ -153,6 +154,14 @@ def ingest_execute(query_id: str, execute: dict[str, Any], batch_size: int) -> d
         "ingested_at": datetime.now(timezone.utc).isoformat(),
         "ingestion_mode": "backend_direct_execute",
     }
+    archive = archive_records(
+        source_system="aster",
+        entity=report.entity,
+        sync_id=sync_id,
+        rows=rows,
+        metadata=metadata,
+        env=env,
+    )
 
     responses = []
     for index, batch in enumerate(chunks(rows, batch_size), start=1):
@@ -178,6 +187,19 @@ def ingest_execute(query_id: str, execute: dict[str, Any], batch_size: int) -> d
         "filters": post_params,
         "automation": metadata["automation"],
         "batch_size": batch_size,
+        "archive": {
+            "relative_dir": archive.get("relative_dir"),
+            "files": [
+                {
+                    "format": item.get("format"),
+                    "relative_path": item.get("relative_path"),
+                    "bytes": item.get("bytes"),
+                    "drive_file_id": (item.get("drive") or {}).get("id"),
+                }
+                for item in archive.get("files", [])
+            ],
+            "drive_error": archive.get("drive_error"),
+        },
     }
 
 

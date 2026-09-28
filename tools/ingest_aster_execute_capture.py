@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -9,6 +10,11 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backend.archive_storage import archive_records
+
 DEFAULT_QUERY_ID = "D0A4D301"
 
 
@@ -88,6 +94,14 @@ def main(query_id: str = DEFAULT_QUERY_ID) -> None:
         "reported_rows_by_aster": shape_rows,
         "is_partial_capture": partial,
     }
+    archive = archive_records(
+        source_system="aster",
+        entity=f"aster_report_{query_id.lower()}",
+        sync_id=sync_id,
+        rows=rows,
+        metadata=metadata,
+        env=env,
+    )
 
     results = []
     for index, batch in enumerate(chunks(rows, 1000), start=1):
@@ -113,6 +127,19 @@ def main(query_id: str = DEFAULT_QUERY_ID) -> None:
                 "is_partial_capture": partial,
                 "batch_count": len(results),
                 "responses": results,
+                "archive": {
+                    "relative_dir": archive.get("relative_dir"),
+                    "files": [
+                        {
+                            "format": item.get("format"),
+                            "relative_path": item.get("relative_path"),
+                            "bytes": item.get("bytes"),
+                            "drive_file_id": (item.get("drive") or {}).get("id"),
+                        }
+                        for item in archive.get("files", [])
+                    ],
+                    "drive_error": archive.get("drive_error"),
+                },
             },
             ensure_ascii=False,
             indent=2,

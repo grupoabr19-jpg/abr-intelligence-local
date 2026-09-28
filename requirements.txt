@@ -4,6 +4,8 @@ xlrd==2.0.1
 pyarrow==18.1.0
 playwright==1.49.1
 httpx==0.28.1
+google-auth==2.35.0
+requests==2.32.3
 python-dotenv==1.0.1
 pydantic==2.10.4
 pydantic-settings==2.7.1
