@@ -27,8 +27,6 @@ ASTER_REFRESH_REPORTS = (
 )
 
 PENDING_MARKET_SOURCES = (
-    "BCB dolar/PTAX",
-    "IBGE PIM/SIDRA",
     "ANEEL",
     "Comex Stat",
     "CAGED",
@@ -187,6 +185,7 @@ class DashboardRefreshManager:
     def _build_steps(self) -> list[RefreshStep]:
         steps = [
             RefreshStep("market_registry", "Mercado: verificar fontes configuradas"),
+            RefreshStep("market_api", "Mercado API: BCB e IBGE"),
             RefreshStep("market_public", "Mercado publico: Aco Brasil, CNI e INDA"),
             RefreshStep("kommo_collect", "Kommo API: leads, tarefas e eventos"),
             RefreshStep("atendimento_facts", "Atendimento: fatos, SLA e rankings"),
@@ -208,6 +207,17 @@ class DashboardRefreshManager:
     def _command_for_step(self, key: str, job: DashboardRefreshJob) -> list[str] | None:
         if key == "market_registry":
             return [sys.executable, str(ROOT / "tools" / "refresh_market_source_registry.py")]
+        if key == "market_api":
+            return [
+                sys.executable,
+                str(ROOT / "tools" / "collect_market_api_sources.py"),
+                "--source",
+                "all",
+                "--date-from",
+                job.date_from,
+                "--date-to",
+                job.date_to,
+            ]
         if key == "market_public":
             return [sys.executable, str(ROOT / "tools" / "collect_market_sources.py"), "--source", "all"]
         if key == "kommo_collect":
@@ -330,6 +340,13 @@ class DashboardRefreshManager:
                 "required_for_daily": True,
                 "database": "crm",
                 "sql": "select max(finished_at) from public.atendimento_ingestion_runs where status = 'sucesso'",
+            },
+            {
+                "key": "market_api",
+                "label": "Mercado API - BCB e IBGE",
+                "required_for_daily": False,
+                "database": "core",
+                "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key in ('bcb_dolar_ptax', 'ibge_pim_sidra', 'ibge_construcao_sidra')",
             },
             {
                 "key": "market_public",
