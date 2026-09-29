@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import re
 import sys
@@ -45,6 +46,22 @@ MONTHS = {
     "nov": 11,
     "dez": 12,
     "dec": 12,
+}
+
+MONTH_NAMES_PT = {
+    "janeiro": 1,
+    "fevereiro": 2,
+    "marco": 3,
+    "março": 3,
+    "abril": 4,
+    "maio": 5,
+    "junho": 6,
+    "julho": 7,
+    "agosto": 8,
+    "setembro": 9,
+    "outubro": 10,
+    "novembro": 11,
+    "dezembro": 12,
 }
 
 
@@ -402,8 +419,45 @@ def latest_planilha_documents(cur: Any, source_keys: list[str]) -> list[dict[str
     ]
 
 
+def latest_page_documents(cur: Any, source_keys: list[str]) -> list[dict[str, Any]]:
+    cur.execute(
+        """
+        select distinct on (source_key)
+          id::text,
+          source_key,
+          tipo_documento,
+          titulo,
+          url
+        from public.mercado_documentos
+        where source_key = any(%s)
+          and tipo_documento = 'pagina'
+        order by source_key, coletado_em desc
+        """,
+        (source_keys,),
+    )
+    return [
+        {
+            "id": row[0],
+            "source_key": row[1],
+            "tipo_documento": row[2],
+            "titulo": row[3],
+            "url": row[4],
+        }
+        for row in cur.fetchall()
+    ]
+
+
 def delete_document_indicators(cur: Any, document_id: str) -> None:
     cur.execute("delete from public.mercado_indicadores where documento_id = %s", (document_id,))
+
+
+def delete_source_indicators(cur: Any, source_key: str, indicator_keys: list[str]) -> None:
+    if not indicator_keys:
+        return
+    cur.execute(
+        "delete from public.mercado_indicadores where source_key = %s and indicador_key = any(%s)",
+        (source_key, indicator_keys),
+    )
 
 
 def insert_indicators(cur: Any, document: dict[str, Any], indicators: list[dict[str, Any]]) -> int:
@@ -452,6 +506,85 @@ def insert_indicators(cur: Any, document: dict[str, Any], indicators: list[dict[
     return len(rows)
 
 
+def insert_source_indicators(cur: Any, document: dict[str, Any], indicators: list[dict[str, Any]]) -> int:
+    return insert_indicators(cur, document, indicators)
+
+
+def upsert_raw_aco_brasil(cur: Any, indicators: list[dict[str, Any]]) -> int:
+    rows = [
+        (
+            item["indicador_key"],
+            item["indicador_nome"],
+            item.get("periodo_inicio"),
+            item.get("periodo_label"),
+            item.get("unidade"),
+            item.get("valor"),
+            json.dumps(item.get("dimensoes", {}), ensure_ascii=False),
+            json.dumps(item.get("payload_original", {}), ensure_ascii=False),
+        )
+        for item in indicators
+        if item.get("periodo_inicio")
+    ]
+    if not rows:
+        return 0
+    cur.executemany(
+        """
+        insert into public.raw_aco_brasil(
+          indicador_key, indicador_nome, periodo_inicio, periodo_label, unidade,
+          valor, dimensoes, payload_original, coletado_em
+        )
+        values (%s, %s, %s::date, %s, %s, %s, %s::jsonb, %s::jsonb, now())
+        on conflict (indicador_key, periodo_inicio, md5(dimensoes::text))
+        do update set
+          indicador_nome = excluded.indicador_nome,
+          periodo_label = excluded.periodo_label,
+          unidade = excluded.unidade,
+          valor = excluded.valor,
+          payload_original = excluded.payload_original,
+          coletado_em = now()
+        """,
+        rows,
+    )
+    return len(rows)
+
+
+def upsert_raw_inda(cur: Any, indicators: list[dict[str, Any]]) -> int:
+    rows = [
+        (
+            item["periodo_inicio"],
+            item.get("periodo_label"),
+            item["indicador_key"],
+            item["indicador_nome"],
+            item["dimensoes"].get("variacao_mes_pct"),
+            item["dimensoes"].get("variacao_ano_pct"),
+            json.dumps(item.get("payload_original", {}), ensure_ascii=False),
+        )
+        for item in indicators
+        if item.get("periodo_inicio")
+    ]
+    if not rows:
+        return 0
+    cur.executemany(
+        """
+        insert into public.raw_inda(
+          periodo_inicio, periodo_label, indicador_key, indicador_nome,
+          variacao_mes_pct, variacao_ano_pct, payload_original, coletado_em
+        )
+        values (%s::date, %s, %s, %s, %s, %s, %s::jsonb, now())
+        on conflict (periodo_inicio, indicador_key)
+        do update set
+          periodo_label = excluded.periodo_label,
+          indicador_nome = excluded.indicador_nome,
+          variacao_mes_pct = excluded.variacao_mes_pct,
+          variacao_ano_pct = excluded.variacao_ano_pct,
+          payload_original = excluded.payload_original,
+          coletado_em = now()
+        """,
+        rows,
+    )
+    return len(rows)
+
+
 def extract_aco_brasil_indicators(content: bytes) -> list[dict[str, Any]]:
     frame = pd.ExcelFile(BytesIO(content)).parse(0, header=None)
     rows = {
@@ -493,6 +626,87 @@ def extract_aco_brasil_indicators(content: bytes) -> list[dict[str, Any]]:
                     "payload_original": {"sheet": "Perfomance Mensal-Monthly", "row": row_idx + 1, "column": col + 1},
                 }
             )
+    return indicators
+
+
+def plain_html_text(markup: str) -> str:
+    text = html.unescape(re.sub(r"<[^>]+>", " ", markup))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def parse_inda_period(text: str) -> tuple[str, str] | tuple[None, None]:
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    for month_name, month in MONTH_NAMES_PT.items():
+        probe = unicodedata.normalize("NFKD", month_name.lower())
+        probe = "".join(char for char in probe if not unicodedata.combining(char))
+        match = re.search(rf"\b{probe}\s+de\s+(\d{{4}})\b", normalized)
+        if match:
+            year = int(match.group(1))
+            return f"{year:04d}-{month:02d}-01", f"{month_name.upper()} DE {year}"
+    return None, None
+
+
+def signed_percent(sign: str, value: str) -> float:
+    number = numeric_value(value)
+    if number is None:
+        return 0.0
+    return -abs(number) if sign == "-" else abs(number)
+
+
+def extract_inda_public_indicators(markup: str, page_url: str) -> list[dict[str, Any]]:
+    text = plain_html_text(markup)
+    periodo_inicio, periodo_label = parse_inda_period(text)
+    if not periodo_inicio:
+        return []
+    aliases = {
+        "COMPRAS": ("inda_compras_variacao", "INDA compras"),
+        "VENDAS": ("inda_vendas_variacao", "INDA vendas"),
+        "ESTOQUE": ("inda_estoque_variacao", "INDA estoque"),
+        "IMPORTACAO": ("inda_importacao_variacao", "INDA importacao"),
+    }
+    normalized = unicodedata.normalize("NFKD", text.upper())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    indicators: list[dict[str, Any]] = []
+    pattern = re.compile(
+        r"\b(COMPRAS|VENDAS|ESTOQUE|IMPORTACAO)\s*([+-])\s*([0-9]+(?:[,.][0-9]+)?)%\s*MES\s*([+-])\s*([0-9]+(?:[,.][0-9]+)?)%\s*ANO"
+    )
+    for match in pattern.finditer(normalized):
+        label = match.group(1)
+        key, name = aliases[label]
+        month_change = signed_percent(match.group(2), match.group(3))
+        year_change = signed_percent(match.group(4), match.group(5))
+        base_payload = {
+            "periodo_label_original": periodo_label,
+            "texto_extraido": match.group(0),
+            "pagina_origem": page_url,
+        }
+        indicators.extend(
+            [
+                {
+                    "indicador_key": f"{key}_mes_pct",
+                    "indicador_nome": f"{name} variacao mensal",
+                    "periodo_inicio": periodo_inicio,
+                    "periodo_label": periodo_label,
+                    "geografia": "BR",
+                    "unidade": "%",
+                    "valor": month_change,
+                    "dimensoes": {"indicador": label.lower(), "variacao_mes_pct": month_change, "variacao_ano_pct": year_change},
+                    "payload_original": base_payload,
+                },
+                {
+                    "indicador_key": f"{key}_ano_pct",
+                    "indicador_nome": f"{name} variacao anual",
+                    "periodo_inicio": periodo_inicio,
+                    "periodo_label": periodo_label,
+                    "geografia": "BR",
+                    "unidade": "%",
+                    "valor": year_change,
+                    "dimensoes": {"indicador": label.lower(), "variacao_mes_pct": month_change, "variacao_ano_pct": year_change},
+                    "payload_original": base_payload,
+                },
+            ]
+        )
     return indicators
 
 
@@ -615,14 +829,21 @@ def extract_market_indicators(source_keys: list[str], dry_run: bool = False) -> 
                         if not dry_run:
                             delete_document_indicators(cur, document["id"])
                             inserted = insert_indicators(cur, document, indicators)
+                            raw_inserted = (
+                                upsert_raw_aco_brasil(cur, indicators)
+                                if document["source_key"] == "aco_brasil_estatistica_mensal"
+                                else 0
+                            )
                         else:
                             inserted = 0
+                            raw_inserted = 0
                         result["documents"].append(
                             {
                                 "source_key": document["source_key"],
                                 "url": document["url"],
                                 "indicators_found": len(indicators),
                                 "indicators_inserted": inserted,
+                                "raw_inserted": raw_inserted,
                                 "sample": indicators[-5:],
                             }
                         )
@@ -634,6 +855,41 @@ def extract_market_indicators(source_keys: list[str], dry_run: bool = False) -> 
                                 "error": f"{type(exc).__name__}: {exc}",
                             }
                         )
+                if "inda_estatisticas" in source_keys:
+                    for document in latest_page_documents(cur, ["inda_estatisticas"]):
+                        try:
+                            response = client.get(document["url"])
+                            response.raise_for_status()
+                            indicators = extract_inda_public_indicators(response.text, document["url"])
+                            if not dry_run:
+                                delete_source_indicators(
+                                    cur,
+                                    "inda_estatisticas",
+                                    [item["indicador_key"] for item in indicators],
+                                )
+                                inserted = insert_source_indicators(cur, document, indicators)
+                                raw_inserted = upsert_raw_inda(cur, indicators)
+                            else:
+                                inserted = 0
+                                raw_inserted = 0
+                            result["documents"].append(
+                                {
+                                    "source_key": document["source_key"],
+                                    "url": document["url"],
+                                    "indicators_found": len(indicators),
+                                    "indicators_inserted": inserted,
+                                    "raw_inserted": raw_inserted,
+                                    "sample": indicators,
+                                }
+                            )
+                        except Exception as exc:
+                            result["documents"].append(
+                                {
+                                    "source_key": document["source_key"],
+                                    "url": document["url"],
+                                    "error": f"{type(exc).__name__}: {exc}",
+                                }
+                            )
                 if not dry_run:
                     conn.commit()
     return result
