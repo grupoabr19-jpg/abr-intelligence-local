@@ -252,11 +252,6 @@ def write_sales_summary_cache(date_from: date | None = None, date_to: date | Non
 def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict[str, Any]:
     date_from = date.fromisoformat(date_from_text) if date_from_text else None
     date_to = date.fromisoformat(date_to_text) if date_to_text else None
-    valor_total = money_sql("Valor Total")
-    rec_liquida = money_sql("RecLiquida")
-    lucro_bruto = money_sql("LucroBruto")
-    margem_contribuicao = money_sql("Margem de Contribuição (MC)")
-    peso_total = money_sql("Peso Total")
     date_filters: list[str] = []
     params: list[Any] = []
     if date_from:
@@ -271,48 +266,28 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                with raw_sales as (
+                with sales as materialized (
                     select
-                      {SALE_DATE_SQL} as sale_date,
-                      {valor_total} as valor_total,
-                      {rec_liquida} as receita_liquida,
-                      {lucro_bruto} as lucro_bruto,
-                      {margem_contribuicao} as margem_contribuicao,
-                      {peso_total} as peso_total,
-                      nullif(payload_original->>'CodCliente', '') as cliente_codigo,
-                      coalesce(
-                        nullif(payload_original->>'Cliente', ''),
-                        nullif(payload_original->>'Nome do cliente', ''),
-                        nullif(payload_original->>'Nome Cliente', ''),
-                        nullif(payload_original->>'CodCliente', ''),
-                        'Sem cliente'
-                      ) as cliente,
-                      nullif(payload_original->>'Item', '') as item,
-                      coalesce(
-                        nullif(payload_original->>'Descrição', ''),
-                        nullif(payload_original->>'Item', ''),
-                        'Sem item'
-                      ) as produto,
-                      coalesce(nullif(payload_original->>'Familia', ''), 'Sem familia') as familia,
-                      coalesce(nullif(payload_original->>'Segmento', ''), 'Sem segmento') as segmento,
-                      coalesce(nullif(payload_original->>'Cidade', ''), 'Sem cidade') as cidade,
-                      coalesce(nullif(payload_original->>'Estado', ''), 'Sem UF') as estado,
-                      coalesce(nullif(payload_original->>'Vendedor', ''), 'Sem vendedor') as vendedor,
-                      coalesce(nullif(payload_original->>'Tipo', ''), 'Sem tipo') as tipo,
-                      coalesce(
-                        nullif(payload_original->>'N° NF', ''),
-                        nullif(payload_original->>'Nº NF', ''),
-                        nullif(payload_original->>'NF', ''),
-                        nullif(payload_original->>'Nota fiscal', ''),
-                        nullif(payload_original->>'Nota Fiscal', '')
-                      ) as nota_fiscal,
-                      {money_sql("Valor Venda Perdida")} as valor_perdido
-                    from public.staging_dados
-                    where entidade = 'aster_report_d0a4d301'
-                ),
-                sales as materialized (
-                    select *
-                    from raw_sales
+                      sale_date,
+                      valor_total,
+                      receita_liquida,
+                      lucro_bruto,
+                      margem_contribuicao,
+                      peso_total,
+                      cliente_codigo,
+                      cliente,
+                      item,
+                      produto,
+                      familia,
+                      segmento,
+                      cidade,
+                      estado,
+                      vendedor,
+                      tipo,
+                      nota_fiscal,
+                      valor_perdido,
+                      motivo_perda
+                    from public.dashboard_sales_fact
                     {sales_where_sql}
                 )
                 select
@@ -650,16 +625,13 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                     select coalesce(jsonb_agg(to_jsonb(loss_rows) order by loss_rows.valor_perdido desc), '[]'::jsonb)
                     from (
                       select
-                        coalesce(nullif(trim(payload_original->>'Motivo 1'), ''), 'Sem motivo') as motivo,
+                        motivo_perda as motivo,
                         count(*)::int as linhas,
-                        coalesce(sum({money_sql("Valor Venda Perdida")}), 0) as valor_perdido
-                      from public.staging_dados
-                      where entidade = 'aster_report_d0a4d301'
-                        and ({SALE_DATE_SQL}) is not null
-                        {"and (" + SALE_DATE_SQL + ") >= %s" if date_from else ""}
-                        {"and (" + SALE_DATE_SQL + ") <= %s" if date_to else ""}
+                        coalesce(sum(valor_perdido), 0) as valor_perdido
+                      from sales
+                      where sale_date is not null
                       group by 1
-                      having coalesce(sum({money_sql("Valor Venda Perdida")}), 0) > 0
+                      having coalesce(sum(valor_perdido), 0) > 0
                       order by valor_perdido desc
                       limit 15
                     ) loss_rows
@@ -742,7 +714,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                   ) as cities
                 from sales
                 """,
-                params + params,
+                params,
             )
             row = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0, None, None, [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [])
 
@@ -1903,24 +1875,24 @@ def sales_regions_summary(date_from: date | None = None, date_to: date | None = 
     env = load_env()
     with connect_database(env) as conn:
         with conn.cursor() as cur:
-            where_clauses = ["entidade = 'aster_report_d0a4d301'"]
+            where_clauses: list[str] = []
             params: list[Any] = []
-            parsed_sale_date = SALE_DATE_SQL
             if date_from:
-                where_clauses.append(f"({parsed_sale_date}) >= %s")
+                where_clauses.append("sale_date >= %s")
                 params.append(date_from)
             if date_to:
-                where_clauses.append(f"({parsed_sale_date}) <= %s")
+                where_clauses.append("sale_date <= %s")
                 params.append(date_to)
+            where_sql = f"where {' and '.join(where_clauses)}" if where_clauses else ""
             cur.execute(
                 f"""
                 select
-                  payload_original->>'Cidade' as cidade,
-                  payload_original->>'Vendedor' as vendedor,
-                  payload_original->>'Segmento' as segmento,
-                  payload_original->>'Valor Total' as valor_total
-                from public.staging_dados
-                where {" and ".join(where_clauses)}
+                  cidade,
+                  vendedor,
+                  segmento,
+                  valor_total
+                from public.dashboard_sales_fact
+                {where_sql}
                 """,
                 params,
             )

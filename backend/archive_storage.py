@@ -197,7 +197,7 @@ def upload_drive_file(token: str, parent_id: str, path: Path) -> dict[str, Any]:
             "metadata": (None, json.dumps(metadata), "application/json; charset=UTF-8"),
             "file": (path.name, file_obj, mime_type),
         }
-        with httpx.Client(timeout=180) as client:
+        with httpx.Client(timeout=900) as client:
             response = client.post(
                 "https://www.googleapis.com/upload/drive/v3/files",
                 headers=drive_headers(token),

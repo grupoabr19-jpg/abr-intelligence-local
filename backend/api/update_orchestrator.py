@@ -181,6 +181,7 @@ class DashboardRefreshManager:
         ]
         for query_id in ASTER_REFRESH_REPORTS:
             steps.append(RefreshStep(f"aster_{query_id}", f"Aster ERP: relatorio {query_id}"))
+        steps.append(RefreshStep("aster_sales_fact", "Aster ERP: compactar vendas para dashboard"))
         steps.append(RefreshStep("sales_cache", "Dashboard comercial: recalcular cache"))
         steps.append(
             RefreshStep(
@@ -209,6 +210,8 @@ class DashboardRefreshManager:
             return [sys.executable, str(ROOT / "tools" / "refresh_atendimento_official_contract.py")]
         if key.startswith("aster_"):
             query_id = key.removeprefix("aster_")
+            if key == "aster_sales_fact":
+                return [sys.executable, str(ROOT / "tools" / "refresh_aster_sales_fact.py")]
             return [
                 sys.executable,
                 str(ROOT / "tools" / "aster_live_execute_ingest.py"),
@@ -234,6 +237,8 @@ class DashboardRefreshManager:
 
     @staticmethod
     def _timeout_for_step(key: str) -> int:
+        if key == "aster_sales_fact":
+            return 600
         if key.startswith("aster_"):
             return 1_000
         if key == "kommo_collect":
@@ -289,7 +294,7 @@ class DashboardRefreshManager:
                 "label": "Aster ERP - vendas por item",
                 "required_for_daily": True,
                 "database": "core",
-                "sql": "select max(imported_at) from public.staging_dados where entidade = 'aster_report_d0a4d301'",
+                "sql": "select max(refreshed_at) from public.dashboard_sales_fact",
             },
             {
                 "key": "sales_cache",
