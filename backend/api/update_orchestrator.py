@@ -186,6 +186,7 @@ class DashboardRefreshManager:
 
     def _build_steps(self) -> list[RefreshStep]:
         steps = [
+            RefreshStep("market_registry", "Mercado: verificar fontes configuradas"),
             RefreshStep("market_public", "Mercado publico: Aco Brasil, CNI e INDA"),
             RefreshStep("kommo_collect", "Kommo API: leads, tarefas e eventos"),
             RefreshStep("atendimento_facts", "Atendimento: fatos, SLA e rankings"),
@@ -205,6 +206,8 @@ class DashboardRefreshManager:
         return steps
 
     def _command_for_step(self, key: str, job: DashboardRefreshJob) -> list[str] | None:
+        if key == "market_registry":
+            return [sys.executable, str(ROOT / "tools" / "refresh_market_source_registry.py")]
         if key == "market_public":
             return [sys.executable, str(ROOT / "tools" / "collect_market_sources.py"), "--source", "all"]
         if key == "kommo_collect":
