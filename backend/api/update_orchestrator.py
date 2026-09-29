@@ -82,6 +82,11 @@ class DashboardRefreshManager:
         async with self._lock:
             current = self.serialize_job(self._current_job) if self._current_job else None
             history = [self.serialize_job(item) for item in self._history[:5]]
+        stored = await asyncio.to_thread(self._stored_jobs)
+        if not current:
+            current = stored.get("current")
+        if stored.get("history"):
+            history = stored["history"]
         sources = await asyncio.to_thread(self._source_freshness)
         return {"current": current, "history": history, "sources": sources}
 
@@ -127,8 +132,9 @@ class DashboardRefreshManager:
             self._current_job = job
             self._history.insert(0, job)
             self._history = self._history[:10]
-            asyncio.create_task(self._run_job(job.job_id))
-            return job
+        await asyncio.to_thread(self._persist_job, job)
+        asyncio.create_task(self._run_job(job.job_id))
+        return job
 
     async def _run_job(self, job_id: str) -> None:
         job = await self._get_job(job_id)
@@ -366,14 +372,17 @@ class DashboardRefreshManager:
         return None
 
     async def _update_job(self, job_id: str, **updates: Any) -> None:
+        job: DashboardRefreshJob | None = None
         async with self._lock:
             job = self._current_job if self._current_job and self._current_job.job_id == job_id else None
             if not job:
                 return
             for key, value in updates.items():
                 setattr(job, key, value)
+        await asyncio.to_thread(self._persist_job, job)
 
     async def _update_step(self, job_id: str, index: int, **updates: Any) -> None:
+        step: RefreshStep | None = None
         async with self._lock:
             job = self._current_job if self._current_job and self._current_job.job_id == job_id else None
             if not job or index >= len(job.steps):
@@ -381,6 +390,8 @@ class DashboardRefreshManager:
             step = job.steps[index]
             for key, value in updates.items():
                 setattr(step, key, value)
+        if step:
+            await asyncio.to_thread(self._persist_step, job_id, index, step)
 
     def serialize_job(self, job: DashboardRefreshJob | None) -> dict[str, Any] | None:
         return self._serialize_job(job)
@@ -434,6 +445,158 @@ class DashboardRefreshManager:
     @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _persist_job(self, job: DashboardRefreshJob) -> None:
+        env = load_env()
+        try:
+            with connect_database(env) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        insert into public.dashboard_refresh_runs(
+                          job_id, mode, status, date_from, date_to, message,
+                          created_at, started_at, finished_at, updated_at
+                        )
+                        values (%s::uuid, %s, %s, %s::date, %s::date, %s, %s::timestamptz, %s::timestamptz, %s::timestamptz, now())
+                        on conflict (job_id)
+                        do update set
+                          mode = excluded.mode,
+                          status = excluded.status,
+                          date_from = excluded.date_from,
+                          date_to = excluded.date_to,
+                          message = excluded.message,
+                          started_at = excluded.started_at,
+                          finished_at = excluded.finished_at,
+                          updated_at = now()
+                        """,
+                        (
+                            job.job_id,
+                            job.mode,
+                            job.status,
+                            job.date_from,
+                            job.date_to,
+                            job.message,
+                            job.created_at,
+                            job.started_at,
+                            job.finished_at,
+                        ),
+                    )
+                    for index, step in enumerate(job.steps):
+                        self._persist_step_with_cursor(cur, job.job_id, index, step)
+                    conn.commit()
+        except Exception:
+            return
+
+    def _persist_step(self, job_id: str, index: int, step: RefreshStep) -> None:
+        env = load_env()
+        try:
+            with connect_database(env) as conn:
+                with conn.cursor() as cur:
+                    self._persist_step_with_cursor(cur, job_id, index, step)
+                    conn.commit()
+        except Exception:
+            return
+
+    @staticmethod
+    def _persist_step_with_cursor(cur: Any, job_id: str, index: int, step: RefreshStep) -> None:
+        cur.execute(
+            """
+            insert into public.dashboard_refresh_steps(
+              job_id, step_index, step_key, label, status, started_at, finished_at,
+              return_code, stdout_tail, stderr_tail, result, error, updated_at
+            )
+            values (%s::uuid, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz, %s, %s, %s, %s::jsonb, %s, now())
+            on conflict (job_id, step_index)
+            do update set
+              step_key = excluded.step_key,
+              label = excluded.label,
+              status = excluded.status,
+              started_at = excluded.started_at,
+              finished_at = excluded.finished_at,
+              return_code = excluded.return_code,
+              stdout_tail = excluded.stdout_tail,
+              stderr_tail = excluded.stderr_tail,
+              result = excluded.result,
+              error = excluded.error,
+              updated_at = now()
+            """,
+            (
+                job_id,
+                index,
+                step.key,
+                step.label,
+                step.status,
+                step.started_at,
+                step.finished_at,
+                step.return_code,
+                step.stdout_tail,
+                step.stderr_tail,
+                json.dumps(step.result, ensure_ascii=False) if step.result is not None else None,
+                step.error,
+            ),
+        )
+
+    def _stored_jobs(self) -> dict[str, Any]:
+        env = load_env()
+        try:
+            with connect_database(env) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        select job_id::text, mode, status, date_from::text, date_to::text,
+                               created_at, started_at, finished_at, message
+                        from public.dashboard_refresh_runs
+                        order by created_at desc
+                        limit 5
+                        """
+                    )
+                    run_rows = cur.fetchall()
+                    if not run_rows:
+                        return {"current": None, "history": []}
+                    job_ids = [row[0] for row in run_rows]
+                    cur.execute(
+                        """
+                        select job_id::text, step_index, step_key, label, status, started_at, finished_at,
+                               return_code, error, result
+                        from public.dashboard_refresh_steps
+                        where job_id::text = any(%s)
+                        order by job_id, step_index
+                        """,
+                        (job_ids,),
+                    )
+                    steps_by_job: dict[str, list[dict[str, Any]]] = {job_id: [] for job_id in job_ids}
+                    for row in cur.fetchall():
+                        steps_by_job.setdefault(row[0], []).append(
+                            {
+                                "key": row[2],
+                                "label": row[3],
+                                "status": row[4],
+                                "started_at": row[5].isoformat() if row[5] else None,
+                                "finished_at": row[6].isoformat() if row[6] else None,
+                                "return_code": row[7],
+                                "error": row[8],
+                                "result": row[9],
+                            }
+                        )
+                    jobs = [
+                        {
+                            "job_id": row[0],
+                            "mode": row[1],
+                            "status": row[2],
+                            "date_from": row[3],
+                            "date_to": row[4],
+                            "created_at": row[5].isoformat() if row[5] else None,
+                            "started_at": row[6].isoformat() if row[6] else None,
+                            "finished_at": row[7].isoformat() if row[7] else None,
+                            "message": row[8],
+                            "steps": steps_by_job.get(row[0], []),
+                        }
+                        for row in run_rows
+                    ]
+                    current = next((job for job in jobs if job["status"] in {"queued", "running"}), None)
+                    return {"current": current, "history": jobs}
+        except Exception:
+            return {"current": None, "history": []}
 
 
 dashboard_refresh_manager = DashboardRefreshManager()

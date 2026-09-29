@@ -78,6 +78,7 @@ type IntelligenceTab =
   | 'channels'
 
 type MacroArea = 'business' | 'market' | 'service'
+type RefreshStepStatus = { label: string; status: string; error?: string | null }
 type RankingView = 'retail' | 'retail-region' | 'wholesale' | 'representatives'
 type RankingMetric = 'ganhas' | 'win_rate' | 'follow_up' | 'sla_5' | 'pipeline_value' | 'leads'
 
@@ -284,14 +285,21 @@ function App() {
         return
       }
 
+      const failedSteps: RefreshStepStatus[] = Array.isArray(job.steps)
+        ? job.steps.filter((step: RefreshStepStatus) => step.status === 'failed')
+        : []
       if (job.status === 'failed') {
-        throw new Error('Atualizacao de dados falhou. Confira os logs do backend no Render.')
+        const firstFailure = failedSteps[0]
+        const detail = firstFailure
+          ? `${firstFailure.label}: ${firstFailure.error || 'sem detalhe retornado'}`
+          : 'Confira os logs do backend no Render.'
+        throw new Error(`Atualizacao de dados falhou em ${detail}`)
       }
 
       await load()
       const message =
         job.status === 'partial'
-          ? 'Atualizacao concluida com pendencias em alguma fonte. Indicadores recarregados.'
+          ? `Atualizacao concluida com pendencias${failedSteps.length ? `: ${failedSteps.map((step: RefreshStepStatus) => step.label).join(', ')}` : ''}. Indicadores recarregados.`
           : 'Atualizacao concluida. Indicadores recarregados.'
       setRefreshMessage(message)
     } catch (err) {

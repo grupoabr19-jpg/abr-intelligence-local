@@ -100,7 +100,6 @@ async def get_internal_dashboard(
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before or equal to date_to.")
     set_dashboard_session_cookie(response)
-    await dashboard_refresh_manager.ensure_daily_refresh(date_from=date_from, date_to=date_to)
     return internal_dashboard_summary(
         date_from=date_from,
         date_to=date_to,
