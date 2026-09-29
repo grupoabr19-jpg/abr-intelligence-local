@@ -106,6 +106,8 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def write_parquet(path: Path, rows: list[dict[str, Any]]) -> None:
     frame = pd.DataFrame([normalized_row(row) for row in rows])
+    for column in frame.columns:
+        frame[column] = frame[column].map(lambda value: None if pd.isna(value) else str(value))
     frame.to_parquet(path, index=False)
 
 
