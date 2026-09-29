@@ -585,6 +585,48 @@ def upsert_raw_inda(cur: Any, indicators: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
+def upsert_raw_cni(cur: Any, table_name: str, indicators: list[dict[str, Any]]) -> int:
+    if table_name not in {"raw_cni_industria", "raw_cni_construcao"}:
+        raise ValueError(f"Tabela CNI invalida: {table_name}")
+    rows = [
+        (
+            item["indicador_key"],
+            item["indicador_nome"],
+            item.get("periodo_inicio"),
+            item.get("periodo_label"),
+            item.get("unidade"),
+            item.get("valor"),
+            (item.get("dimensoes") or {}).get("recorte"),
+            json.dumps(item.get("dimensoes", {}), ensure_ascii=False),
+            json.dumps(item.get("payload_original", {}), ensure_ascii=False),
+        )
+        for item in indicators
+        if item.get("periodo_inicio")
+    ]
+    if not rows:
+        return 0
+    cur.executemany(
+        f"""
+        insert into public.{table_name}(
+          indicador_key, indicador_nome, periodo_inicio, periodo_label, unidade,
+          valor, recorte, dimensoes, payload_original, coletado_em
+        )
+        values (%s, %s, %s::date, %s, %s, %s, %s, %s::jsonb, %s::jsonb, now())
+        on conflict (indicador_key, periodo_inicio, coalesce(recorte, ''), md5(dimensoes::text))
+        do update set
+          indicador_nome = excluded.indicador_nome,
+          periodo_label = excluded.periodo_label,
+          unidade = excluded.unidade,
+          valor = excluded.valor,
+          dimensoes = excluded.dimensoes,
+          payload_original = excluded.payload_original,
+          coletado_em = now()
+        """,
+        rows,
+    )
+    return len(rows)
+
+
 def extract_aco_brasil_indicators(content: bytes) -> list[dict[str, Any]]:
     frame = pd.ExcelFile(BytesIO(content)).parse(0, header=None)
     rows = {
@@ -834,6 +876,10 @@ def extract_market_indicators(source_keys: list[str], dry_run: bool = False) -> 
                                 if document["source_key"] == "aco_brasil_estatistica_mensal"
                                 else 0
                             )
+                            if document["source_key"] == "cni_sondagem_industrial":
+                                raw_inserted = upsert_raw_cni(cur, "raw_cni_industria", indicators)
+                            elif document["source_key"] == "cni_sondagem_construcao":
+                                raw_inserted = upsert_raw_cni(cur, "raw_cni_construcao", indicators)
                         else:
                             inserted = 0
                             raw_inserted = 0
