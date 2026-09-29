@@ -20,7 +20,7 @@ from backend.aster_collector.manual_auth import has_auth_tokens, save_current_as
 from backend.aster_collector.browser_capture import try_login
 from backend.aster_collector.report_registry import DateFieldBinding, StaticFieldBinding, TextFieldBinding, get_report_config
 from backend.aster_collector.settings import get_settings
-from backend.archive_storage import archive_records
+from backend.archive_storage import archive_records, require_drive_archive
 
 
 EVIDENCE_DIR = ROOT / "docs" / "evidence"
@@ -815,6 +815,7 @@ async def main_async(
         metadata=metadata,
         env=env,
     )
+    require_drive_archive(archive, env=env)
 
     responses = []
     for index, batch in enumerate(chunks(rows, 1000), start=1):

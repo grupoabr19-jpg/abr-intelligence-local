@@ -14,6 +14,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from backend.archive_storage import archive_records, require_drive_archive
 from tools.apply_migrations import connect_crm_database, load_env
 
 
@@ -310,6 +311,40 @@ def normalize_lead(
 
 def row_hash(row: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(row, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def archive_collected_data(
+    collected: dict[str, Any],
+    *,
+    sync_id: str,
+    date_from: str | None,
+    date_to: str | None,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    archive_rows: list[dict[str, Any]] = []
+    for row in collected.get("rows", []):
+        archive_rows.append({"record_type": "normalized_lead", "payload": row})
+    for record_type, rows in (collected.get("raw") or {}).items():
+        for row in rows:
+            archive_rows.append({"record_type": f"raw_{record_type}", "payload": row})
+
+    archive = archive_records(
+        source_system="kommo",
+        entity=ENTITY,
+        sync_id=sync_id,
+        rows=archive_rows,
+        metadata={
+            "date_from": date_from,
+            "date_to": date_to,
+            "base_url": collected.get("base_url"),
+            "normalized_rows": len(collected.get("rows", [])),
+            "events_error": collected.get("events_error"),
+            "raw_counts": {key: len(value) for key, value in (collected.get("raw") or {}).items()},
+        },
+        env=env,
+    )
+    require_drive_archive(archive, env=env)
+    return archive
 
 
 def collect_rows(
@@ -656,9 +691,15 @@ def insert_raw_data(cur: Any, raw: dict[str, list[dict[str, Any]]], sync_id: str
     return {"raw_inserted": raw_inserted, "raw_skipped": raw_skipped}
 
 
-def insert_rows(collected: dict[str, Any], date_from: str | None = None, date_to: str | None = None) -> dict[str, int]:
+def insert_rows(
+    collected: dict[str, Any],
+    date_from: str | None = None,
+    date_to: str | None = None,
+    *,
+    sync_id: str | None = None,
+) -> dict[str, int]:
     env = load_env()
-    sync_id = f"kommo_api_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    sync_id = sync_id or f"kommo_api_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     rows = collected["rows"]
     records: list[tuple[str, str, str, str, str, str, str]] = []
     for row in rows:
@@ -816,7 +857,27 @@ def main() -> None:
         "fields": list(collected["rows"][0].keys()) if collected["rows"] else [],
     }
     if not args.dry_run:
-        result.update(insert_rows(collected, args.date_from, args.date_to))
+        sync_id = f"kommo_api_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+        archive = archive_collected_data(
+            collected,
+            sync_id=sync_id,
+            date_from=args.date_from,
+            date_to=args.date_to,
+            env=env,
+        )
+        result["archive"] = {
+            "relative_dir": archive.get("relative_dir"),
+            "files": [
+                {
+                    "format": item.get("format"),
+                    "relative_path": item.get("relative_path"),
+                    "bytes": item.get("bytes"),
+                    "drive_file_id": (item.get("drive") or {}).get("id"),
+                }
+                for item in archive.get("files", [])
+            ],
+        }
+        result.update(insert_rows(collected, args.date_from, args.date_to, sync_id=sync_id))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

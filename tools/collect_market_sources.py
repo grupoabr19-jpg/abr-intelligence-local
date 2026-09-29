@@ -19,6 +19,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from backend.archive_storage import archive_records, require_drive_archive
 from tools.apply_migrations import connect_database, load_env
 
 
@@ -353,6 +354,26 @@ def upsert_documents(cur: Any, source_key: str, run_id: str, documents: list[dic
     return count
 
 
+def archive_market_documents(
+    documents: list[dict[str, Any]],
+    *,
+    source_key: str,
+    run_id: str,
+    page_url: str,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    archive = archive_records(
+        source_system="mercado_publico",
+        entity=source_key,
+        sync_id=run_id,
+        rows=documents,
+        metadata={"source_key": source_key, "page_url": page_url, "documents_found": len(documents)},
+        env=env,
+    )
+    require_drive_archive(archive, env=env)
+    return archive
+
+
 def latest_planilha_documents(cur: Any, source_keys: list[str]) -> list[dict[str, Any]]:
     cur.execute(
         """
@@ -647,6 +668,13 @@ def collect_sources(source_keys: list[str], dry_run: bool = False) -> dict[str, 
                     run_id = start_run(cur, source.key, {"page_url": page_url, "env_url": source.env_url})
                     try:
                         documents = collect_page_source(client, source, page_url)
+                        archive = archive_market_documents(
+                            documents,
+                            source_key=source.key,
+                            run_id=run_id,
+                            page_url=page_url,
+                            env=env,
+                        )
                         upserted = upsert_documents(cur, source.key, run_id, documents)
                         finish_run(cur, run_id, status="sucesso", found=len(documents), upserted=upserted)
                         result["sources"].append(
@@ -656,6 +684,7 @@ def collect_sources(source_keys: list[str], dry_run: bool = False) -> dict[str, 
                                 "page_url": page_url,
                                 "documents_found": len(documents),
                                 "documents_upserted": upserted,
+                                "archive_files": len(archive.get("files", [])),
                             }
                         )
                     except Exception as exc:

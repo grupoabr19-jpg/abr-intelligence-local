@@ -298,6 +298,27 @@ def archive_records(
     return result
 
 
+def require_drive_archive(result: dict[str, Any], *, env: dict[str, str] | None = None) -> None:
+    """Fail fast when Google Drive is the configured archive and upload did not complete."""
+    config = archive_config(env)
+    if config.provider != "google_drive":
+        return
+    if not config.drive_folder_id:
+        raise RuntimeError("ARCHIVE_GOOGLE_DRIVE_FOLDER_ID nao configurado para archive no Google Drive.")
+    if result.get("drive_error"):
+        raise RuntimeError(f"Falha ao arquivar no Google Drive: {result['drive_error']}")
+
+    missing = [
+        file_info.get("relative_path") or file_info.get("path")
+        for file_info in result.get("files", [])
+        if not (file_info.get("drive") or {}).get("id")
+    ]
+    if missing:
+        preview = ", ".join(str(item) for item in missing[:3])
+        suffix = "..." if len(missing) > 3 else ""
+        raise RuntimeError(f"Archive Google Drive incompleto. Arquivos sem drive_file_id: {preview}{suffix}")
+
+
 def register_archive_catalog(result: dict[str, Any], *, metadata: dict[str, Any], env: dict[str, str] | None = None) -> None:
     values = env or load_env()
     try:
