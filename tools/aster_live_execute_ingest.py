@@ -594,7 +594,7 @@ async def capture_execute(
     skipped_empty_execute_count = 0
 
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=False, slow_mo=150)
+        browser = await playwright.chromium.launch(headless=settings.headless, slow_mo=0 if settings.headless else 150)
         context = await browser.new_context()
         page = await context.new_page()
         page.set_default_timeout(settings.browser_timeout_ms)
