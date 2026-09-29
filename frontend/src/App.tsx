@@ -1611,15 +1611,30 @@ function App() {
                   </div>
                 </Panel>
 
-                <Panel title="Win rate por funil" icon={<BarChart3 size={17} />}>
+                <Panel title="Conversao por funil" icon={<BarChart3 size={17} />}>
                   <ChartFrame>
                     <ResponsiveContainer>
                       <BarChart data={attendance?.win_rate_by_funnel ?? []} margin={{ top: 4, right: 12, left: 0, bottom: 16 }}>
                         <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                         <XAxis dataKey="funil" tickFormatter={(value) => abbreviateLabel(String(value), 14)} />
                         <YAxis tickFormatter={(value) => `${value}%`} />
-                        <Tooltip formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Win rate']} />
-                        <Bar dataKey="win_rate" name="Win rate" fill="#13875f" radius={[5, 5, 0, 0]} />
+                        <Tooltip
+                          formatter={(value, _name, item) => {
+                            const row = item.payload as {
+                              ganhas?: number
+                              perdidas?: number
+                              fechadas?: number
+                              abertas?: number
+                              leads_periodo?: number
+                              win_rate?: number
+                            }
+                            return [
+                              `${Number(value).toFixed(1)}% | ${formatNumber(row.ganhas)} ganhas / ${formatNumber(row.leads_periodo)} leads | win rate fechados ${Number(row.win_rate ?? 0).toFixed(1)}% (${formatNumber(row.fechadas)} fechadas)`,
+                              'Conversao',
+                            ]
+                          }}
+                        />
+                        <Bar dataKey="conversion_rate" name="Conversao" fill="#13875f" radius={[5, 5, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </ChartFrame>

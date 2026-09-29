@@ -151,7 +151,16 @@ export type DashboardSummary = {
       leads_sem_proxima_tarefa: number
       leads_sem_proxima_tarefa_pct: number | null
     }
-    win_rate_by_funnel?: Array<{ funil: string; ganhas: number; perdidas: number; win_rate: number }>
+    win_rate_by_funnel?: Array<{
+      funil: string
+      ganhas: number
+      perdidas: number
+      fechadas: number
+      abertas: number
+      leads_periodo: number
+      conversion_rate: number
+      win_rate: number
+    }>
     ranking_basis?: string
     region_dimension?: Array<{ colaborador: string; funcao: string; regiao_polo: string }>
     ranking_colaboradores?: Array<{

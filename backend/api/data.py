@@ -1330,6 +1330,39 @@ def attendance_summary_from_facts(date_from: date | None = None, date_to: date |
                 raw_events_count = int(cur.fetchone()[0] or 0)
                 cur.execute("select count(*) from public.atendimento_evento_resposta")
                 linked_events_count = int(cur.fetchone()[0] or 0)
+                outcome_date_filter = []
+                outcome_params: list[Any] = []
+                created_date_filter = []
+                created_params: list[Any] = []
+                if date_from:
+                    outcome_date_filter.append("f.closed_at_kommo::date >= %s")
+                    outcome_params.append(date_from)
+                    created_date_filter.append("(f.created_at_kommo is null or f.created_at_kommo::date >= %s)")
+                    created_params.append(date_from)
+                if date_to:
+                    outcome_date_filter.append("f.closed_at_kommo::date <= %s")
+                    outcome_params.append(date_to)
+                    created_date_filter.append("(f.created_at_kommo is null or f.created_at_kommo::date <= %s)")
+                    created_params.append(date_to)
+                outcome_sql = " and " + " and ".join(outcome_date_filter) if outcome_date_filter else ""
+                created_sql = " and " + " and ".join(created_date_filter) if created_date_filter else ""
+                cur.execute(
+                    f"""
+                    select
+                      coalesce(p.nome, 'Sem funil') as funil,
+                      count(distinct f.lead_id) filter (where f.is_ganho and f.closed_at_kommo is not null {outcome_sql}) as ganhas,
+                      count(distinct f.lead_id) filter (where f.is_perdido and f.closed_at_kommo is not null {outcome_sql}) as perdidas,
+                      count(distinct f.lead_id) filter (where f.is_aberto {created_sql}) as abertos,
+                      count(distinct f.lead_id) filter (where true {created_sql}) as leads_periodo
+                    from public.fato_atendimento_lead f
+                    left join public.dim_kommo_pipeline p on p.pipeline_id = f.pipeline_id
+                    where f.excluido = false
+                    group by coalesce(p.nome, 'Sem funil')
+                    order by funil
+                    """,
+                    [*outcome_params, *outcome_params, *created_params, *created_params],
+                )
+                win_rate_funnel_rows = cur.fetchall()
             except Exception:
                 cur.connection.rollback()
                 return None
@@ -1341,8 +1374,6 @@ def attendance_summary_from_facts(date_from: date | None = None, date_to: date |
     collaborator_metrics: dict[str, dict[str, Any]] = defaultdict(new_attendance_metric)
     collaborator_meta: dict[str, dict[str, str]] = {}
     region_metrics: dict[str, dict[str, Any]] = defaultdict(new_attendance_metric)
-    wins_by_funnel: dict[str, int] = defaultdict(int)
-    losses_by_funnel: dict[str, int] = defaultdict(int)
     response_waits: list[float] = []
     response_valid_count = 0
     fast_5_count = 0
@@ -1398,10 +1429,6 @@ def attendance_summary_from_facts(date_from: date | None = None, date_to: date |
                     metric["abertos_com_tarefa"].add(lead_id)
                 if value > 0:
                     metric["pipeline_valores"][lead_id] = value
-        if is_ganho:
-            wins_by_funnel[funil] += 1
-        if is_perdido:
-            losses_by_funnel[funil] += 1
         if sla_valido and espera_minutos is not None:
             wait_float = float(espera_minutos)
             response_waits.append(wait_float)
@@ -1428,15 +1455,17 @@ def attendance_summary_from_facts(date_from: date | None = None, date_to: date |
     ranking_regioes.sort(key=lambda item: (item["ganhas"], item["win_rate"] or 0, item["leads"]), reverse=True)
 
     win_rate_by_funnel = []
-    for funil in sorted(set(wins_by_funnel) | set(losses_by_funnel)):
-        wins = wins_by_funnel.get(funil, 0)
-        losses = losses_by_funnel.get(funil, 0)
+    for funil, wins, losses, abertos, leads_periodo in win_rate_funnel_rows:
         denominator = wins + losses
         win_rate_by_funnel.append(
             {
                 "funil": funil,
                 "ganhas": wins,
                 "perdidas": losses,
+                "fechadas": denominator,
+                "abertas": abertos,
+                "leads_periodo": leads_periodo,
+                "conversion_rate": (wins / leads_periodo * 100) if leads_periodo else 0,
                 "win_rate": (wins / denominator * 100) if denominator else 0,
             }
         )
