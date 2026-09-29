@@ -39,6 +39,8 @@ PENDING_MARKET_SOURCES = (
     "ANFAVEA",
 )
 
+STALE_REFRESH_MINUTES = 30
+
 
 RefreshStatus = Literal["queued", "running", "succeeded", "partial", "failed", "skipped"]
 
@@ -115,9 +117,13 @@ class DashboardRefreshManager:
     ) -> DashboardRefreshJob:
         start = date_from or date(date.today().year, 1, 1)
         end = date_to or date.today()
+        await asyncio.to_thread(self._mark_stale_jobs)
+        stored = await asyncio.to_thread(self._stored_jobs)
         async with self._lock:
             if self._current_job and self._current_job.status in {"queued", "running"}:
                 return self._current_job
+            if stored.get("current"):
+                return self._job_from_payload(stored["current"])
 
             job = DashboardRefreshJob(
                 job_id=str(uuid.uuid4()),
@@ -270,6 +276,12 @@ class DashboardRefreshManager:
                 "error": None if process.returncode == 0 else (stderr or stdout)[-2000:],
             }
         except asyncio.TimeoutError:
+            if "process" in locals() and process.returncode is None:
+                process.kill()
+                try:
+                    await process.communicate()
+                except Exception:
+                    pass
             return {
                 "return_code": -1,
                 "stdout_tail": "",
@@ -419,11 +431,36 @@ class DashboardRefreshManager:
                     "finished_at": step.finished_at,
                     "return_code": step.return_code,
                     "error": step.error,
-                    "result": step.result,
                 }
                 for step in job.steps
             ],
         }
+
+    @staticmethod
+    def _job_from_payload(payload: dict[str, Any]) -> DashboardRefreshJob:
+        return DashboardRefreshJob(
+            job_id=payload["job_id"],
+            mode=payload["mode"],
+            status=payload["status"],
+            date_from=payload["date_from"],
+            date_to=payload["date_to"],
+            created_at=payload["created_at"],
+            started_at=payload.get("started_at"),
+            finished_at=payload.get("finished_at"),
+            message=payload.get("message") or "",
+            steps=[
+                RefreshStep(
+                    key=step["key"],
+                    label=step["label"],
+                    status=step["status"],
+                    started_at=step.get("started_at"),
+                    finished_at=step.get("finished_at"),
+                    return_code=step.get("return_code"),
+                    error=step.get("error"),
+                )
+                for step in payload.get("steps", [])
+            ],
+        )
 
     @staticmethod
     def _parse_last_json(stdout: str) -> dict[str, Any] | None:
@@ -539,6 +576,7 @@ class DashboardRefreshManager:
     def _stored_jobs(self) -> dict[str, Any]:
         env = load_env()
         try:
+            self._mark_stale_jobs()
             with connect_database(env) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -557,7 +595,7 @@ class DashboardRefreshManager:
                     cur.execute(
                         """
                         select job_id::text, step_index, step_key, label, status, started_at, finished_at,
-                               return_code, error, result
+                               return_code, error
                         from public.dashboard_refresh_steps
                         where job_id::text = any(%s)
                         order by job_id, step_index
@@ -575,7 +613,6 @@ class DashboardRefreshManager:
                                 "finished_at": row[6].isoformat() if row[6] else None,
                                 "return_code": row[7],
                                 "error": row[8],
-                                "result": row[9],
                             }
                         )
                     jobs = [
@@ -597,6 +634,42 @@ class DashboardRefreshManager:
                     return {"current": current, "history": jobs}
         except Exception:
             return {"current": None, "history": []}
+
+    def _mark_stale_jobs(self) -> None:
+        env = load_env()
+        try:
+            with connect_database(env) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        update public.dashboard_refresh_steps s
+                        set status = case when s.status = 'running' then 'failed' else 'skipped' end,
+                            finished_at = coalesce(s.finished_at, now()),
+                            error = coalesce(s.error, 'Job interrompido antes de concluir. O processo web pode ter reiniciado ou excedido recursos.'),
+                            updated_at = now()
+                        from public.dashboard_refresh_runs r
+                        where s.job_id = r.job_id
+                          and r.status in ('queued', 'running')
+                          and r.updated_at < now() - (%s || ' minutes')::interval
+                          and s.status in ('queued', 'running')
+                        """,
+                        (STALE_REFRESH_MINUTES,),
+                    )
+                    cur.execute(
+                        """
+                        update public.dashboard_refresh_runs
+                        set status = 'failed',
+                            finished_at = coalesce(finished_at, now()),
+                            message = 'Atualizacao interrompida antes de concluir. Inicie uma nova atualizacao.',
+                            updated_at = now()
+                        where status in ('queued', 'running')
+                          and updated_at < now() - (%s || ' minutes')::interval
+                        """,
+                        (STALE_REFRESH_MINUTES,),
+                    )
+                    conn.commit()
+        except Exception:
+            return
 
 
 dashboard_refresh_manager = DashboardRefreshManager()
