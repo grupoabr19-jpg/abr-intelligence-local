@@ -28,7 +28,6 @@ ASTER_REFRESH_REPORTS = (
 
 PENDING_MARKET_SOURCES = (
     "ANEEL",
-    "Comex Stat",
     "CAGED",
     "PNCP",
     "ObrasGov",
@@ -186,6 +185,7 @@ class DashboardRefreshManager:
         steps = [
             RefreshStep("market_registry", "Mercado: verificar fontes configuradas"),
             RefreshStep("market_api", "Mercado API: BCB e IBGE"),
+            RefreshStep("market_comex", "Mercado Comex: importacoes por NCM aprovado"),
             RefreshStep("market_public", "Mercado publico: Aco Brasil, CNI e INDA"),
             RefreshStep("kommo_collect", "Kommo API: leads, tarefas e eventos"),
             RefreshStep("atendimento_facts", "Atendimento: fatos, SLA e rankings"),
@@ -218,6 +218,8 @@ class DashboardRefreshManager:
                 "--date-to",
                 job.date_to,
             ]
+        if key == "market_comex":
+            return [sys.executable, str(ROOT / "tools" / "collect_market_comex.py")]
         if key == "market_public":
             return [sys.executable, str(ROOT / "tools" / "collect_market_sources.py"), "--source", "all"]
         if key == "kommo_collect":
@@ -347,6 +349,13 @@ class DashboardRefreshManager:
                 "required_for_daily": False,
                 "database": "core",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key in ('bcb_dolar_ptax', 'ibge_pim_sidra', 'ibge_construcao_sidra')",
+            },
+            {
+                "key": "market_comex",
+                "label": "Mercado Comex - importacoes por NCM aprovado",
+                "required_for_daily": False,
+                "database": "core",
+                "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key = 'comex_stat_ncm'",
             },
             {
                 "key": "market_public",
