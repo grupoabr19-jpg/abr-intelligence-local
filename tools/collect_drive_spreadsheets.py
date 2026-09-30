@@ -43,6 +43,17 @@ GENERATED_ARCHIVE_SUFFIXES = (
     ".jsonl",
     ".parquet",
 )
+DEFAULT_SOURCE_FOLDER_ID = "1e-ZFOdh5PpIOjX1xFU87uhIKHveL5EpU"
+DEFAULT_SOURCE_FOLDER_URL = f"https://drive.google.com/drive/folders/{DEFAULT_SOURCE_FOLDER_ID}"
+BUSINESS_SPREADSHEET_KEYWORDS = ("margem", "gabr", "gest", "produ", "ranking")
+TRUTHY = {"1", "true", "t", "yes", "y", "sim", "s"}
+
+
+def env_bool(env: dict[str, str], key: str, default: bool = False) -> bool:
+    raw = env.get(key)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in TRUTHY
 
 
 def json_default(value: Any) -> str:
@@ -68,6 +79,10 @@ def is_supported_spreadsheet(file_info: dict[str, Any]) -> bool:
     lowered = name.lower()
     if any(lowered.endswith(suffix) for suffix in GENERATED_ARCHIVE_SUFFIXES):
         return False
+    if lowered.startswith("_") or "nao excluir" in lowered or "não excluir" in lowered:
+        return False
+    if not any(keyword in lowered for keyword in BUSINESS_SPREADSHEET_KEYWORDS):
+        return False
     suffix = Path(name).suffix.lower()
     return mime_type == GOOGLE_SHEETS_MIME or mime_type == XLSX_MIME or mime_type in CSV_MIME_TYPES or suffix in SUPPORTED_EXTENSIONS
 
@@ -90,6 +105,33 @@ def list_spreadsheets_recursive(token: str, root_folder_id: str, *, max_depth: i
                 child["parent_id"] = folder_id
                 found.append(child)
     return found
+
+
+def configured_source_folders(env: dict[str, str], fallback_folder_id: str) -> list[dict[str, str]]:
+    raw_ids = [
+        env.get("DRIVE_SPREADSHEET_SOURCE_FOLDER_ID", "").strip(),
+        env.get("GOOGLE_DRIVE_SPREADSHEET_FOLDER_ID", "").strip(),
+    ]
+    raw_urls = [
+        env.get("DRIVE_SPREADSHEET_SOURCE_FOLDER_URL", "").strip(),
+        env.get("GOOGLE_DRIVE_SPREADSHEET_FOLDER_URL", "").strip(),
+    ]
+    folders: list[dict[str, str]] = []
+    for folder_id, folder_url in zip(raw_ids, raw_urls):
+        if folder_id:
+            folders.append({"id": folder_id, "url": folder_url or f"https://drive.google.com/drive/folders/{folder_id}", "role": "source"})
+    if not folders and DEFAULT_SOURCE_FOLDER_ID:
+        folders.append({"id": DEFAULT_SOURCE_FOLDER_ID, "url": DEFAULT_SOURCE_FOLDER_URL, "role": "source_default"})
+    if not folders and fallback_folder_id:
+        folders.append({"id": fallback_folder_id, "url": env.get("ARCHIVE_GOOGLE_DRIVE_FOLDER_URL", ""), "role": "archive_fallback"})
+    deduped: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for folder in folders:
+        if folder["id"] in seen:
+            continue
+        seen.add(folder["id"])
+        deduped.append(folder)
+    return deduped
 
 
 def already_processed(cur: Any, file_info: dict[str, Any]) -> bool:
@@ -222,7 +264,10 @@ def worksheet_rows(path: Path, *, drive_file_id: str, drive_file_name: str, sync
     detected = detect_type(drive_file_name, sheet_names)
 
     for worksheet in workbook.worksheets:
-        preview_rows = list(worksheet.iter_rows(min_row=1, max_row=min(12, worksheet.max_row), values_only=True))
+        max_row = worksheet.max_row or 0
+        if max_row < 1:
+            continue
+        preview_rows = list(worksheet.iter_rows(min_row=1, max_row=min(12, max_row), values_only=True))
         header_row = infer_header_row(path.name, worksheet.title, preview_rows)
         header_values = next(worksheet.iter_rows(min_row=header_row, max_row=header_row, values_only=True), ())
         headers = [clean_cell(value) or f"coluna_{index + 1}" for index, value in enumerate(header_values)]
@@ -323,38 +368,70 @@ def csv_rows(path: Path, *, drive_file_id: str, drive_file_name: str, sync_id: s
 
 
 def insert_staging_rows(cur: Any, rows: list[dict[str, Any]]) -> int:
+    if not rows:
+        return 0
     inserted = 0
-    for row in rows:
+    cur.execute(
+        """
+        create temporary table if not exists tmp_drive_spreadsheet_rows (
+          source_system text,
+          source_id text,
+          entidade text,
+          payload_original jsonb,
+          dados_transformados jsonb,
+          sync_id text,
+          hash_registro text,
+          tabela_destino text
+        ) on commit drop
+        """
+    )
+    cur.execute("truncate table tmp_drive_spreadsheet_rows")
+    batch_size = 5000
+    for start in range(0, len(rows), batch_size):
+        batch = rows[start : start + batch_size]
+        cur.executemany(
+            """
+            insert into tmp_drive_spreadsheet_rows(
+              source_system, source_id, entidade, payload_original, dados_transformados,
+              sync_id, hash_registro, tabela_destino
+            )
+            values (%s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
+            """,
+            [
+                (
+                    row["source_system"],
+                    row["source_id"],
+                    row["entidade"],
+                    Json(row["payload_original"]),
+                    Json(row["dados_transformados"]),
+                    row["sync_id"],
+                    row["hash_registro"],
+                    row["tabela_destino"],
+                )
+                for row in batch
+            ],
+        )
         cur.execute(
             """
             insert into public.staging_dados(
               source_system, source_id, entidade, payload_original, dados_transformados,
               sync_id, hash_registro, status_validacao, tabela_destino
             )
-            select %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, 'valido', %s
-            where not exists (
-              select 1
-              from public.staging_dados
-              where source_system = %s
-                and source_id = %s
-                and hash_registro = %s
-            )
-            """,
-            (
-                row["source_system"],
-                row["source_id"],
-                row["entidade"],
-                Json(row["payload_original"]),
-                Json(row["dados_transformados"]),
-                row["sync_id"],
-                row["hash_registro"],
-                row["tabela_destino"],
-                row["source_system"],
-                row["source_id"],
-                row["hash_registro"],
-            ),
+            select
+              t.source_system,
+              t.source_id,
+              t.entidade,
+              t.payload_original,
+              t.dados_transformados,
+              t.sync_id,
+              t.hash_registro,
+              'valido',
+              t.tabela_destino
+            from tmp_drive_spreadsheet_rows t
+            """
         )
         inserted += int(cur.rowcount or 0)
+        cur.execute("truncate table tmp_drive_spreadsheet_rows")
     return inserted
 
 
@@ -386,7 +463,16 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
         raise RuntimeError("Credencial Google OAuth/Service Account nao configurada para Drive.")
 
     sync_id = f"drive_spreadsheets_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-    files = list_spreadsheets_recursive(token, config.drive_folder_id, max_depth=max_depth)
+    store_raw_rows = env_bool(env, "DRIVE_SPREADSHEET_STORE_RAW_ROWS", False)
+    source_folders = configured_source_folders(env, config.drive_folder_id)
+    files: list[dict[str, Any]] = []
+    for folder in source_folders:
+        folder_files = list_spreadsheets_recursive(token, folder["id"], max_depth=max_depth)
+        for file_info in folder_files:
+            file_info["source_folder_id"] = folder["id"]
+            file_info["source_folder_url"] = folder["url"]
+            file_info["source_folder_role"] = folder["role"]
+        files.extend(folder_files)
     files = sorted(files, key=lambda item: item.get("modifiedTime") or "", reverse=True)
     if max_files is not None:
         files = files[:max_files]
@@ -401,13 +487,14 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
             cur.execute(
                 """
                 insert into public.fontes_dados(nome, tipo, classificacao, status, frequencia_sincronizacao, url, descricao)
-                values ('Google Drive Archive', 'csv_upload', 'secundaria', 'ativa', 'diaria', %s, 'Pasta archive monitorada automaticamente para planilhas.')
+                values ('Google Drive Planilhas Brutas', 'csv_upload', 'secundaria', 'ativa', 'diaria', %s, 'Pasta de entrada monitorada automaticamente para planilhas brutas.')
                 on conflict (nome) do update set
                   status = 'ativa',
                   frequencia_sincronizacao = 'diaria',
+                  url = excluded.url,
                   atualizado_em = now()
                 """,
-                (env.get("ARCHIVE_GOOGLE_DRIVE_FOLDER_URL") or config.drive_folder_id,),
+                (source_folders[0]["url"] if source_folders else env.get("ARCHIVE_GOOGLE_DRIVE_FOLDER_URL") or config.drive_folder_id,),
             )
             for file_info in files:
                 if already_processed(cur, file_info):
@@ -435,7 +522,7 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
                             drive_file_name=file_info.get("name") or file_info["id"],
                             sync_id=sync_id,
                         )
-                    inserted = insert_staging_rows(cur, staging_rows) if execute else 0
+                    inserted = insert_staging_rows(cur, staging_rows) if execute and store_raw_rows else 0
                     finish_ingestion(
                         cur,
                         ingestion_id,
@@ -454,6 +541,7 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
                             "detected_type": detected,
                             "rows_read": len(staging_rows),
                             "rows_inserted": inserted,
+                            "raw_rows_stored": bool(store_raw_rows),
                             "local_path": str(local_path.relative_to(ROOT)),
                         }
                     )
@@ -469,10 +557,10 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
                     registros_erro = %s,
                     status = %s,
                     atualizado_em = now()
-                where nome = 'Google Drive Archive'
+                where nome = 'Google Drive Planilhas Brutas'
                 """,
                 (
-                    sum(item["rows_inserted"] for item in processed),
+                    sum(item["rows_read"] for item in processed),
                     len(errors),
                     "erro" if errors and not processed else "ativa",
                 ),
@@ -485,6 +573,8 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
     return {
         "status": "sucesso" if not errors else "parcial",
         "sync_id": sync_id,
+        "raw_rows_stored": bool(store_raw_rows),
+        "source_folders": source_folders,
         "files_found": len(files),
         "processed": processed,
         "skipped": skipped,
@@ -493,7 +583,7 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Monitora a pasta Archive do Google Drive e ingere planilhas novas.")
+    parser = argparse.ArgumentParser(description="Monitora a pasta de entrada do Google Drive e ingere planilhas novas.")
     parser.add_argument("--dry-run", action="store_true", help="Baixa e le planilhas, mas nao insere linhas em staging_dados.")
     parser.add_argument("--max-files", type=int, default=None, help="Limita quantidade de arquivos para diagnostico.")
     parser.add_argument("--max-depth", type=int, default=DEFAULT_SCAN_DEPTH, help="Profundidade maxima de subpastas no Drive.")

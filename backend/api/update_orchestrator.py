@@ -208,7 +208,7 @@ class DashboardRefreshManager:
             RefreshStep("kommo_collect", "Kommo API: leads, tarefas e eventos"),
             RefreshStep("atendimento_facts", "Atendimento: fatos, SLA e rankings"),
             RefreshStep("atendimento_contract", "Atendimento: contrato oficial"),
-            RefreshStep("drive_spreadsheets", "Google Drive Archive: planilhas novas"),
+            RefreshStep("drive_spreadsheets", "Google Drive: planilhas brutas novas"),
         ]
         for query_id in ASTER_REFRESH_REPORTS:
             steps.append(RefreshStep(f"aster_{query_id}", f"Aster ERP: relatorio {query_id}"))
@@ -383,10 +383,10 @@ class DashboardRefreshManager:
             },
             {
                 "key": "drive_spreadsheets",
-                "label": "Google Drive Archive - planilhas",
+                "label": "Google Drive - planilhas brutas",
                 "required_for_daily": True,
                 "database": "core",
-                "sql": "select ultima_sincronizacao from public.fontes_dados where nome = 'Google Drive Archive'",
+                "sql": "select ultima_sincronizacao from public.fontes_dados where nome in ('Google Drive Planilhas Brutas', 'Google Drive Archive') order by ultima_sincronizacao desc nulls last limit 1",
             },
             {
                 "key": "market_api",
