@@ -27,7 +27,6 @@ ASTER_REFRESH_REPORTS = (
 )
 
 PENDING_MARKET_SOURCES = (
-    "ObrasGov",
     "ABRAMAT",
     "ANFAVEA",
 )
@@ -183,6 +182,7 @@ class DashboardRefreshManager:
             RefreshStep("market_api", "Mercado API: BCB e IBGE"),
             RefreshStep("market_aneel", "Mercado ANEEL: geracao fotovoltaica"),
             RefreshStep("market_world_bank", "Mercado World Bank: contexto macro"),
+            RefreshStep("market_obrasgov", "Mercado ObrasGov: projetos publicos"),
             RefreshStep("market_comex", "Mercado Comex: importacoes por NCM aprovado"),
             RefreshStep("market_gov", "Mercado governo: CAGED e PNCP configurados"),
             RefreshStep("market_public", "Mercado publico: Aco Brasil, CNI e INDA"),
@@ -223,6 +223,8 @@ class DashboardRefreshManager:
             return [sys.executable, str(ROOT / "tools" / "collect_market_aneel.py")]
         if key == "market_world_bank":
             return [sys.executable, str(ROOT / "tools" / "collect_market_world_bank.py")]
+        if key == "market_obrasgov":
+            return [sys.executable, str(ROOT / "tools" / "collect_market_obrasgov.py")]
         if key == "market_gov":
             return [sys.executable, str(ROOT / "tools" / "collect_market_gov_sources.py"), "--source", "all"]
         if key == "market_public":
@@ -377,6 +379,13 @@ class DashboardRefreshManager:
                 "required_for_daily": False,
                 "database": "core",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key = 'world_bank_wdi'",
+            },
+            {
+                "key": "market_obrasgov",
+                "label": "Mercado ObrasGov - projetos publicos",
+                "required_for_daily": False,
+                "database": "core",
+                "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key = 'obrasgov_projetos'",
             },
             {
                 "key": "market_gov",

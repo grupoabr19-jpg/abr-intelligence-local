@@ -181,6 +181,17 @@ SOURCES: tuple[SourceDefinition, ...] = (
         "https://datahelpdesk.worldbank.org/knowledgebase/articles/898581-api-basic-call-structures",
         "world_bank",
     ),
+    SourceDefinition(
+        "obrasgov_projetos",
+        "ObrasGov projetos",
+        "api",
+        "governo",
+        "diaria",
+        ("OBRASGOV_API_BASE_URL", "OBRASGOV_YEARS", "OBRASGOV_PAGE_SIZE", "OBRASGOV_MAX_PAGES"),
+        "https://api-publica.obrasgov.gestao.gov.br/obras",
+        "https://api-publica.obrasgov.gestao.gov.br/obras/docs",
+        "obrasgov",
+    ),
 )
 
 
@@ -323,6 +334,19 @@ def check_world_bank(client: httpx.Client, base_url: str) -> tuple[bool, dict[st
     return bool(records), metadata, None if records else "World Bank nao retornou registros no probe."
 
 
+def check_obrasgov(client: httpx.Client, base_url: str) -> tuple[bool, dict[str, Any], str | None]:
+    url = f"{base_url.rstrip('/')}/projeto-investimento"
+    response = client.get(url, params={"pagina": 1, "tamanho_da_pagina": 1})
+    metadata = {"status_code": response.status_code, "probe_url": str(response.url)}
+    if response.status_code >= 400:
+        return False, metadata, f"HTTP {response.status_code}"
+    payload = response.json()
+    records = payload.get("data") if isinstance(payload, dict) else []
+    metadata["records_seen"] = len(records or [])
+    metadata["total_items"] = payload.get("total_items") if isinstance(payload, dict) else None
+    return bool(records), metadata, None if records else "ObrasGov nao retornou registros no probe."
+
+
 def source_health(env: dict[str, str], client: httpx.Client, source: SourceDefinition) -> tuple[bool, bool, str, dict[str, Any], str | None]:
     url, configured = resolve_url(env, source)
     if not configured:
@@ -345,6 +369,8 @@ def source_health(env: dict[str, str], client: httpx.Client, source: SourceDefin
             reachable, metadata, error = check_pncp(client, url)
         elif source.health_kind == "world_bank":
             reachable, metadata, error = check_world_bank(client, url)
+        elif source.health_kind == "obrasgov":
+            reachable, metadata, error = check_obrasgov(client, url)
         else:
             reachable, metadata, error = http_ok(client, url)
     except Exception as exc:
