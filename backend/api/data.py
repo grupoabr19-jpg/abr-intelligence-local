@@ -1777,6 +1777,321 @@ def attendance_summary(date_from: date | None = None, date_to: date | None = Non
     }
 
 
+def market_decimal(value: Any) -> str:
+    if value is None:
+        return "0"
+    if isinstance(value, Decimal):
+        return f"{value:.6f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
+def market_timestamp(value: Any) -> str | None:
+    return value.isoformat() if value else None
+
+
+def market_registry_rows(cur: Any) -> list[dict[str, Any]]:
+    cur.execute(
+        """
+        select
+          source_key,
+          source_name,
+          category,
+          status,
+          configured,
+          reachable,
+          latest_reference_period,
+          last_row_count,
+          last_success_at,
+          error_message,
+          checked_at
+        from public.market_source_registry
+        order by
+          case status
+            when 'HEALTHY' then 1
+            when 'CONFIGURED' then 2
+            when 'ERROR' then 3
+            else 4
+          end,
+          source_key
+        """
+    )
+    return [
+        {
+            "source_key": row[0],
+            "source_name": row[1],
+            "category": row[2],
+            "status": row[3],
+            "configured": bool(row[4]),
+            "reachable": bool(row[5]),
+            "latest_reference_period": row[6],
+            "last_row_count": row[7] or 0,
+            "last_success_at": market_timestamp(row[8]),
+            "error_message": row[9],
+            "checked_at": market_timestamp(row[10]),
+        }
+        for row in cur.fetchall()
+    ]
+
+
+def market_latest_indicators(cur: Any, source_keys: list[str], limit: int = 12) -> list[dict[str, Any]]:
+    if not source_keys:
+        return []
+    cur.execute(
+        """
+        select source_key, indicador_key, indicador_nome, periodo_label, geografia, unidade, valor
+        from (
+          select
+            source_key,
+            indicador_key,
+            indicador_nome,
+            periodo_label,
+            geografia,
+            unidade,
+            valor,
+            row_number() over (
+              partition by source_key, indicador_key, coalesce(geografia, '')
+              order by periodo_inicio desc nulls last, coletado_em desc
+            ) as ordem
+          from public.mercado_indicadores
+          where source_key = any(%s)
+            and valor is not null
+        ) ranked
+        where ordem = 1
+        order by source_key, indicador_nome, geografia
+        limit %s
+        """,
+        (source_keys, limit),
+    )
+    return [
+        {
+            "source_key": row[0],
+            "indicator_key": row[1],
+            "name": row[2],
+            "period": row[3],
+            "geography": row[4],
+            "unit": row[5],
+            "value": market_decimal(row[6]),
+        }
+        for row in cur.fetchall()
+    ]
+
+
+def market_indicator_series(cur: Any, source_key: str, indicator_key: str, limit: int = 24) -> list[dict[str, Any]]:
+    cur.execute(
+        """
+        select periodo_inicio, periodo_label, avg(valor) as valor
+        from public.mercado_indicadores
+        where source_key = %s
+          and indicador_key = %s
+          and valor is not null
+        group by periodo_inicio, periodo_label
+        order by periodo_inicio desc nulls last
+        limit %s
+        """,
+        (source_key, indicator_key, limit),
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "period": row[0].isoformat() if row[0] else None,
+            "period_label": row[1],
+            "value": market_decimal(row[2]),
+        }
+        for row in reversed(rows)
+    ]
+
+
+def market_solar_summary(cur: Any) -> dict[str, Any]:
+    cur.execute("select max(periodo_inicio) from public.fact_solar_monthly")
+    latest_period = cur.fetchone()[0]
+    if not latest_period:
+        return {}
+
+    cur.execute(
+        """
+        select
+          coalesce(sum(new_mw), 0),
+          coalesce(sum(novas_instalacoes), 0)
+        from public.fact_solar_monthly
+        where periodo_inicio >= (%s::date - interval '11 months')
+        """,
+        (latest_period,),
+    )
+    last_12_new_mw, last_12_installations = cur.fetchone()
+
+    cur.execute(
+        """
+        select coalesce(sum(cumulative_mw), 0)
+        from public.fact_solar_monthly
+        where periodo_inicio = %s
+        """,
+        (latest_period,),
+    )
+    cumulative_mw = cur.fetchone()[0]
+
+    cur.execute(
+        """
+        select periodo_inicio, coalesce(sum(new_mw), 0), coalesce(sum(cumulative_mw), 0), coalesce(sum(novas_instalacoes), 0)
+        from public.fact_solar_monthly
+        group by periodo_inicio
+        order by periodo_inicio desc
+        limit 24
+        """
+    )
+    monthly = [
+        {
+            "period": row[0].isoformat(),
+            "period_label": row[0].strftime("%m/%y"),
+            "new_mw": market_decimal(row[1]),
+            "cumulative_mw": market_decimal(row[2]),
+            "installations": row[3] or 0,
+        }
+        for row in reversed(cur.fetchall())
+    ]
+
+    cur.execute(
+        """
+        select uf, coalesce(sum(new_mw), 0), coalesce(sum(novas_instalacoes), 0)
+        from public.fact_solar_monthly
+        where periodo_inicio >= (%s::date - interval '11 months')
+        group by uf
+        order by sum(new_mw) desc nulls last
+        limit 10
+        """,
+        (latest_period,),
+    )
+    top_regions = [
+        {"uf": row[0], "new_mw": market_decimal(row[1]), "installations": row[2] or 0}
+        for row in cur.fetchall()
+    ]
+    return {
+        "latest_period": latest_period.isoformat(),
+        "kpis": {
+            "last_12_new_mw": market_decimal(last_12_new_mw),
+            "last_12_installations": int(last_12_installations or 0),
+            "cumulative_mw": market_decimal(cumulative_mw),
+        },
+        "monthly": monthly,
+        "top_regions": top_regions,
+    }
+
+
+def market_obrasgov_summary(cur: Any) -> dict[str, Any]:
+    cur.execute(
+        """
+        select
+          coalesce(sum(projetos), 0),
+          coalesce(sum(investimento_previsto), 0),
+          coalesce(sum(empregos_gerados), 0)
+        from public.fact_obrasgov_investments
+        """
+    )
+    projetos, investimento, empregos = cur.fetchone()
+
+    cur.execute(
+        """
+        select uf, coalesce(sum(projetos), 0), coalesce(sum(investimento_previsto), 0)
+        from public.fact_obrasgov_investments
+        group by uf
+        order by sum(investimento_previsto) desc nulls last
+        limit 10
+        """
+    )
+    top_regions = [
+        {
+            "uf": row[0],
+            "projects": row[1] or 0,
+            "investment": market_decimal(row[2]),
+        }
+        for row in cur.fetchall()
+    ]
+    return {
+        "kpis": {
+            "projects": int(projetos or 0),
+            "investment": market_decimal(investimento),
+            "jobs": market_decimal(empregos),
+        },
+        "top_regions": top_regions,
+    }
+
+
+def market_summary() -> dict[str, Any]:
+    env = load_env()
+    with connect_database(env) as conn:
+        with conn.cursor() as cur:
+            sources = market_registry_rows(cur)
+            healthy = {
+                row["source_key"]
+                for row in sources
+                if row["status"] == "HEALTHY" and row["configured"] and row["reachable"] and row["last_row_count"] > 0
+            }
+
+            available_tabs = ["market-overview"]
+            if healthy & {"aco_brasil_estatistica_mensal", "inda_estatisticas"}:
+                available_tabs.append("steel-market")
+            if healthy & {"ibge_construcao_sidra", "cni_sondagem_construcao", "obrasgov_projetos"}:
+                available_tabs.append("construction")
+            if healthy & {"ibge_pim_sidra", "cni_sondagem_industrial"}:
+                available_tabs.append("industry")
+            if "aneel_dados_abertos" in healthy:
+                available_tabs.append("solar")
+            if "comex_stat_ncm" in healthy:
+                available_tabs.extend(["market-prices", "imports"])
+
+            steel_sources = [key for key in ("aco_brasil_estatistica_mensal", "inda_estatisticas") if key in healthy]
+            construction_sources = [key for key in ("ibge_construcao_sidra", "cni_sondagem_construcao") if key in healthy]
+            industry_sources = [key for key in ("ibge_pim_sidra", "cni_sondagem_industrial") if key in healthy]
+
+            steel_indicators = market_latest_indicators(cur, steel_sources, limit=16)
+            construction_indicators = market_latest_indicators(cur, construction_sources, limit=16)
+            industry_indicators = market_latest_indicators(cur, industry_sources, limit=16)
+            macro_indicators = market_latest_indicators(cur, ["world_bank_wdi"] if "world_bank_wdi" in healthy else [], limit=8)
+
+            steel_series = market_indicator_series(cur, "aco_brasil_estatistica_mensal", "aco_brasil_consumo_aparente_total")
+            industry_series = market_indicator_series(cur, "cni_sondagem_industrial", "cni_industria_expectativa_demanda")
+            construction_series = market_indicator_series(cur, "ibge_construcao_sidra", "ibge_construcao_indice")
+
+            solar = market_solar_summary(cur) if "aneel_dados_abertos" in healthy else {}
+            public_works = market_obrasgov_summary(cur) if "obrasgov_projetos" in healthy else {}
+
+    return {
+        "sources": sources,
+        "healthy_sources": sorted(healthy),
+        "available_tabs": available_tabs,
+        "overview": {
+            "healthy_count": len(healthy),
+            "configured_count": len([row for row in sources if row["configured"]]),
+            "error_count": len([row for row in sources if row["status"] == "ERROR"]),
+            "latest_periods": [
+                {
+                    "source_key": row["source_key"],
+                    "source_name": row["source_name"],
+                    "period": row["latest_reference_period"],
+                    "rows": row["last_row_count"],
+                    "status": row["status"],
+                }
+                for row in sources
+                if row["status"] == "HEALTHY"
+            ],
+            "macro_indicators": macro_indicators,
+        },
+        "steel_market": {
+            "indicators": steel_indicators,
+            "series": steel_series,
+        },
+        "construction": {
+            "indicators": construction_indicators,
+            "series": construction_series,
+            "public_works": public_works,
+        },
+        "industry": {
+            "indicators": industry_indicators,
+            "series": industry_series,
+        },
+        "solar": solar,
+    }
+
+
 def internal_dashboard_summary(
     date_from: date | None = None,
     date_to: date | None = None,
@@ -1865,6 +2180,11 @@ def internal_dashboard_summary(
             warnings.append(str(attendance.get("message", "Dados de atendimento ainda sem granularidade suficiente.")))
     except BaseException as exc:
         warnings.append(f"Resumo de atendimento indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+    market: dict[str, Any] = {}
+    try:
+        market = market_summary()
+    except BaseException as exc:
+        warnings.append(f"Resumo de mercado indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
 
     return {
         "domain": "internal",
@@ -1892,6 +2212,7 @@ def internal_dashboard_summary(
         "recent_history": history,
         "sales_summary": sales_summary,
         "attendance_summary": attendance,
+        "market_summary": market,
         "sales_regions": regions,
         "warnings": warnings,
     }

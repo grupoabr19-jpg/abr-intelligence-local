@@ -85,6 +85,7 @@ type RankingMetric = 'ganhas' | 'win_rate' | 'follow_up' | 'sla_5' | 'pipeline_v
 type AttendanceSummary = NonNullable<DashboardSummary['attendance_summary']>
 type CollaboratorRankingRow = NonNullable<AttendanceSummary['ranking_colaboradores']>[number]
 type RegionRankingRow = NonNullable<AttendanceSummary['ranking_regioes']>[number]
+type MarketSummary = NonNullable<DashboardSummary['market_summary']>
 
 function formatNumber(value: number | string | undefined) {
   const number = Number(value || 0)
@@ -160,6 +161,36 @@ function cleanSegmentName(value: string) {
     .replace('Ind�strias', 'Industrias')
     .replace('Dep�sito', 'Deposito')
     .replace('N�o', 'Nao')
+}
+
+function marketNumber(value: number | string | null | undefined, maximumFractionDigits = 1) {
+  const number = numericValue(value)
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits }).format(number)
+}
+
+function marketValue(value: number | string | null | undefined, unit?: string | null) {
+  const normalizedUnit = String(unit ?? '').trim()
+  if (normalizedUnit === '%') return percent(numericValue(value))
+  if (normalizedUnit.toLowerCase() === 'indice') return marketNumber(value, 2)
+  if (normalizedUnit.toLowerCase().includes('us$')) return `US$ ${marketNumber(value, 1)} mi`
+  if (normalizedUnit) return `${marketNumber(value, 1)} ${normalizedUnit}`
+  return marketNumber(value, 1)
+}
+
+function marketSourceShortName(sourceKey: string) {
+  const labels: Record<string, string> = {
+    aco_brasil_estatistica_mensal: 'Aco Brasil',
+    inda_estatisticas: 'INDA',
+    aneel_dados_abertos: 'ANEEL',
+    bcb_dolar_ptax: 'BCB',
+    cni_sondagem_construcao: 'CNI Construcao',
+    cni_sondagem_industrial: 'CNI Industria',
+    ibge_construcao_sidra: 'IBGE Construcao',
+    ibge_pim_sidra: 'IBGE PIM',
+    obrasgov_projetos: 'ObrasGov',
+    world_bank_wdi: 'World Bank',
+  }
+  return labels[sourceKey] ?? sourceKey
 }
 
 const MACRO_AREAS: Array<{ key: MacroArea; label: string; title: string }> = [
@@ -316,8 +347,21 @@ function App() {
   const reports = summary?.reports ?? []
   const areas = useMemo(() => Array.from(new Set(reports.map((item) => item.area))).sort(), [reports])
   const activeMacro = MACRO_AREAS.find((item) => item.key === macroArea) ?? MACRO_AREAS[0]
-  const activeTabs = TABS_BY_MACRO[macroArea]
+  const market = summary?.market_summary
+  const marketAvailableTabsKey = (market?.available_tabs ?? ['market-overview']).join('|')
+  const activeTabs = useMemo(() => {
+    const tabs = TABS_BY_MACRO[macroArea]
+    if (macroArea !== 'market') return tabs
+    const available = new Set((marketAvailableTabsKey || 'market-overview').split('|').filter(Boolean))
+    const filtered = tabs.filter((item) => available.has(item.key))
+    return filtered.length ? filtered : tabs.filter((item) => item.key === 'market-overview')
+  }, [macroArea, marketAvailableTabsKey])
   const activeTabLabel = activeTabs.find((item) => item.key === intelligenceTab)?.label ?? 'Visao'
+  useEffect(() => {
+    if (!activeTabs.some((item) => item.key === intelligenceTab)) {
+      setIntelligenceTab(activeTabs[0]?.key ?? DEFAULT_TAB_BY_MACRO[macroArea])
+    }
+  }, [activeTabs, intelligenceTab, macroArea])
   const filterCopy = {
     business: {
       search: 'Buscar cliente, vendedor, produto ou relatorio',
@@ -1568,8 +1612,8 @@ function App() {
         <UnavailableTab title={activeTabLabel} />
       )}
 
-      {macroArea === 'market' && intelligenceTab !== 'competition' && (
-        <UnavailableTab title={activeTabLabel} />
+      {macroArea === 'market' && (
+        <MarketTab summary={market} tab={intelligenceTab} title={activeTabLabel} />
       )}
 
       {macroArea === 'service' && intelligenceTab === 'service-overview' && (
@@ -1982,6 +2026,207 @@ function UnavailableTab({ title }: { title: string }) {
         </div>
       </Panel>
     </section>
+  )
+}
+
+function MarketTab({ summary, tab, title }: { summary?: MarketSummary; tab: IntelligenceTab; title: string }) {
+  if (!summary) return <UnavailableTab title={title} />
+
+  if (tab === 'market-overview') return <MarketOverview summary={summary} />
+  if (tab === 'steel-market') return <MarketIndicatorTab title="Mercado do Aco" icon={<BarChart3 size={17} />} data={summary.steel_market} unitFallback="mil t" />
+  if (tab === 'industry') return <MarketIndicatorTab title="Industria" icon={<Gauge size={17} />} data={summary.industry} unitFallback="indice" />
+  if (tab === 'construction') return <MarketConstructionTab summary={summary} />
+  if (tab === 'solar') return <MarketSolarTab summary={summary} />
+
+  return <UnavailableTab title={title} />
+}
+
+function MarketOverview({ summary }: { summary: MarketSummary }) {
+  const sourceRows = summary.sources.map((item) => [
+    marketSourceShortName(item.source_key),
+    item.status,
+    item.latest_reference_period ?? 'Sem periodo',
+    formatNumber(item.last_row_count),
+    item.last_success_at ? new Date(item.last_success_at).toLocaleString('pt-BR') : 'Sem carga',
+  ])
+  const periodRows = summary.overview.latest_periods.map((item) => [
+    marketSourceShortName(item.source_key),
+    item.period ?? 'Sem periodo',
+    formatNumber(item.rows),
+    item.status,
+  ])
+  const macroRows = summary.overview.macro_indicators.map((item) => [
+    item.name,
+    item.geography ?? 'BR',
+    item.period ?? 'Sem periodo',
+    marketValue(item.value, item.unit),
+  ])
+
+  return (
+    <>
+      <section className="kpi-grid">
+        <Kpi title="Fontes saudaveis" displayValue={formatNumber(summary.overview.healthy_count)} detail={`${formatNumber(summary.overview.configured_count)} fontes configuradas`} icon={<CheckCircle2 />} />
+        <Kpi title="Fontes com erro" displayValue={formatNumber(summary.overview.error_count)} detail="Nao exibidas como aba operacional" icon={<AlertTriangle />} />
+        <Kpi title="Abas ativas" displayValue={formatNumber(summary.available_tabs.length)} detail="Somente com fonte saudavel" icon={<TableProperties />} />
+        <Kpi title="Indicadores carregados" displayValue={formatNumber(summary.overview.latest_periods.reduce((sum, item) => sum + Number(item.rows || 0), 0))} detail="Linhas agregadas de mercado" icon={<Database />} />
+      </section>
+      <section className="dashboard-grid">
+        <Panel title="Ultimos periodos por fonte" icon={<CalendarDays size={17} />} wide>
+          <DataTable columns={['Fonte', 'Periodo', 'Linhas', 'Status']} rows={periodRows} empty="Nenhuma fonte saudavel carregada" />
+        </Panel>
+        {macroRows.length > 0 && (
+          <Panel title="Contexto macro" icon={<LineChartIcon size={17} />} wide>
+            <DataTable columns={['Indicador', 'Geografia', 'Periodo', 'Valor']} rows={macroRows} empty="Sem indicadores macro carregados" />
+          </Panel>
+        )}
+        <Panel title="Saude das fontes de mercado" icon={<Database size={17} />} wide>
+          <DataTable columns={['Fonte', 'Status', 'Periodo', 'Linhas', 'Ultima carga']} rows={sourceRows} empty="Registry de mercado vazio" />
+        </Panel>
+      </section>
+    </>
+  )
+}
+
+function MarketIndicatorTab({
+  title,
+  icon,
+  data,
+  unitFallback,
+}: {
+  title: string
+  icon: ReactNode
+  data?: { indicators: MarketSummary['overview']['macro_indicators']; series: Array<{ period_label: string | null; value: string }> }
+  unitFallback: string
+}) {
+  const indicators = data?.indicators ?? []
+  const series = (data?.series ?? []).map((item) => ({
+    period_label: item.period_label ?? 'Sem periodo',
+    value_numero: numericValue(item.value),
+  }))
+  if (!indicators.length && !series.length) return <UnavailableTab title={title} />
+
+  const kpis = indicators.slice(0, 4)
+  const rows = indicators.map((item) => [
+    marketSourceShortName(item.source_key),
+    item.name,
+    item.period ?? 'Sem periodo',
+    item.geography ?? 'BR',
+    marketValue(item.value, item.unit),
+  ])
+
+  return (
+    <>
+      {kpis.length > 0 && (
+        <section className="kpi-grid">
+          {kpis.map((item) => (
+            <Kpi
+              key={`${item.source_key}-${item.indicator_key}-${item.geography}`}
+              title={abbreviateLabel(item.name, 22)}
+              displayValue={marketValue(item.value, item.unit)}
+              detail={`${marketSourceShortName(item.source_key)} | ${item.period ?? 'Sem periodo'}`}
+              icon={<Gauge />}
+            />
+          ))}
+        </section>
+      )}
+      <section className="dashboard-grid">
+        {series.length > 0 && (
+          <Panel title={title} icon={icon} wide>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={series}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="period_label" />
+                  <YAxis tickFormatter={(value) => marketValue(String(value), unitFallback)} />
+                  <Tooltip formatter={(value) => [marketValue(String(value), unitFallback), title]} />
+                  <Line type="monotone" dataKey="value_numero" name={title} stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+        <Panel title="Indicadores carregados" icon={<TableProperties size={17} />} wide>
+          <DataTable columns={['Fonte', 'Indicador', 'Periodo', 'Geografia', 'Valor']} rows={rows} empty="Sem indicadores carregados" />
+        </Panel>
+      </section>
+    </>
+  )
+}
+
+function MarketConstructionTab({ summary }: { summary: MarketSummary }) {
+  const construction = summary.construction
+  const works = construction?.public_works
+  const worksRows = (works?.top_regions ?? []).map((item) => [
+    item.uf,
+    formatNumber(item.projects),
+    money(item.investment),
+  ])
+  return (
+    <>
+      {works?.kpis && (
+        <section className="kpi-grid">
+          <Kpi title="Projetos publicos" displayValue={formatNumber(works.kpis.projects)} detail="ObrasGov consolidado" icon={<CheckCircle2 />} />
+          <Kpi title="Investimento previsto" displayValue={money(works.kpis.investment)} detail="ObrasGov consolidado" icon={<CircleDollarSign />} />
+          <Kpi title="Empregos estimados" displayValue={formatNumber(works.kpis.jobs)} detail="Informado nos projetos" icon={<Gauge />} />
+          <Kpi title="Fontes ativas" displayValue={formatNumber(['ibge_construcao_sidra', 'cni_sondagem_construcao', 'obrasgov_projetos'].filter((key) => summary.healthy_sources.includes(key)).length)} detail="IBGE, CNI e ObrasGov" icon={<Database />} />
+        </section>
+      )}
+      <MarketIndicatorTab title="Construcao" icon={<BarChart3 size={17} />} data={construction} unitFallback="indice" />
+      {worksRows.length > 0 && (
+        <section className="dashboard-grid">
+          <Panel title="ObrasGov por UF" icon={<TableProperties size={17} />} wide>
+            <DataTable columns={['UF', 'Projetos', 'Investimento']} rows={worksRows} empty="Sem projetos carregados" />
+          </Panel>
+        </section>
+      )}
+    </>
+  )
+}
+
+function MarketSolarTab({ summary }: { summary: MarketSummary }) {
+  const solar = summary.solar
+  if (!solar?.kpis) return <UnavailableTab title="Solar" />
+  const monthly = (solar.monthly ?? []).map((item) => ({
+    ...item,
+    new_mw_numero: numericValue(item.new_mw),
+    cumulative_mw_numero: numericValue(item.cumulative_mw),
+  }))
+  const regionRows = (solar.top_regions ?? []).map((item) => [
+    item.uf,
+    marketValue(item.new_mw, 'MW'),
+    formatNumber(item.installations),
+  ])
+
+  return (
+    <>
+      <section className="kpi-grid">
+        <Kpi title="MW novos 12 meses" displayValue={marketValue(solar.kpis.last_12_new_mw, 'MW')} detail={`Atualizado ate ${monthLabel(solar.latest_period.slice(0, 7))}`} icon={<LineChartIcon />} />
+        <Kpi title="Instalacoes 12 meses" displayValue={formatNumber(solar.kpis.last_12_installations)} detail="ANEEL dados abertos" icon={<CheckCircle2 />} />
+        <Kpi title="Potencia acumulada" displayValue={marketValue(solar.kpis.cumulative_mw, 'MW')} detail="Soma nacional por UF" icon={<Gauge />} />
+        <Kpi title="UFs no recorte" displayValue={formatNumber(solar.top_regions?.length ?? 0)} detail="Top UFs por MW novo" icon={<TableProperties />} />
+      </section>
+      <section className="dashboard-grid">
+        <Panel title="Geracao solar distribuida" icon={<LineChartIcon size={17} />} wide>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <ComposedChart data={monthly}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="period_label" />
+                <YAxis yAxisId="left" tickFormatter={(value) => marketValue(String(value), 'MW')} />
+                <YAxis yAxisId="right" orientation="right" tickFormatter={(value) => marketNumber(value, 0)} />
+                <Tooltip formatter={(value, name) => [name === 'Instalacoes' ? formatNumber(String(value)) : marketValue(String(value), 'MW'), name]} />
+                <Legend verticalAlign="bottom" height={24} />
+                <Bar yAxisId="left" dataKey="new_mw_numero" name="MW novos" fill="#F18800" radius={[5, 5, 0, 0]} />
+                <Line yAxisId="right" type="monotone" dataKey="installations" name="Instalacoes" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </Panel>
+        <Panel title="Top UFs em solar" icon={<TableProperties size={17} />} wide>
+          <DataTable columns={['UF', 'MW novos 12 meses', 'Instalacoes']} rows={regionRows} empty="Sem ranking de UFs" />
+        </Panel>
+      </section>
+    </>
   )
 }
 

@@ -205,8 +205,70 @@ export type DashboardSummary = {
     event_types?: Array<{ tipo: string; eventos: number }>
     event_stats?: { raw_events: number; linked_events: number }
   }
+  market_summary?: {
+    sources: Array<{
+      source_key: string
+      source_name: string
+      category: string
+      status: string
+      configured: boolean
+      reachable: boolean
+      latest_reference_period: string | null
+      last_row_count: number
+      last_success_at: string | null
+      error_message: string | null
+      checked_at: string | null
+    }>
+    healthy_sources: string[]
+    available_tabs: string[]
+    overview: {
+      healthy_count: number
+      configured_count: number
+      error_count: number
+      latest_periods: Array<{ source_key: string; source_name: string; period: string | null; rows: number; status: string }>
+      macro_indicators: MarketIndicator[]
+    }
+    steel_market?: {
+      indicators: MarketIndicator[]
+      series: MarketSeriesPoint[]
+    }
+    construction?: {
+      indicators: MarketIndicator[]
+      series: MarketSeriesPoint[]
+      public_works?: {
+        kpis: { projects: number; investment: string; jobs: string }
+        top_regions: Array<{ uf: string; projects: number; investment: string }>
+      }
+    }
+    industry?: {
+      indicators: MarketIndicator[]
+      series: MarketSeriesPoint[]
+    }
+    solar?: {
+      latest_period: string
+      kpis: { last_12_new_mw: string; last_12_installations: number; cumulative_mw: string }
+      monthly: Array<{ period: string; period_label: string; new_mw: string; cumulative_mw: string; installations: number }>
+      top_regions: Array<{ uf: string; new_mw: string; installations: number }>
+    }
+  }
   sales_regions: Array<{ canal: string; regiao: string; linhas: number; valor_total: string }>
   warnings: string[]
+}
+
+export type MarketIndicator = {
+  source_key: string
+  indicator_key: string
+  name: string
+  period: string | null
+  geography: string | null
+  unit: string | null
+  value: string
+}
+
+export type MarketSeriesPoint = {
+  period: string | null
+  period_label: string | null
+  value: string
 }
 
 const DEFAULT_API_BASE_URL =
