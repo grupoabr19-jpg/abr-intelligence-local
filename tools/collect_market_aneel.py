@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 from backend.archive_storage import archive_records, require_drive_archive
 from tools.apply_migrations import connect_database, load_env
+from tools.market_indicator_quality import normalize_and_validate_indicators
 
 
 SOURCE_KEY = "aneel_dados_abertos"
@@ -246,28 +247,40 @@ def insert_market_indicators(cur: Any, rows: list[dict[str, Any]]) -> int:
         indicator_rows.extend(
             [
                 {
+                    "source_key": SOURCE_KEY,
                     "indicador_key": "aneel_solar_new_mw",
                     "indicador_nome": "ANEEL solar MW novos",
+                    "periodo_inicio": row["periodo_inicio"],
+                    "periodo_label": row["periodo_inicio"][:7],
+                    "geografia": row["uf"] or "BR",
                     "valor": row["new_mw"],
                     "unidade": "MW",
                     "dimensoes": dimensions,
-                    "row": row,
+                    "payload_original": row,
                 },
                 {
+                    "source_key": SOURCE_KEY,
                     "indicador_key": "aneel_solar_cumulative_mw",
                     "indicador_nome": "ANEEL solar MW acumulado",
+                    "periodo_inicio": row["periodo_inicio"],
+                    "periodo_label": row["periodo_inicio"][:7],
+                    "geografia": row["uf"] or "BR",
                     "valor": row["cumulative_mw"],
                     "unidade": "MW",
                     "dimensoes": dimensions,
-                    "row": row,
+                    "payload_original": row,
                 },
                 {
+                    "source_key": SOURCE_KEY,
                     "indicador_key": "aneel_solar_new_installations",
                     "indicador_nome": "ANEEL solar novas instalacoes",
+                    "periodo_inicio": row["periodo_inicio"],
+                    "periodo_label": row["periodo_inicio"][:7],
+                    "geografia": row["uf"] or "BR",
                     "valor": row["novas_instalacoes"],
                     "unidade": "instalacoes",
                     "dimensoes": dimensions,
-                    "row": row,
+                    "payload_original": row,
                 },
             ]
         )
@@ -281,6 +294,9 @@ def insert_market_indicators(cur: Any, rows: list[dict[str, Any]]) -> int:
         """,
         (SOURCE_KEY, min(periods), max(periods)),
     )
+    indicator_rows = normalize_and_validate_indicators(cur, indicator_rows)
+    if not indicator_rows:
+        return 0
     cur.executemany(
         """
         insert into public.mercado_indicadores(
@@ -291,16 +307,16 @@ def insert_market_indicators(cur: Any, rows: list[dict[str, Any]]) -> int:
         """,
         [
             (
-                SOURCE_KEY,
+                item["source_key"],
                 item["indicador_key"],
                 item["indicador_nome"],
-                item["row"]["periodo_inicio"],
-                item["row"]["periodo_inicio"][:7],
-                item["row"]["uf"] or "BR",
+                item["periodo_inicio"],
+                item["periodo_label"],
+                item["geografia"],
                 item["unidade"],
                 item["valor"],
                 json.dumps(item["dimensoes"], ensure_ascii=False),
-                json.dumps(item["row"], ensure_ascii=False),
+                json.dumps(item["payload_original"], ensure_ascii=False),
             )
             for item in indicator_rows
         ],

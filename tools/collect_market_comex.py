@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from backend.archive_storage import archive_records, require_drive_archive
 from tools.apply_migrations import connect_database, load_env
+from tools.market_indicator_quality import normalize_and_validate_indicators
 
 
 SOURCE_KEY = "comex_stat_ncm"
@@ -249,7 +250,7 @@ def refresh_fact(cur: Any, rows: list[dict[str, Any]], ncm_map: dict[str, dict[s
 def insert_indicators(cur: Any, fact_rows: list[dict[str, Any]]) -> int:
     if not fact_rows:
         return 0
-    indicator_rows = []
+    indicator_rows: list[dict[str, Any]] = []
     for row in fact_rows:
         dimensions = {
             "ncm": row["ncm"],
@@ -267,19 +268,22 @@ def insert_indicators(cur: Any, fact_rows: list[dict[str, Any]]) -> int:
             if value is None:
                 continue
             indicator_rows.append(
-                (
-                    SOURCE_KEY,
-                    key,
-                    name,
-                    row["periodo_inicio"],
-                    row["periodo_inicio"][:7],
-                    "BR",
-                    unit,
-                    value,
-                    json.dumps(dimensions, ensure_ascii=False),
-                    json.dumps(row, ensure_ascii=False),
-                )
+                {
+                    "source_key": SOURCE_KEY,
+                    "indicador_key": key,
+                    "indicador_nome": name,
+                    "periodo_inicio": row["periodo_inicio"],
+                    "periodo_label": row["periodo_inicio"][:7],
+                    "geografia": "BR",
+                    "unidade": unit,
+                    "valor": value,
+                    "dimensoes": dimensions,
+                    "payload_original": row,
+                }
             )
+    indicator_rows = normalize_and_validate_indicators(cur, indicator_rows)
+    if not indicator_rows:
+        return 0
     cur.executemany(
         """
         insert into public.mercado_indicadores(
@@ -288,7 +292,21 @@ def insert_indicators(cur: Any, fact_rows: list[dict[str, Any]]) -> int:
         )
         values (%s, %s, %s, %s::date, %s, %s, %s, %s, %s::jsonb, %s::jsonb, now())
         """,
-        indicator_rows,
+        [
+            (
+                row["source_key"],
+                row["indicador_key"],
+                row["indicador_nome"],
+                row["periodo_inicio"],
+                row["periodo_label"],
+                row.get("geografia", "BR"),
+                row["unidade"],
+                row["valor"],
+                json.dumps(row.get("dimensoes", {}), ensure_ascii=False),
+                json.dumps(row.get("payload_original", {}), ensure_ascii=False),
+            )
+            for row in indicator_rows
+        ],
     )
     return len(indicator_rows)
 

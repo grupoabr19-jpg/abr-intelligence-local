@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from backend.archive_storage import archive_records, require_drive_archive
 from tools.apply_migrations import connect_database, load_env
+from tools.market_indicator_quality import normalize_and_validate_indicators
 
 
 DEFAULT_TIMEOUT = 60
@@ -463,10 +464,23 @@ def delete_source_indicators(cur: Any, source_key: str, indicator_keys: list[str
 def insert_indicators(cur: Any, document: dict[str, Any], indicators: list[dict[str, Any]]) -> int:
     if not indicators:
         return 0
+    indicators = normalize_and_validate_indicators(
+        cur,
+        [
+            {
+                **item,
+                "source_key": document["source_key"],
+                "documento_id": document["id"],
+            }
+            for item in indicators
+        ],
+    )
+    if not indicators:
+        return 0
     rows = [
         (
-            document["source_key"],
-            document["id"],
+            item["source_key"],
+            item["documento_id"],
             item["indicador_key"],
             item["indicador_nome"],
             item.get("periodo_inicio"),

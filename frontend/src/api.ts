@@ -235,7 +235,7 @@ export type DashboardSummary = {
     prices?: {
       ptax?: {
         latest: MarketSeriesPoint
-        change_period_pct: string
+        change_period_pct: string | null
         series: MarketSeriesPoint[]
       }
       comex?: MarketComexSummary
@@ -245,8 +245,8 @@ export type DashboardSummary = {
       indicators: MarketIndicator[]
       series: MarketSeriesPoint[]
       public_works?: {
-        kpis: { projects: number; investment: string; jobs: string }
-        top_regions: Array<{ uf: string; projects: number; investment: string }>
+        kpis: { projects: number; investment: string | null; jobs: string | null }
+        top_regions: Array<{ uf: string; projects: number; investment: string | null }>
       }
     }
     industry?: {
@@ -255,25 +255,25 @@ export type DashboardSummary = {
     }
     opportunities?: {
       source: string
-      kpis: { opportunities: number; high_relevance: number; total_value: string; regions: number }
+      kpis: { opportunities: number; high_relevance: number; total_value: string | null; regions: number }
       monthly: Array<{ period: string; period_label: string; opportunities: number }>
-      top_regions: Array<{ uf: string; opportunities: number; value: string }>
+      top_regions: Array<{ uf: string; opportunities: number; value: string | null }>
       detail: Array<{
         date: string | null
         uf: string
         municipality: string
         agency: string
         object: string
-        value: string
+        value: string | null
         relevance_score: number
         id: string
       }>
     }
     solar?: {
       latest_period: string
-      kpis: { last_12_new_mw: string; last_12_installations: number; cumulative_mw: string }
-      monthly: Array<{ period: string; period_label: string; new_mw: string; cumulative_mw: string; installations: number }>
-      top_regions: Array<{ uf: string; new_mw: string; installations: number }>
+      kpis: { last_12_new_mw: string | null; last_12_installations: number; cumulative_mw: string | null }
+      monthly: Array<{ period: string; period_label: string; new_mw: string | null; cumulative_mw: string | null; installations: number }>
+      top_regions: Array<{ uf: string; new_mw: string | null; installations: number }>
     }
   }
   sales_regions: Array<{ canal: string; regiao: string; linhas: number; valor_total: string }>
@@ -287,22 +287,22 @@ export type MarketIndicator = {
   period: string | null
   geography: string | null
   unit: string | null
-  value: string
+  value: string | null
 }
 
 export type MarketSeriesPoint = {
   period: string | null
   period_label: string | null
-  value: string
+  value: string | null
 }
 
 export type MarketComexSummary = {
   latest_period: string
-  kpis: { toneladas_12m: string; fob_usd_t: string; cif_proxy_usd_t: string; countries: number }
-  monthly: Array<{ period: string; period_label: string; toneladas: string; fob_usd_t: string; cif_proxy_usd_t: string }>
-  countries: Array<{ country: string; toneladas: string }>
-  families: Array<{ family: string; toneladas: string; fob_usd_t: string }>
-  detail: Array<{ ncm: string; family: string; country: string; toneladas: string; fob_usd_t: string; freight_usd_t: string }>
+  kpis: { toneladas_12m: string | null; fob_usd_t: string | null; cif_proxy_usd_t: string | null; countries: number }
+  monthly: Array<{ period: string; period_label: string; toneladas: string | null; fob_usd_t: string | null; cif_proxy_usd_t: string | null }>
+  countries: Array<{ country: string; toneladas: string | null }>
+  families: Array<{ family: string; toneladas: string | null; fob_usd_t: string | null }>
+  detail: Array<{ ncm: string; family: string; country: string; toneladas: string | null; fob_usd_t: string | null; freight_usd_t: string | null }>
 }
 
 const DEFAULT_API_BASE_URL =

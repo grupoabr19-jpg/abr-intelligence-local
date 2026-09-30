@@ -1777,9 +1777,9 @@ def attendance_summary(date_from: date | None = None, date_to: date | None = Non
     }
 
 
-def market_decimal(value: Any) -> str:
+def market_decimal(value: Any) -> str | None:
     if value is None:
-        return "0"
+        return None
     if isinstance(value, Decimal):
         return f"{value:.6f}".rstrip("0").rstrip(".")
     return str(value)
@@ -1841,20 +1841,32 @@ def market_latest_indicators(cur: Any, source_keys: list[str], limit: int = 12) 
         select source_key, indicador_key, indicador_nome, periodo_label, geografia, unidade, valor
         from (
           select
-            source_key,
-            indicador_key,
-            indicador_nome,
-            periodo_label,
-            geografia,
-            unidade,
-            valor,
+            mi.source_key,
+            mi.indicador_key,
+            mi.indicador_nome,
+            mi.periodo_label,
+            mi.geografia,
+            mi.unidade,
+            mi.valor,
             row_number() over (
-              partition by source_key, indicador_key, coalesce(geografia, '')
-              order by periodo_inicio desc nulls last, coletado_em desc
+              partition by mi.source_key, mi.indicador_key, coalesce(mi.geografia, '')
+              order by mi.periodo_inicio desc nulls last, mi.coletado_em desc
             ) as ordem
-          from public.mercado_indicadores
-          where source_key = any(%s)
-            and valor is not null
+          from public.mercado_indicadores mi
+          left join public.market_indicator_metadata mim
+            on mim.source_key = mi.source_key
+           and mim.indicator_key = mi.indicador_key
+           and mim.active = true
+          where mi.source_key = any(%s)
+            and mi.valor is not null
+            and (
+              mim.source_key is null
+              or (
+                (mim.allow_zero or mi.valor <> 0)
+                and (mim.min_sanity_value is null or mi.valor >= mim.min_sanity_value)
+                and (mim.max_sanity_value is null or mi.valor <= mim.max_sanity_value)
+              )
+            )
         ) ranked
         where ordem = 1
         order by source_key, indicador_nome, geografia
@@ -1879,13 +1891,25 @@ def market_latest_indicators(cur: Any, source_keys: list[str], limit: int = 12) 
 def market_indicator_series(cur: Any, source_key: str, indicator_key: str, limit: int = 24) -> list[dict[str, Any]]:
     cur.execute(
         """
-        select periodo_inicio, periodo_label, avg(valor) as valor
-        from public.mercado_indicadores
-        where source_key = %s
-          and indicador_key = %s
-          and valor is not null
-        group by periodo_inicio, periodo_label
-        order by periodo_inicio desc nulls last
+        select mi.periodo_inicio, mi.periodo_label, avg(mi.valor) as valor
+        from public.mercado_indicadores mi
+        left join public.market_indicator_metadata mim
+          on mim.source_key = mi.source_key
+         and mim.indicator_key = mi.indicador_key
+         and mim.active = true
+        where mi.source_key = %s
+          and mi.indicador_key = %s
+          and mi.valor is not null
+          and (
+            mim.source_key is null
+            or (
+              (mim.allow_zero or mi.valor <> 0)
+              and (mim.min_sanity_value is null or mi.valor >= mim.min_sanity_value)
+              and (mim.max_sanity_value is null or mi.valor <= mim.max_sanity_value)
+            )
+          )
+        group by mi.periodo_inicio, mi.periodo_label
+        order by mi.periodo_inicio desc nulls last
         limit %s
         """,
         (source_key, indicator_key, limit),

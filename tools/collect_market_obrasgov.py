@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from backend.archive_storage import archive_records, require_drive_archive
 from tools.apply_migrations import connect_database, load_env
+from tools.market_indicator_quality import normalize_and_validate_indicators
 
 
 SOURCE_KEY = "obrasgov_projetos"
@@ -274,31 +275,33 @@ def collect_obrasgov(*, dry_run: bool = False) -> dict[str, Any]:
                         for row in aggregates
                     ],
                 )
-                cur.executemany(
-                    """
-                    insert into public.mercado_indicadores(
-                      source_key, indicador_key, indicador_nome, periodo_inicio,
-                      periodo_label, geografia, unidade, valor, dimensoes,
-                      payload_original, coletado_em
-                    )
-                    values (%s, %s, %s, %s::date, %s, %s, %s, %s, %s::jsonb, %s::jsonb, now())
-                    """,
-                    [
-                        (
-                            row["source_key"],
-                            row["indicador_key"],
-                            row["indicador_nome"],
-                            row["periodo_inicio"],
-                            row["periodo_label"],
-                            row["geografia"],
-                            row["unidade"],
-                            row["valor"],
-                            json.dumps(row["dimensoes"], ensure_ascii=False),
-                            json.dumps(row["payload_original"], ensure_ascii=False),
+                indicators = normalize_and_validate_indicators(cur, indicators)
+                if indicators:
+                    cur.executemany(
+                        """
+                        insert into public.mercado_indicadores(
+                          source_key, indicador_key, indicador_nome, periodo_inicio,
+                          periodo_label, geografia, unidade, valor, dimensoes,
+                          payload_original, coletado_em
                         )
-                        for row in indicators
-                    ],
-                )
+                        values (%s, %s, %s, %s::date, %s, %s, %s, %s, %s::jsonb, %s::jsonb, now())
+                        """,
+                        [
+                            (
+                                row["source_key"],
+                                row["indicador_key"],
+                                row["indicador_nome"],
+                                row["periodo_inicio"],
+                                row["periodo_label"],
+                                row["geografia"],
+                                row["unidade"],
+                                row["valor"],
+                                json.dumps(row["dimensoes"], ensure_ascii=False),
+                                json.dumps(row["payload_original"], ensure_ascii=False),
+                            )
+                            for row in indicators
+                        ],
+                    )
                 finish_run(cur, run_id, status="sucesso", found=len(raw_rows), inserted=len(indicators))
                 conn.commit()
                 return {

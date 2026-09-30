@@ -88,12 +88,14 @@ type CollaboratorRankingRow = NonNullable<AttendanceSummary['ranking_colaborador
 type RegionRankingRow = NonNullable<AttendanceSummary['ranking_regioes']>[number]
 type MarketSummary = NonNullable<DashboardSummary['market_summary']>
 
-function formatNumber(value: number | string | undefined) {
+function formatNumber(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return 'Sem dados'
   const number = Number(value || 0)
   return new Intl.NumberFormat('pt-BR').format(number)
 }
 
-function money(value: number | string | undefined) {
+function money(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return 'Sem dados'
   const number = Number(value || 0)
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
@@ -117,6 +119,12 @@ function numericValue(value: number | string | null | undefined) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
   const parsed = Number(value.replace(/[^\d,-.]/g, '').replace(/\./g, '').replace(',', '.'))
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function nullableNumericValue(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return null
+  const number = numericValue(value)
+  return Number.isFinite(number) ? number : null
 }
 
 function isWholesale(row: { funcao?: string; regiao_polo?: string }) {
@@ -170,6 +178,7 @@ function marketNumber(value: number | string | null | undefined, maximumFraction
 }
 
 function marketValue(value: number | string | null | undefined, unit?: string | null) {
+  if (value === null || value === undefined || value === '') return 'Sem dados'
   const normalizedUnit = String(unit ?? '').trim()
   const loweredUnit = normalizedUnit.toLowerCase()
   if (normalizedUnit === '%') return percent(numericValue(value))
@@ -2101,13 +2110,13 @@ function MarketIndicatorTab({
 }: {
   title: string
   icon: ReactNode
-  data?: { indicators: MarketSummary['overview']['macro_indicators']; series: Array<{ period_label: string | null; value: string }> }
+  data?: { indicators: MarketSummary['overview']['macro_indicators']; series: Array<{ period_label: string | null; value: string | null }> }
   unitFallback: string
 }) {
   const indicators = data?.indicators ?? []
   const series = (data?.series ?? []).map((item) => ({
     period_label: item.period_label ?? 'Sem periodo',
-    value_numero: numericValue(item.value),
+    value_numero: nullableNumericValue(item.value),
   }))
   if (!indicators.length && !series.length) return <UnavailableTab title={title} />
 
@@ -2167,12 +2176,12 @@ function MarketPricesTab({ summary }: { summary: MarketSummary }) {
 
   const monthly = (comex?.monthly ?? []).map((item) => ({
     ...item,
-    fob_numero: numericValue(item.fob_usd_t),
-    cif_numero: numericValue(item.cif_proxy_usd_t),
+    fob_numero: nullableNumericValue(item.fob_usd_t),
+    cif_numero: nullableNumericValue(item.cif_proxy_usd_t),
   }))
   const ptaxSeries = (ptax?.series ?? []).map((item) => ({
     period_label: item.period_label ?? 'Sem periodo',
-    value_numero: numericValue(item.value),
+    value_numero: nullableNumericValue(item.value),
   }))
   const familyRows = (comex?.families ?? []).map((item) => [
     item.family,
@@ -2234,8 +2243,8 @@ function MarketImportsTab({ summary }: { summary: MarketSummary }) {
   if (!imports?.kpis) return <UnavailableTab title="Importacoes" />
   const monthly = (imports.monthly ?? []).map((item) => ({
     ...item,
-    toneladas_numero: numericValue(item.toneladas),
-    fob_numero: numericValue(item.fob_usd_t),
+    toneladas_numero: nullableNumericValue(item.toneladas),
+    fob_numero: nullableNumericValue(item.fob_usd_t),
   }))
   const countryRows = (imports.countries ?? []).map((item) => [item.country, marketValue(item.toneladas, 't')])
   const detailRows = (imports.detail ?? []).map((item) => [
@@ -2376,8 +2385,8 @@ function MarketSolarTab({ summary }: { summary: MarketSummary }) {
   if (!solar?.kpis) return <UnavailableTab title="Solar" />
   const monthly = (solar.monthly ?? []).map((item) => ({
     ...item,
-    new_mw_numero: numericValue(item.new_mw),
-    cumulative_mw_numero: numericValue(item.cumulative_mw),
+    new_mw_numero: nullableNumericValue(item.new_mw),
+    cumulative_mw_numero: nullableNumericValue(item.cumulative_mw),
   }))
   const regionRows = (solar.top_regions ?? []).map((item) => [
     item.uf,

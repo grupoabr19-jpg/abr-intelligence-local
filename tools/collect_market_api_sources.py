@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from backend.archive_storage import archive_records, require_drive_archive
 from tools.apply_migrations import connect_database, load_env
+from tools.market_indicator_quality import normalize_and_validate_indicators
 
 
 DEFAULT_TIMEOUT = 60
@@ -99,6 +100,9 @@ def finish_run(
 
 
 def insert_market_indicators(cur: Any, rows: list[dict[str, Any]]) -> int:
+    if not rows:
+        return 0
+    rows = normalize_and_validate_indicators(cur, rows)
     if not rows:
         return 0
     cur.executemany(
