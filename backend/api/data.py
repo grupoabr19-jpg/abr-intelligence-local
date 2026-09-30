@@ -4,7 +4,7 @@ import json
 import re
 import unicodedata
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
 from statistics import median
@@ -3090,6 +3090,287 @@ def market_ptax_summary(cur: Any) -> dict[str, Any]:
     }
 
 
+def market_ptax_raw_series(
+    cur: Any,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    cur.execute(
+        """
+        with selected as (
+          select distinct on (data_cotacao)
+            data_cotacao,
+            data_hora_cotacao,
+            tipo_boletim,
+            cotacao_venda,
+            payload
+          from public.raw_bcb_ptax
+          where (%s::date is null or data_cotacao >= %s::date)
+            and (%s::date is null or data_cotacao <= %s::date)
+          order by
+            data_cotacao,
+            case
+              when lower(coalesce(tipo_boletim, '')) like '%%fechamento%%' then 0
+              when lower(coalesce(tipo_boletim, '')) like '%%ptax%%' then 1
+              else 2
+            end,
+            data_hora_cotacao desc
+        )
+        select data_cotacao, data_hora_cotacao, tipo_boletim, cotacao_venda, payload
+        from selected
+        order by data_cotacao
+        """,
+        (date_from, date_from, date_to, date_to),
+    )
+    valid: list[dict[str, Any]] = []
+    invalid: list[dict[str, Any]] = []
+    values_for_ma: list[Decimal] = []
+    for row in cur.fetchall():
+        raw_value = row[3]
+        normalized_value = raw_value
+        error = None
+        if normalized_value is None:
+            error = "PTAX nula"
+        elif normalized_value <= 0 or normalized_value >= 20:
+            error = "PTAX fora da faixa de sanidade 0 < PTAX < 20"
+        item = {
+            "date": row[0].isoformat() if row[0] else None,
+            "date_label": row[0].strftime("%d/%m") if row[0] else None,
+            "reference_date": row[0].isoformat() if row[0] else None,
+            "quoted_at": market_timestamp(row[1]),
+            "bulletin_type": row[2],
+            "raw_value": market_decimal(raw_value),
+            "normalized_value": market_decimal(normalized_value),
+            "value": market_decimal(normalized_value),
+            "source": "BCB PTAX",
+            "status": "INVALID" if error else "VALID",
+            "validation_error": error,
+        }
+        if error:
+            invalid.append(item)
+            continue
+        values_for_ma.append(normalized_value)
+        window = values_for_ma[-20:]
+        item["ma20"] = market_decimal(sum(window) / Decimal(len(window)) if window else None)
+        valid.append(item)
+    return valid, invalid
+
+
+def market_closest_ptax_before(cur: Any, target: date) -> dict[str, Any] | None:
+    series, _invalid = market_ptax_raw_series(cur, date_to=target)
+    return series[-1] if series else None
+
+
+def market_comex_readiness(cur: Any, date_from: date | None = None, date_to: date | None = None) -> dict[str, Any]:
+    cur.execute("select count(*)::int from public.dim_ncm_abr where ativo = true")
+    active_ncms = int(cur.fetchone()[0] or 0)
+    if active_ncms == 0:
+        return {
+            "status": "NO_NCM_MAPPING",
+            "active_ncms": 0,
+            "records": 0,
+            "message": "Pressao especifica por familia aguardando mapeamento NCM/Comex.",
+        }
+    cur.execute(
+        """
+        select count(*)::int, coalesce(sum(toneladas), 0), coalesce(sum(vl_fob_usd), 0)
+        from public.fact_steel_import_monthly
+        where (%s::date is null or periodo_inicio >= %s::date)
+          and (%s::date is null or periodo_inicio <= %s::date)
+        """,
+        (date_from, date_from, date_to, date_to),
+    )
+    records, tons, fob = cur.fetchone()
+    if not records:
+        return {
+            "status": "NO_COMEX_DATA",
+            "active_ncms": active_ncms,
+            "records": 0,
+            "message": "NCMs existem, mas nao ha registros Comex validos no periodo.",
+        }
+    if not tons or tons <= 0 or not fob or fob <= 0:
+        return {
+            "status": "INSUFFICIENT_DATA",
+            "active_ncms": active_ncms,
+            "records": int(records or 0),
+            "message": "Comex sem peso liquido ou valor FOB validos no periodo.",
+        }
+    return {
+        "status": "READY",
+        "active_ncms": active_ncms,
+        "records": int(records or 0),
+        "message": "Comex pronto para analise por familia.",
+    }
+
+
+def market_prices_decision(
+    cur: Any,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
+    ptax_series, invalid_values = market_ptax_raw_series(cur, date_from=date_from, date_to=date_to)
+    latest = ptax_series[-1] if ptax_series else None
+    first = ptax_series[0] if ptax_series else None
+    latest_value = Decimal(str(latest["value"])) if latest and latest.get("value") else None
+    first_value = Decimal(str(first["value"])) if first and first.get("value") else None
+    period_change = market_pct_change(latest_value, first_value)
+    fx_30d = None
+    if latest and latest.get("reference_date") and latest_value is not None:
+        previous_30d = market_closest_ptax_before(cur, date.fromisoformat(latest["reference_date"]) - timedelta(days=30))
+        previous_30d_value = Decimal(str(previous_30d["value"])) if previous_30d and previous_30d.get("value") else None
+        fx_30d = market_pct_change(latest_value, previous_30d_value)
+    average_value = None
+    if ptax_series:
+        valid_values = [Decimal(str(item["value"])) for item in ptax_series if item.get("value")]
+        average_value = sum(valid_values) / Decimal(len(valid_values)) if valid_values else None
+    comex_status = market_comex_readiness(cur, date_from=date_from, date_to=date_to)
+
+    cards: list[dict[str, Any]] = []
+    if latest:
+        cards.append(
+            {
+                "id": "ptax_current",
+                "title": "PTAX atual",
+                "value": latest["value"],
+                "unit": "R$/US$",
+                "detail": market_decimal(fx_30d),
+                "detail_label": "30D",
+                "source": "BCB",
+                "competence": latest["reference_date"],
+                "tooltip": "Ultima PTAX venda valida menor ou igual ao corte. Sanity: 0 < PTAX < 20.",
+            }
+        )
+    if period_change is not None and first and latest:
+        cards.append(
+            {
+                "id": "fx_period_change",
+                "title": "Variacao cambial no periodo",
+                "value": market_decimal(period_change),
+                "unit": "%",
+                "detail": f"{first['reference_date']} -> {latest['reference_date']}",
+                "detail_label": "periodo",
+                "source": "BCB",
+                "competence": latest["reference_date"],
+                "tooltip": "FX_PERIOD_CHANGE = PTAX ultimo dia valido / PTAX primeiro dia valido - 1.",
+            }
+        )
+    if fx_30d is not None:
+        cards.append(
+            {
+                "id": "fx_30d",
+                "title": "Variacao 30D",
+                "value": market_decimal(fx_30d),
+                "unit": "%",
+                "detail": "ultimo valido contra dia util proximo de 30 dias antes",
+                "detail_label": "30D",
+                "source": "BCB",
+                "competence": latest["reference_date"] if latest else None,
+                "tooltip": "FX_30D = PTAX_latest / PTAX_closest_valid_day_30d_before - 1.",
+            }
+        )
+    if average_value is not None:
+        cards.append(
+            {
+                "id": "fx_average",
+                "title": "Media PTAX periodo",
+                "value": market_decimal(average_value),
+                "unit": "R$/US$",
+                "detail": f"{len(ptax_series)} dias validos",
+                "detail_label": "media",
+                "source": "BCB",
+                "competence": latest["reference_date"] if latest else None,
+                "tooltip": "Media simples das PTAX validas no periodo selecionado.",
+            }
+        )
+
+    family_rows: list[dict[str, Any]] = []
+    fob_ptax_chart: list[dict[str, Any]] = []
+    family_import_chart: list[dict[str, Any]] = []
+    pressure_components: list[dict[str, Any]] = []
+    decision_readings: list[dict[str, str]] = []
+
+    if comex_status["status"] == "READY":
+        cur.execute(
+            """
+            select
+              familia_abr,
+              coalesce(sum(toneladas), 0) as tons,
+              coalesce(sum(vl_fob_usd), 0) as fob,
+              coalesce(sum(vl_frete_usd), 0) as frete,
+              coalesce(sum(vl_seguro_usd), 0) as seguro
+            from public.fact_steel_import_monthly
+            where (%s::date is null or periodo_inicio >= %s::date)
+              and (%s::date is null or periodo_inicio <= %s::date)
+            group by familia_abr
+            having coalesce(sum(toneladas), 0) > 0 and coalesce(sum(vl_fob_usd), 0) > 0
+            order by tons desc
+            """,
+            (date_from, date_from, date_to, date_to),
+        )
+        for family, tons, fob, freight, insurance in cur.fetchall():
+            fob_usd_t = fob / tons if tons else None
+            cif_usd_t = (fob + freight + insurance) / tons if tons else None
+            family_rows.append(
+                {
+                    "family": family,
+                    "ptax_signal": 1 if period_change is not None and period_change > Decimal("2") else -1 if period_change is not None and period_change < Decimal("-2") else 0,
+                    "fob_signal": 0,
+                    "import_signal": 0,
+                    "stock_signal": 0,
+                    "demand_signal": 0,
+                    "score": 0,
+                    "classification": "MISTA / NEUTRA",
+                    "coverage": "1/5",
+                    "fob_usd_t": market_decimal(fob_usd_t),
+                    "cif_usd_t": market_decimal(cif_usd_t),
+                    "tons": market_decimal(tons),
+                    "status": "READY",
+                }
+            )
+    else:
+        pressure_components.append(
+            {
+                "component": "Pressao por familia",
+                "status": comex_status["status"],
+                "message": comex_status["message"],
+            }
+        )
+
+    return {
+        "ptax": {
+            "latest": latest,
+            "first": first,
+            "period_change": market_decimal(period_change),
+            "change_30d": market_decimal(fx_30d),
+            "average": market_decimal(average_value),
+            "series": ptax_series,
+            "invalid_values": invalid_values,
+        },
+        "data_coverage": {
+            "requested_from": date_from.isoformat() if date_from else None,
+            "requested_to": date_to.isoformat() if date_to else None,
+            "available_from": first["reference_date"] if first else None,
+            "available_to": latest["reference_date"] if latest else None,
+            "valid_days": len(ptax_series),
+            "is_partial": bool(date_from and first and first.get("reference_date") and first["reference_date"] > date_from.isoformat()),
+            "message": (
+                f"PTAX disponivel no banco a partir de {first['reference_date']} para o recorte solicitado."
+                if date_from and first and first.get("reference_date") and first["reference_date"] > date_from.isoformat()
+                else None
+            ),
+        },
+        "cards": cards,
+        "comex_status": comex_status,
+        "family_pressure": family_rows,
+        "fob_ptax_chart": fob_ptax_chart,
+        "family_import_chart": family_import_chart,
+        "pressure_components": pressure_components,
+        "decision_readings": decision_readings,
+    }
+
+
 def market_solar_summary(cur: Any) -> dict[str, Any]:
     cur.execute("select max(periodo_inicio) from public.fact_solar_monthly")
     latest_period = cur.fetchone()[0]
@@ -3345,6 +3626,7 @@ def market_summary(
 
             comex = market_comex_summary(cur) if "comex_stat_ncm" in healthy else {}
             ptax = market_ptax_summary(cur) if "bcb_dolar_ptax" in healthy else {}
+            prices_decision = market_prices_decision(cur, date_from=market_date_from, date_to=market_date_to)
             solar = market_solar_summary(cur) if "aneel_dados_abertos" in healthy else {}
             public_works = market_obrasgov_summary(cur) if "obrasgov_projetos" in healthy else {}
             opportunities = market_opportunities_summary(cur) if healthy & {"pncp_consulta", "obrasgov_projetos"} else {}
@@ -3405,6 +3687,7 @@ def market_summary(
         "prices": {
             "ptax": ptax,
             "comex": comex,
+            "decision": prices_decision,
         },
         "imports": comex,
         "industry": {

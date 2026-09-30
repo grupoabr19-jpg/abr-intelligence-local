@@ -376,6 +376,72 @@ export type DashboardSummary = {
         series: MarketSeriesPoint[]
       }
       comex?: MarketComexSummary
+      decision?: {
+        ptax: {
+          latest: {
+            date: string | null
+            date_label: string | null
+            reference_date: string | null
+            quoted_at: string | null
+            bulletin_type: string | null
+            raw_value: string | null
+            normalized_value: string | null
+            value: string | null
+            source: string
+            status: string
+            validation_error: string | null
+            ma20?: string | null
+          } | null
+          first: {
+            reference_date: string | null
+            value: string | null
+          } | null
+          period_change: string | null
+          change_30d: string | null
+          average: string | null
+          series: Array<{
+            date: string | null
+            date_label: string | null
+            reference_date: string | null
+            quoted_at: string | null
+            bulletin_type: string | null
+            raw_value: string | null
+            normalized_value: string | null
+            value: string | null
+            source: string
+            status: string
+            validation_error: string | null
+            ma20?: string | null
+          }>
+          invalid_values: Array<Record<string, unknown>>
+        }
+        data_coverage: {
+          requested_from: string | null
+          requested_to: string | null
+          available_from: string | null
+          available_to: string | null
+          valid_days: number
+          is_partial: boolean
+          message: string | null
+        }
+        cards: Array<{
+          id: string
+          title: string
+          value: string | null
+          unit: string
+          detail: string | null
+          detail_label: string
+          source: string
+          competence: string | null
+          tooltip: string
+        }>
+        comex_status: { status: string; active_ncms: number; records: number; message: string }
+        family_pressure: Array<Record<string, unknown>>
+        fob_ptax_chart: Array<Record<string, unknown>>
+        family_import_chart: Array<Record<string, unknown>>
+        pressure_components: Array<{ component: string; status: string; message: string }>
+        decision_readings: Array<{ key: string; text: string; severity: string }>
+      }
     }
     imports?: MarketComexSummary
     construction?: {

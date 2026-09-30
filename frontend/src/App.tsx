@@ -2203,6 +2203,13 @@ function MarketFilterBar({
   const showRelevance = tab === 'opportunities'
   const showSnapshot = tab === 'competition'
   const steelShortcuts = tab === 'steel-market' ? [12, 24, 36] : []
+  const priceShortcuts = tab === 'market-prices' ? [
+    { label: '30D', patch: { dateFrom: dateDaysAgo(30, value.dateTo), dateTo: value.dateTo } },
+    { label: '90D', patch: { dateFrom: dateDaysAgo(90, value.dateTo), dateTo: value.dateTo } },
+    { label: '6M', patch: { dateFrom: dateMonthsAgo(6, value.dateTo), dateTo: value.dateTo } },
+    { label: '12M', patch: { dateFrom: dateMonthsAgo(12, value.dateTo), dateTo: value.dateTo } },
+    { label: '24M', patch: { dateFrom: dateMonthsAgo(24, value.dateTo), dateTo: value.dateTo } },
+  ] : []
 
   return (
     <form className="toolbar market-filter-bar" aria-label="Filtros de mercado" onSubmit={submit}>
@@ -2239,6 +2246,21 @@ function MarketFilterBar({
               onClick={() => onChange({ dateFrom: dateMonthsAgo(months, value.dateTo), dateTo: value.dateTo })}
             >
               {months}M
+            </button>
+          ))}
+        </div>
+      )}
+      {priceShortcuts.length > 0 && (
+        <div className="shortcut-group" aria-label="Atalhos de periodo">
+          {priceShortcuts.map((shortcut) => (
+            <button
+              className="ghost-button compact"
+              key={shortcut.label}
+              type="button"
+              disabled={loading}
+              onClick={() => onChange(shortcut.patch)}
+            >
+              {shortcut.label}
             </button>
           ))}
         </div>
@@ -2301,7 +2323,7 @@ function MarketFilterBar({
         <RefreshCw size={16} className={loading ? 'spin' : ''} />
         Aplicar
       </button>
-      {['market-overview', 'steel-market'].includes(tab) && (
+      {['market-overview', 'steel-market', 'market-prices'].includes(tab) && (
         <button className="ghost-button" type="button" disabled={loading} onClick={onReset}>
           Restaurar padrao
         </button>
@@ -2757,80 +2779,117 @@ function MarketDemandTab({ summary }: { summary: MarketSummary }) {
 }
 
 function MarketPricesTab({ summary }: { summary: MarketSummary }) {
-  const prices = summary.prices
-  const comex = prices?.comex
-  const ptax = prices?.ptax
-  if (!comex?.kpis && !ptax?.latest) return <UnavailableTab title="Precos & Cambio" />
+  const decision = summary.prices?.decision
+  if (!decision?.ptax?.latest && !decision?.ptax?.series?.length) return <UnavailableTab title="Precos & Cambio" />
 
-  const monthly = (comex?.monthly ?? []).map((item) => ({
-    ...item,
-    fob_numero: nullableNumericValue(item.fob_usd_t),
-    cif_numero: nullableNumericValue(item.cif_proxy_usd_t),
-  }))
-  const ptaxSeries = (ptax?.series ?? []).map((item) => ({
-    period_label: item.period_label ?? 'Sem periodo',
+  const fxValue = (value: string | number | null | undefined, digits = 4) => {
+    if (value === null || value === undefined || value === '') return 'Sem dados'
+    return `R$ ${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(numericValue(value))}`
+  }
+  const cardValue = (item: NonNullable<typeof decision>['cards'][number]) => (
+    item.unit === '%' ? signedMarketPercent(item.value) : fxValue(item.value, item.id === 'ptax_current' ? 4 : 2)
+  )
+  const cardDetail = (item: NonNullable<typeof decision>['cards'][number]) => {
+    if (item.id === 'ptax_current') return `${signedMarketPercent(item.detail)} ${item.detail_label} | ${item.source} | ${item.competence ?? 'Sem data'}`
+    return `${item.detail ?? item.detail_label} | ${item.source}${item.competence ? ` | ${item.competence}` : ''}`
+  }
+  const ptaxChart = decision.ptax.series.map((item) => ({
+    period_label: item.date_label ?? item.reference_date ?? 'Sem data',
     value_numero: nullableNumericValue(item.value),
+    ma20_numero: nullableNumericValue(item.ma20),
+    average_numero: nullableNumericValue(decision.ptax.average),
+    raw_value: item.raw_value,
+    bulletin_type: item.bulletin_type,
   }))
-  const familyRows = (comex?.families ?? []).map((item) => [
-    item.family,
-    marketValue(item.toneladas, 't'),
-    marketValue(item.fob_usd_t, 'US$/t'),
+  const familyRows = decision.family_pressure.map((item) => [
+    String(item.family ?? ''),
+    String(item.ptax_signal ?? '0'),
+    String(item.fob_signal ?? '0'),
+    String(item.import_signal ?? '0'),
+    String(item.stock_signal ?? '0'),
+    String(item.demand_signal ?? '0'),
+    String(item.score ?? 'Sem score'),
+    String(item.classification ?? ''),
+    String(item.coverage ?? ''),
   ])
-  const pressureRows = (summary.decision_layer?.price_pressure ?? []).map((item) => [
-    item.family,
-    item.classification,
-    item.score === null || item.score === undefined ? 'Sem score' : formatNumber(item.score),
-    `${formatNumber(item.available_components_count)} componentes`,
-    item.period ? monthLabel(item.period.slice(0, 7)) : 'Sem periodo',
+  const invalidRows = decision.ptax.invalid_values.map((item) => [
+    String(item.reference_date ?? item.date ?? 'Sem data'),
+    String(item.raw_value ?? 'Sem valor'),
+    String(item.normalized_value ?? 'Sem valor'),
+    String(item.validation_error ?? 'INVALID'),
   ])
+  const pressureRows = decision.pressure_components.map((item) => [item.component, item.status, item.message])
+  const readingRows = decision.decision_readings.map((item) => [item.text])
 
   return (
     <>
       <section className="kpi-grid">
-        {ptax?.latest && <Kpi title="PTAX atual" displayValue={marketValue(ptax.latest.value, 'R$')} detail={`BCB | ${ptax.latest.period_label ?? 'Sem periodo'}`} icon={<CircleDollarSign />} />}
-        {ptax?.change_period_pct && <Kpi title="PTAX periodo" displayValue={percent(numericValue(ptax.change_period_pct))} detail="Variacao na janela carregada" icon={<LineChartIcon />} />}
-        {comex?.kpis && <Kpi title="FOB US$/t" displayValue={marketValue(comex.kpis.fob_usd_t, 'US$/t')} detail="SUM(VL_FOB) / toneladas" icon={<Gauge />} />}
-        {comex?.kpis && <Kpi title="Proxy CIF US$/t" displayValue={marketValue(comex.kpis.cif_proxy_usd_t, 'US$/t')} detail="FOB + frete + seguro / toneladas" icon={<BarChart3 />} />}
+        {decision.cards.map((item) => (
+          <Kpi
+            key={item.id}
+            title={item.title}
+            displayValue={cardValue(item)}
+            detail={cardDetail(item)}
+            icon={item.id.includes('ptax') || item.id.includes('fx') ? <CircleDollarSign /> : <Gauge />}
+            tooltip={item.tooltip}
+          />
+        ))}
       </section>
       <section className="dashboard-grid">
-        {monthly.length > 0 && (
-          <Panel title="Valor unitario do aco importado" icon={<LineChartIcon size={17} />} wide>
+        {ptaxChart.length > 0 && (
+          <Panel title="Cambio PTAX - R$/US$" icon={<CircleDollarSign size={17} />} wide>
+            {decision.data_coverage.is_partial && (
+              <div className="inline-note">
+                {decision.data_coverage.message} Dias validos: {formatNumber(decision.data_coverage.valid_days)}.
+              </div>
+            )}
             <ChartFrame>
               <ResponsiveContainer>
-                <ReLineChart data={monthly}>
+                <ReLineChart data={ptaxChart}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="period_label" />
-                  <YAxis tickFormatter={(value) => marketValue(String(value), 'US$/t')} />
-                  <Tooltip formatter={(value, name) => [marketValue(String(value), 'US$/t'), name]} />
+                  <YAxis domain={['auto', 'auto']} tickFormatter={(value) => fxValue(value, 2)} />
+                  <Tooltip formatter={(value, name) => [fxValue(String(value), 4), name]} />
                   <Legend verticalAlign="bottom" height={24} />
-                  <Line type="monotone" dataKey="fob_numero" name="FOB US$/t" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
-                  <Line type="monotone" dataKey="cif_numero" name="Proxy CIF US$/t" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                  <Line connectNulls={false} type="monotone" dataKey="value_numero" name="PTAX venda" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                  <Line connectNulls={false} type="monotone" dataKey="ma20_numero" name="Media movel 20 dias" stroke="#253575" strokeWidth={2} dot={false} />
+                  <Line connectNulls={false} type="monotone" dataKey="average_numero" name="Media periodo" stroke="#6B7280" strokeDasharray="4 4" strokeWidth={2} dot={false} />
                 </ReLineChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
         )}
-        {ptaxSeries.length > 0 && (
-          <Panel title="PTAX BCB" icon={<CircleDollarSign size={17} />} wide>
-            <ChartFrame>
-              <ResponsiveContainer>
-                <ReLineChart data={ptaxSeries}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="period_label" />
-                  <YAxis tickFormatter={(value) => marketValue(String(value), 'R$')} />
-                  <Tooltip formatter={(value) => [marketValue(String(value), 'R$'), 'PTAX venda']} />
-                  <Line type="monotone" dataKey="value_numero" name="PTAX venda" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
-                </ReLineChart>
-              </ResponsiveContainer>
-            </ChartFrame>
+
+        {decision.comex_status.status === 'READY' && familyRows.length > 0 ? (
+          <Panel title="Pressao por familia ABR" icon={<TableProperties size={17} />} wide>
+            <DataTable columns={['Familia', 'PTAX', 'FOB', 'Importacao', 'Estoque Canal', 'Demanda', 'Score', 'Classificacao', 'Cobertura']} rows={familyRows} empty="Sem familias ready no periodo" />
+          </Panel>
+        ) : (
+          <Panel title="Pressao por familia ABR" icon={<TableProperties size={17} />} wide>
+            <div className="empty-state compact">
+              <strong>Analise especifica aguardando NCMs aprovados e carga Comex.</strong>
+              <span>{decision.comex_status.message}</span>
+            </div>
           </Panel>
         )}
-        <Panel title="Pressao por familia ABR" icon={<TableProperties size={17} />} wide>
-          <DataTable columns={['Familia', 'Classificacao', 'Score', 'Base', 'Periodo']} rows={pressureRows} empty="Matriz de pressao ainda nao recalculada" />
-        </Panel>
-        <Panel title="Importacao por familia ABR" icon={<TableProperties size={17} />} wide>
-          <DataTable columns={['Familia', 'Toneladas 12M', 'FOB US$/t']} rows={familyRows} empty="Sem familias Comex aprovadas" />
-        </Panel>
+
+        {pressureRows.length > 0 && (
+          <Panel title="O que esta pressionando o preco?" icon={<Gauge size={17} />} wide>
+            <DataTable columns={['Componente', 'Status', 'Mensagem']} rows={pressureRows} empty="Sem componentes suficientes" />
+          </Panel>
+        )}
+
+        {readingRows.length > 0 && (
+          <Panel title="Leituras para decisao" icon={<AlertTriangle size={17} />} wide>
+            <DataTable columns={['Leitura']} rows={readingRows} empty="Sem leituras com os componentes disponiveis" />
+          </Panel>
+        )}
+
+        {invalidRows.length > 0 && (
+          <Panel title="PTAX invalidas bloqueadas" icon={<AlertTriangle size={17} />} wide>
+            <DataTable columns={['Data', 'Valor bruto', 'Valor normalizado', 'Erro']} rows={invalidRows} empty="Nenhuma PTAX invalida no periodo" />
+          </Panel>
+        )}
       </section>
     </>
   )
