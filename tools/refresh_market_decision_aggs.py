@@ -543,7 +543,74 @@ def upsert_cockpit(cur: Any) -> int:
         where periodo_inicio = (select max(periodo_inicio) from public.agg_market_demand_family)
         """
     )
-    return cur.rowcount if cur.rowcount is not None else 0
+    base_rows = cur.rowcount if cur.rowcount is not None else 0
+    cur.execute(
+        """
+        insert into public.agg_market_cockpit(
+          periodo_inicio, signal_key, family, title, classification, score,
+          available_components_count, drivers, target_tab, source_periods, refreshed_at
+        )
+        with latest_solar as (
+          select max(periodo_inicio) as periodo_inicio
+          from public.fact_solar_monthly
+        ),
+        solar_current as (
+          select
+            latest_solar.periodo_inicio,
+            coalesce(sum(fsm.new_mw), 0) as current_12m_mw,
+            coalesce(sum(fsm.novas_instalacoes), 0) as current_12m_installations
+          from latest_solar
+          join public.fact_solar_monthly fsm
+            on fsm.periodo_inicio between (latest_solar.periodo_inicio - interval '11 months') and latest_solar.periodo_inicio
+          group by latest_solar.periodo_inicio
+        ),
+        solar_previous as (
+          select
+            latest_solar.periodo_inicio,
+            coalesce(sum(fsm.new_mw), 0) as previous_12m_mw,
+            coalesce(sum(fsm.novas_instalacoes), 0) as previous_12m_installations
+          from latest_solar
+          join public.fact_solar_monthly fsm
+            on fsm.periodo_inicio between (latest_solar.periodo_inicio - interval '23 months') and (latest_solar.periodo_inicio - interval '12 months')
+          group by latest_solar.periodo_inicio
+        )
+        select
+          solar_current.periodo_inicio,
+          'solar_momentum',
+          '',
+          'Solar GD - expansao 12M',
+          case
+            when nullif(solar_previous.previous_12m_mw, 0) is null then 'INSUFFICIENT_DATA'
+            when solar_current.current_12m_mw >= solar_previous.previous_12m_mw * 1.15 then 'EXPANSAO'
+            when solar_current.current_12m_mw <= solar_previous.previous_12m_mw * 0.85 then 'DESACELERANDO'
+            else 'ESTAVEL'
+          end,
+          case
+            when nullif(solar_previous.previous_12m_mw, 0) is null then null
+            when solar_current.current_12m_mw >= solar_previous.previous_12m_mw * 1.15 then 1
+            when solar_current.current_12m_mw <= solar_previous.previous_12m_mw * 0.85 then -1
+            else 0
+          end,
+          case when nullif(solar_previous.previous_12m_mw, 0) is null then 1 else 3 end,
+          jsonb_build_array(
+            jsonb_build_object(
+              'name', 'ANEEL solar GD 12M',
+              'source', 'aneel_dados_abertos',
+              'current_12m_mw', solar_current.current_12m_mw,
+              'previous_12m_mw', solar_previous.previous_12m_mw,
+              'current_12m_installations', solar_current.current_12m_installations,
+              'previous_12m_installations', solar_previous.previous_12m_installations
+            )
+          ),
+          'solar',
+          jsonb_build_object('aneel_dados_abertos', solar_current.periodo_inicio::text),
+          now()
+        from solar_current
+        left join solar_previous using (periodo_inicio)
+        """
+    )
+    solar_rows = cur.rowcount if cur.rowcount is not None else 0
+    return base_rows + solar_rows
 
 
 def refresh() -> dict[str, Any]:

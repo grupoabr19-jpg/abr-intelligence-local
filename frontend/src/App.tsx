@@ -2619,6 +2619,7 @@ function MarketOpportunitiesTab({ summary }: { summary: MarketSummary }) {
 function MarketSolarTab({ summary }: { summary: MarketSummary }) {
   const solar = summary.solar
   if (!solar?.kpis) return <UnavailableTab title="Solar" />
+  const solarSignal = (summary.decision_layer?.cockpit ?? []).find((item) => item.signal_key === 'solar_momentum')
   const monthly = (solar.monthly ?? []).map((item) => ({
     ...item,
     new_mw_numero: nullableNumericValue(item.new_mw),
@@ -2636,7 +2637,7 @@ function MarketSolarTab({ summary }: { summary: MarketSummary }) {
         <Kpi title="MW novos 12 meses" displayValue={marketValue(solar.kpis.last_12_new_mw, 'MW')} detail={`Atualizado ate ${monthLabel(solar.latest_period.slice(0, 7))}`} icon={<LineChartIcon />} />
         <Kpi title="Instalacoes 12 meses" displayValue={formatNumber(solar.kpis.last_12_installations)} detail="ANEEL dados abertos" icon={<CheckCircle2 />} />
         <Kpi title="Potencia acumulada" displayValue={marketValue(solar.kpis.cumulative_mw, 'MW')} detail="Soma nacional por UF" icon={<Gauge />} />
-        <Kpi title="UFs no recorte" displayValue={formatNumber(solar.top_regions?.length ?? 0)} detail="Top UFs por MW novo" icon={<TableProperties />} />
+        <Kpi title="Sinal 12M" displayValue={solarSignal?.classification ?? 'Sem sinal'} detail={solarSignal?.period ? `ANEEL | ${monthLabel(solarSignal.period.slice(0, 7))}` : 'Top UFs por MW novo'} icon={<TableProperties />} />
       </section>
       <section className="dashboard-grid">
         <Panel title="Geracao solar distribuida" icon={<LineChartIcon size={17} />} wide>
