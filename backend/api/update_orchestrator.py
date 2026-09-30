@@ -27,7 +27,6 @@ ASTER_REFRESH_REPORTS = (
 )
 
 PENDING_MARKET_SOURCES = (
-    "ANEEL",
     "ObrasGov",
     "World Bank",
     "ABRAMAT",
@@ -183,6 +182,7 @@ class DashboardRefreshManager:
         steps = [
             RefreshStep("market_registry", "Mercado: verificar fontes configuradas"),
             RefreshStep("market_api", "Mercado API: BCB e IBGE"),
+            RefreshStep("market_aneel", "Mercado ANEEL: geracao fotovoltaica"),
             RefreshStep("market_comex", "Mercado Comex: importacoes por NCM aprovado"),
             RefreshStep("market_gov", "Mercado governo: CAGED e PNCP configurados"),
             RefreshStep("market_public", "Mercado publico: Aco Brasil, CNI e INDA"),
@@ -219,6 +219,8 @@ class DashboardRefreshManager:
             ]
         if key == "market_comex":
             return [sys.executable, str(ROOT / "tools" / "collect_market_comex.py")]
+        if key == "market_aneel":
+            return [sys.executable, str(ROOT / "tools" / "collect_market_aneel.py")]
         if key == "market_gov":
             return [sys.executable, str(ROOT / "tools" / "collect_market_gov_sources.py"), "--source", "all"]
         if key == "market_public":
@@ -265,6 +267,8 @@ class DashboardRefreshManager:
 
     @staticmethod
     def _timeout_for_step(key: str) -> int:
+        if key == "market_aneel":
+            return 1_200
         if key == "aster_sales_fact":
             return 600
         if key.startswith("aster_"):
@@ -350,6 +354,13 @@ class DashboardRefreshManager:
                 "required_for_daily": False,
                 "database": "core",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key in ('bcb_dolar_ptax', 'ibge_pim_sidra', 'ibge_construcao_sidra')",
+            },
+            {
+                "key": "market_aneel",
+                "label": "Mercado ANEEL - geracao fotovoltaica",
+                "required_for_daily": False,
+                "database": "core",
+                "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key = 'aneel_dados_abertos'",
             },
             {
                 "key": "market_comex",

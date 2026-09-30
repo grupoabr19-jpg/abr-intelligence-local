@@ -85,7 +85,13 @@ def connect_database(
     for label, url in candidates:
         print(f"trying {label}")
         try:
-            return psycopg.connect(url, connect_timeout=8)
+            conn = psycopg.connect(url, connect_timeout=8)
+            previous_autocommit = conn.autocommit
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("set default_transaction_read_only = off")
+            conn.autocommit = previous_autocommit
+            return conn
         except Exception as exc:
             print(f"failed {label}: {type(exc).__name__}: {str(exc)[:180]}")
 
