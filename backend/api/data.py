@@ -2558,6 +2558,404 @@ def market_overview_decision(
     }
 
 
+def market_steel_volume_series(
+    cur: Any,
+    indicator_key: str,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = 48,
+) -> list[dict[str, Any]]:
+    cur.execute(
+        """
+        select
+          mi.periodo_inicio,
+          mi.periodo_label,
+          avg(mi.valor) as raw_value,
+          avg(mi.valor * coalesce(mim.scale_factor, 1)) as normalized_value,
+          max(coalesce(mim.normalized_unit, mi.unidade)) as normalized_unit,
+          max(mi.unidade) as raw_unit,
+          max(coalesce(mim.scale_factor, 1)) as scale_factor
+        from public.mercado_indicadores mi
+        left join public.market_indicator_metadata mim
+          on mim.source_key = mi.source_key
+         and mim.indicator_key = mi.indicador_key
+         and mim.active = true
+        where mi.source_key = 'aco_brasil_estatistica_mensal'
+          and mi.indicador_key = %s
+          and mi.valor is not null
+          and (%s::date is null or mi.periodo_inicio >= %s::date)
+          and (%s::date is null or mi.periodo_inicio <= %s::date)
+          and (
+            mim.source_key is null
+            or (
+              (mim.allow_zero or mi.valor <> 0)
+              and (mim.min_sanity_value is null or (mi.valor * coalesce(mim.scale_factor, 1)) >= mim.min_sanity_value)
+              and (mim.max_sanity_value is null or (mi.valor * coalesce(mim.scale_factor, 1)) <= mim.max_sanity_value)
+            )
+          )
+        group by mi.periodo_inicio, mi.periodo_label
+        order by mi.periodo_inicio desc nulls last
+        limit %s
+        """,
+        (indicator_key, date_from, date_from, date_to, date_to, limit),
+    )
+    rows = cur.fetchall()
+    series = [
+        {
+            "period": row[0],
+            "period_iso": row[0].isoformat() if row[0] else None,
+            "period_label": row[1],
+            "raw_value": row[2],
+            "value": row[3],
+            "unit": row[4],
+            "raw_unit": row[5],
+            "scale_factor": row[6],
+            "suspect": False,
+            "quality": "OK",
+        }
+        for row in reversed(rows)
+    ]
+    previous_values: list[Decimal] = []
+    for item in series:
+        value = item["value"]
+        if value is not None and len(previous_values) >= 6:
+            window = sorted(previous_values[-6:])
+            median_value = (window[2] + window[3]) / Decimal("2")
+            if median_value and value < median_value * Decimal("0.2"):
+                item["suspect"] = True
+                item["quality"] = "SUSPECT_VALUE"
+                item["value"] = None
+        if value is not None:
+            previous_values.append(value)
+    return series
+
+
+def market_steel_latest_from_series(series: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for item in reversed(series):
+        if item.get("value") is not None and not item.get("suspect"):
+            return item
+    return None
+
+
+def market_steel_yoy_from_latest(
+    cur: Any,
+    indicator_key: str,
+    latest: dict[str, Any] | None,
+) -> Decimal | None:
+    if not latest or not latest.get("period") or latest.get("value") is None:
+        return None
+    previous_cutoff = market_one_year_before(latest["period"])
+    previous_series = market_steel_volume_series(cur, indicator_key, date_to=previous_cutoff, limit=18)
+    previous = market_steel_latest_from_series(previous_series)
+    return market_pct_change(latest["value"], previous["value"] if previous else None)
+
+
+def market_inda_latest(
+    cur: Any,
+    indicator_key: str,
+    *,
+    date_to: date | None = None,
+) -> dict[str, Any] | None:
+    return market_latest_indicator_before(cur, "inda_estatisticas", indicator_key, date_to)
+
+
+def market_steel_signal_from_pct(value: Decimal | None, positive_threshold: Decimal, negative_threshold: Decimal | None = None) -> tuple[int, str, str]:
+    if value is None:
+        return 0, "sem comparativo", "Sem comparativo"
+    negative = negative_threshold if negative_threshold is not None else -positive_threshold
+    if value > positive_threshold:
+        return 1, "↑", "alta"
+    if value < negative:
+        return -1, "↓", "queda"
+    return 0, "→", "estavel"
+
+
+def market_steel_balance_classification(demand_signal: int, supply_pressure: int) -> str:
+    if demand_signal > 0 and supply_pressure <= 0:
+        return "MERCADO MAIS APERTADO"
+    if demand_signal > 0 and supply_pressure > 0:
+        return "MERCADO EQUILIBRADO / DISPUTADO"
+    if demand_signal < 0 and supply_pressure > 0:
+        return "MERCADO MAIS FROUXO"
+    if demand_signal < 0 and supply_pressure <= 0:
+        return "BAIXA ATIVIDADE / OFERTA AJUSTADA"
+    if supply_pressure > 0:
+        return "OFERTA MAIS PRESENTE"
+    if supply_pressure < 0:
+        return "OFERTA MAIS AJUSTADA"
+    return "MERCADO ESTAVEL"
+
+
+def market_steel_decision(
+    cur: Any,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
+    volume_indicators = {
+        "internal_sales": ("aco_brasil_vendas_internas_total", "Vendas internas"),
+        "consumption": ("aco_brasil_consumo_aparente_total", "Consumo aparente"),
+        "flat_production": ("aco_brasil_producao_planos", "Producao de laminados planos"),
+        "rolled_production": ("aco_brasil_producao_laminados", "Producao de laminados"),
+        "imports": ("aco_brasil_importacoes_total_toneladas", "Importacoes"),
+    }
+    series = {
+        key: market_steel_volume_series(cur, indicator_key, date_from=date_from, date_to=date_to, limit=48)
+        for key, (indicator_key, _label) in volume_indicators.items()
+    }
+    latest = {key: market_steel_latest_from_series(value) for key, value in series.items()}
+    production_key = "flat_production" if latest.get("flat_production") else "rolled_production"
+    production_label = volume_indicators[production_key][1]
+    yoy = {
+        key: market_steel_yoy_from_latest(cur, volume_indicators[key][0], value)
+        for key, value in latest.items()
+    }
+
+    def card(item_id: str, title: str, key: str, tooltip: str) -> dict[str, Any] | None:
+        item = latest.get(key)
+        if not item:
+            return None
+        return {
+            "id": item_id,
+            "title": title,
+            "value_tons": market_decimal(item["value"]),
+            "unit": "t",
+            "yoy": market_decimal(yoy.get(key)),
+            "source": "Aco Brasil",
+            "competence": item.get("period_label") or item.get("period_iso"),
+            "tooltip": tooltip,
+            "raw_unit": item.get("raw_unit"),
+            "normalized_unit": item.get("unit"),
+            "scale_factor": market_decimal(item.get("scale_factor")),
+        }
+
+    cards = [
+        card(
+            "internal_sales",
+            "Vendas internas",
+            "internal_sales",
+            "Vendas internas informadas pelo Instituto Aco Brasil. YoY = valor da competencia atual / mesma competencia do ano anterior - 1. Unidade normalizada: toneladas.",
+        ),
+        card(
+            "consumption",
+            "Consumo aparente",
+            "consumption",
+            "Consumo aparente representa uma medida do volume disponivel ao mercado interno, conforme metodologia da fonte. YoY = valor atual / mesma competencia do ano anterior - 1.",
+        ),
+        card(
+            "flat_production",
+            "Laminados planos" if production_key == "flat_production" else "Laminados",
+            production_key,
+            "Producao de laminados planos do Instituto Aco Brasil. Quando a serie de planos nao estiver disponivel, usa laminados total e informa no titulo.",
+        ),
+        card(
+            "imports",
+            "Importacoes",
+            "imports",
+            "Volume importado informado pelo Instituto Aco Brasil. Nao usa valor em dolar como substituto de volume.",
+        ),
+    ]
+    cards = [item for item in cards if item]
+
+    inda_keys = {
+        "purchases_mom": "inda_compras_variacao_mes_pct",
+        "sales_mom": "inda_vendas_variacao_mes_pct",
+        "stock_mom": "inda_estoque_variacao_mes_pct",
+        "imports_mom": "inda_importacao_variacao_mes_pct",
+    }
+    inda = {key: market_inda_latest(cur, indicator, date_to=date_to) for key, indicator in inda_keys.items()}
+    demand_signal, demand_direction, demand_label = market_steel_signal_from_pct(yoy.get("consumption"), Decimal("3"))
+    production_signal, production_direction, production_label_signal = market_steel_signal_from_pct(yoy.get(production_key), Decimal("3"))
+    import_signal, import_direction, import_label = market_steel_signal_from_pct(yoy.get("imports"), Decimal("10"))
+    stock_value = inda["stock_mom"]["value"] if inda.get("stock_mom") else None
+    inventory_signal, inventory_direction, inventory_label = market_steel_signal_from_pct(stock_value, Decimal("2"))
+    supply_pressure = production_signal + import_signal + inventory_signal
+    demand_supply_gap = None
+    if yoy.get("consumption") is not None and yoy.get(production_key) is not None:
+        demand_supply_gap = yoy["consumption"] - yoy[production_key]
+
+    market_reading = [
+        {
+            "dimension": "DEMANDA INTERNA",
+            "indicator": "Consumo aparente",
+            "value": market_decimal(latest["consumption"]["value"] if latest.get("consumption") else None),
+            "variation": market_decimal(yoy.get("consumption")),
+            "variation_label": "YoY",
+            "direction": demand_direction,
+            "signal": demand_label,
+            "source": f"Aco Brasil | {latest['consumption']['period_label']}" if latest.get("consumption") else "Aco Brasil",
+        },
+        {
+            "dimension": "OFERTA NACIONAL",
+            "indicator": production_label,
+            "value": market_decimal(latest[production_key]["value"] if latest.get(production_key) else None),
+            "variation": market_decimal(yoy.get(production_key)),
+            "variation_label": "YoY",
+            "direction": production_direction,
+            "signal": production_label_signal,
+            "source": f"Aco Brasil | {latest[production_key]['period_label']}" if latest.get(production_key) else "Aco Brasil",
+        },
+        {
+            "dimension": "IMPORTACOES",
+            "indicator": "Importacoes",
+            "value": market_decimal(latest["imports"]["value"] if latest.get("imports") else None),
+            "variation": market_decimal(yoy.get("imports")),
+            "variation_label": "YoY",
+            "direction": import_direction,
+            "signal": "alta forte" if yoy.get("imports") is not None and yoy["imports"] > Decimal("10") else import_label,
+            "source": f"Aco Brasil | {latest['imports']['period_label']}" if latest.get("imports") else "Aco Brasil",
+        },
+        {
+            "dimension": "ESTOQUE DO CANAL",
+            "indicator": "Estoque INDA",
+            "value": market_decimal(stock_value),
+            "variation": market_decimal(stock_value),
+            "variation_label": "MoM",
+            "direction": inventory_direction,
+            "signal": inventory_label,
+            "source": f"INDA | {inda['stock_mom']['period_label']}" if inda.get("stock_mom") else "INDA",
+        },
+    ]
+
+    periods = sorted({item["period_iso"] for values in series.values() for item in values if item.get("period_iso")})
+    series_by_period = {
+        key: {item.get("period_iso"): item for item in values if item.get("period_iso")}
+        for key, values in series.items()
+    }
+
+    def point_yoy_from_series(source_key: str, period_iso: str | None, value: str | Decimal | None) -> Decimal | None:
+        if not period_iso or value is None:
+            return None
+        point_date = date.fromisoformat(period_iso)
+        previous_iso = market_one_year_before(point_date).isoformat()
+        previous = series_by_period.get(source_key, {}).get(previous_iso)
+        previous_value = previous.get("value") if previous else None
+        current_value = Decimal(str(value))
+        return market_pct_change(current_value, previous_value)
+
+    demand_supply_chart = []
+    yoy_chart = []
+    import_pressure_chart = []
+    for period in periods:
+        row: dict[str, Any] = {"period": period, "period_label": period[:7] if period else None}
+        yoy_row: dict[str, Any] = {"period": period, "period_label": period[:7] if period else None}
+        for output_key, source_key in (
+            ("internal_sales", "internal_sales"),
+            ("consumption", "consumption"),
+            ("production", production_key),
+            ("imports", "imports"),
+        ):
+            point = next((item for item in series[source_key] if item.get("period_iso") == period), None)
+            value = point.get("value") if point else None
+            row[output_key] = market_decimal(value)
+            if point and value is not None:
+                point_yoy = point_yoy_from_series(source_key, period, value)
+                yoy_row[output_key] = market_decimal(point_yoy)
+        demand_supply_chart.append(row)
+        yoy_chart.append(yoy_row)
+
+    imports_base = next((numeric for numeric in (Decimal(str(row["imports"])) if row.get("imports") else None for row in demand_supply_chart) if numeric), None)
+    consumption_base = next((numeric for numeric in (Decimal(str(row["consumption"])) if row.get("consumption") else None for row in demand_supply_chart) if numeric), None)
+    for row in demand_supply_chart:
+        imports_value = Decimal(str(row["imports"])) if row.get("imports") else None
+        consumption_value = Decimal(str(row["consumption"])) if row.get("consumption") else None
+        import_pressure_chart.append(
+            {
+                "period": row["period"],
+                "period_label": row["period_label"],
+                "imports_index": market_decimal((imports_value / imports_base) * 100 if imports_value is not None and imports_base else None),
+                "consumption_index": market_decimal((consumption_value / consumption_base) * 100 if consumption_value is not None and consumption_base else None),
+            }
+        )
+
+    distribution = []
+    for key, label in (
+        ("purchases_mom", "Compras"),
+        ("sales_mom", "Vendas"),
+        ("stock_mom", "Estoque"),
+        ("imports_mom", "Importacoes"),
+    ):
+        item = inda.get(key)
+        if item and item.get("value") is not None:
+            distribution.append(
+                {
+                    "metric": label,
+                    "value": market_decimal(item["value"]),
+                    "period": item.get("period_iso"),
+                    "period_label": item.get("period_label"),
+                }
+            )
+
+    readings: list[dict[str, str]] = []
+    if yoy.get("consumption") is not None and yoy.get(production_key) is not None and yoy["consumption"] > Decimal("3") and yoy[production_key] <= Decimal("1"):
+        readings.append({"key": "consumption_above_production", "text": "Consumo esta crescendo acima da producao nacional.", "severity": "attention"})
+    if yoy.get("imports") is not None and yoy["imports"] > Decimal("10"):
+        readings.append({"key": "imports_intensity", "text": "Importacoes estao ganhando intensidade em relacao ao ano anterior.", "severity": "attention"})
+    if inda.get("stock_mom") and inda.get("sales_mom") and inda["stock_mom"]["value"] > Decimal("2") and inda["sales_mom"]["value"] < 0:
+        readings.append({"key": "channel_inventory", "text": "Estoques da distribuicao crescem enquanto vendas recuam.", "severity": "attention"})
+    if yoy.get("consumption") is not None and yoy.get("imports") is not None and yoy["consumption"] > 0 and yoy["imports"] > yoy["consumption"] + Decimal("5"):
+        readings.append({"key": "imports_above_market", "text": "Importacoes crescem acima do ritmo do mercado interno.", "severity": "attention"})
+    if demand_supply_gap is not None:
+        if demand_supply_gap > Decimal("3"):
+            readings.append({"key": "demand_supply_gap", "text": "Demanda cresce mais rapido que a producao de laminados/planos.", "severity": "neutral"})
+        elif demand_supply_gap < Decimal("-3"):
+            readings.append({"key": "demand_supply_gap", "text": "Producao cresce mais rapido que o consumo aparente.", "severity": "neutral"})
+
+    suspect_values = [
+        {
+            "indicator": volume_indicators[key][1],
+            "period": item.get("period_label") or item.get("period_iso"),
+            "raw_value": market_decimal(item.get("raw_value")),
+            "normalized_value": market_decimal(item.get("value")),
+            "rule": "SUSPECT_VALUE",
+        }
+        for key, values in series.items()
+        for item in values
+        if item.get("suspect")
+    ]
+
+    return {
+        "kpis": cards,
+        "market_reading": market_reading,
+        "balance": {
+            "classification": market_steel_balance_classification(demand_signal, supply_pressure),
+            "demand_pressure": demand_signal,
+            "supply_pressure": supply_pressure,
+            "components": {
+                "demand_signal": demand_signal,
+                "production_signal": production_signal,
+                "import_signal": import_signal,
+                "inventory_signal": inventory_signal,
+            },
+            "demand_supply_gap": market_decimal(demand_supply_gap),
+            "demand_supply_gap_label": (
+                "demanda crescendo mais que producao"
+                if demand_supply_gap is not None and demand_supply_gap > Decimal("3")
+                else "producao crescendo mais que demanda"
+                if demand_supply_gap is not None and demand_supply_gap < Decimal("-3")
+                else "crescimento semelhante"
+                if demand_supply_gap is not None
+                else "sem comparativo"
+            ),
+        },
+        "charts": {
+            "demand_supply": demand_supply_chart,
+            "yoy": yoy_chart,
+            "import_pressure": import_pressure_chart,
+            "distribution": distribution,
+        },
+        "decision_readings": readings[:4],
+        "quality": {
+            "suspect_values": suspect_values,
+            "unit_rules": [
+                {"indicator": item["title"], "raw_unit": item.get("raw_unit"), "normalized_unit": item.get("normalized_unit"), "scale_factor": item.get("scale_factor")}
+                for item in cards
+            ],
+        },
+    }
+
+
 def market_comex_summary(cur: Any) -> dict[str, Any]:
     cur.execute("select max(periodo_inicio) from public.fact_steel_import_monthly")
     latest_period = cur.fetchone()[0]
@@ -2935,6 +3333,11 @@ def market_summary(
                 date_from=market_date_from,
                 date_to=market_date_to,
             )
+            steel_decision = market_steel_decision(
+                cur,
+                date_from=market_date_from,
+                date_to=market_date_to,
+            )
 
             steel_series = market_indicator_series(cur, "aco_brasil_estatistica_mensal", "aco_brasil_consumo_aparente_total")
             industry_series = market_indicator_series(cur, "cni_sondagem_industrial", "cni_industria_expectativa_demanda")
@@ -2992,6 +3395,7 @@ def market_summary(
         "steel_market": {
             "indicators": steel_indicators,
             "series": steel_series,
+            "decision": steel_decision,
         },
         "construction": {
             "indicators": construction_indicators,

@@ -324,6 +324,50 @@ export type DashboardSummary = {
     steel_market?: {
       indicators: MarketIndicator[]
       series: MarketSeriesPoint[]
+      decision?: {
+        kpis: Array<{
+          id: string
+          title: string
+          value_tons: string | null
+          unit: string
+          yoy: string | null
+          source: string
+          competence: string | null
+          tooltip: string
+          raw_unit: string | null
+          normalized_unit: string | null
+          scale_factor: string | null
+        }>
+        market_reading: Array<{
+          dimension: string
+          indicator: string
+          value: string | null
+          variation: string | null
+          variation_label: string
+          direction: string
+          signal: string
+          source: string
+        }>
+        balance: {
+          classification: string
+          demand_pressure: number
+          supply_pressure: number
+          components: Record<string, number>
+          demand_supply_gap: string | null
+          demand_supply_gap_label: string
+        }
+        charts: {
+          demand_supply: Array<{ period: string | null; period_label: string | null; internal_sales?: string | null; consumption?: string | null; production?: string | null; imports?: string | null }>
+          yoy: Array<{ period: string | null; period_label: string | null; internal_sales?: string | null; consumption?: string | null; production?: string | null; imports?: string | null }>
+          import_pressure: Array<{ period: string | null; period_label: string | null; imports_index?: string | null; consumption_index?: string | null }>
+          distribution: Array<{ metric: string; value: string | null; period: string | null; period_label: string | null }>
+        }
+        decision_readings: Array<{ key: string; text: string; severity: string }>
+        quality: {
+          suspect_values: Array<{ indicator: string; period: string | null; raw_value: string | null; normalized_value: string | null; rule: string }>
+          unit_rules: Array<{ indicator: string; raw_unit: string | null; normalized_unit: string | null; scale_factor: string | null }>
+        }
+      }
     }
     prices?: {
       ptax?: {

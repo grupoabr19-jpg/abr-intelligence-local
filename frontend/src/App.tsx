@@ -25,6 +25,7 @@ import {
   Legend,
   Line,
   LineChart as ReLineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Scatter,
   ScatterChart,
@@ -245,7 +246,7 @@ function lastCompleteTwelveMonthsRange(cutoff = DEFAULT_DATE_TO) {
 function marketDefaultFilter(tab: IntelligenceTab): MarketFilterState {
   const monthsByTab: Partial<Record<IntelligenceTab, number>> = {
     'market-overview': 12,
-    'steel-market': 12,
+    'steel-market': 24,
     'market-prices': 6,
     imports: 12,
     industry: 24,
@@ -2201,6 +2202,7 @@ function MarketFilterBar({
   const showSegment = ['industry', 'construction'].includes(tab)
   const showRelevance = tab === 'opportunities'
   const showSnapshot = tab === 'competition'
+  const steelShortcuts = tab === 'steel-market' ? [12, 24, 36] : []
 
   return (
     <form className="toolbar market-filter-bar" aria-label="Filtros de mercado" onSubmit={submit}>
@@ -2225,6 +2227,21 @@ function MarketFilterBar({
             <option value="TELHAS">Telhas</option>
           </select>
         </label>
+      )}
+      {steelShortcuts.length > 0 && (
+        <div className="shortcut-group" aria-label="Atalhos de periodo">
+          {steelShortcuts.map((months) => (
+            <button
+              className="ghost-button compact"
+              key={months}
+              type="button"
+              disabled={loading}
+              onClick={() => onChange({ dateFrom: dateMonthsAgo(months, value.dateTo), dateTo: value.dateTo })}
+            >
+              {months}M
+            </button>
+          ))}
+        </div>
       )}
       {showCountry && (
         <label className="control">
@@ -2284,7 +2301,7 @@ function MarketFilterBar({
         <RefreshCw size={16} className={loading ? 'spin' : ''} />
         Aplicar
       </button>
-      {tab === 'market-overview' && (
+      {['market-overview', 'steel-market'].includes(tab) && (
         <button className="ghost-button" type="button" disabled={loading} onClick={onReset}>
           Restaurar padrao
         </button>
@@ -2297,7 +2314,7 @@ function MarketTab({ summary, tab, title, onNavigate }: { summary?: MarketSummar
   if (!summary) return <UnavailableTab title={title} />
 
   if (tab === 'market-overview') return <MarketOverview summary={summary} onNavigate={onNavigate} />
-  if (tab === 'steel-market') return <MarketIndicatorTab title="Mercado do Aco" icon={<BarChart3 size={17} />} data={summary.steel_market} unitFallback="mil t" />
+  if (tab === 'steel-market') return <MarketSteelTab summary={summary} />
   if (tab === 'market-prices') return <MarketPricesTab summary={summary} />
   if (tab === 'imports') return <MarketImportsTab summary={summary} />
   if (tab === 'industry') return <MarketDemandTab summary={summary} />
@@ -2455,6 +2472,197 @@ function MarketOverview({ summary, onNavigate }: { summary: MarketSummary; onNav
         {readingRows.length > 0 && (
           <Panel title="Leituras para decisao" icon={<AlertTriangle size={17} />} wide>
             <DataTable columns={['Leitura']} rows={readingRows} empty="Sem leituras geradas para o periodo" />
+          </Panel>
+        )}
+      </section>
+    </>
+  )
+}
+
+function steelVolume(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return 'Sem dados'
+  const number = numericValue(value)
+  if (!Number.isFinite(number)) return 'Sem dados'
+  if (Math.abs(number) >= 1_000_000) return `${marketNumber(number / 1_000_000, 2)} milhoes t`
+  if (Math.abs(number) >= 1_000) return `${marketNumber(number / 1_000, 1)} mil t`
+  return `${marketNumber(number, 0)} t`
+}
+
+function signedMarketPercent(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return 'Sem comparativo'
+  const number = numericValue(value)
+  const sign = number > 0 ? '+' : ''
+  return `${sign}${percent(number)}`
+}
+
+function MarketSteelTab({ summary }: { summary: MarketSummary }) {
+  const steel = summary.steel_market?.decision
+  if (!steel) return <UnavailableTab title="Mercado do Aco" />
+
+  const toNumber = (value: string | null | undefined) => nullableNumericValue(value)
+  const demandSupplyChart = steel.charts.demand_supply.map((item) => ({
+    period_label: item.period_label ? monthLabel(item.period_label) : 'Periodo',
+    internal_sales: toNumber(item.internal_sales),
+    consumption: toNumber(item.consumption),
+    production: toNumber(item.production),
+    imports: toNumber(item.imports),
+  }))
+  const yoyChart = steel.charts.yoy.map((item) => ({
+    period_label: item.period_label ? monthLabel(item.period_label) : 'Periodo',
+    internal_sales: toNumber(item.internal_sales),
+    consumption: toNumber(item.consumption),
+    production: toNumber(item.production),
+    imports: toNumber(item.imports),
+  }))
+  const importPressureChart = steel.charts.import_pressure.map((item) => ({
+    period_label: item.period_label ? monthLabel(item.period_label) : 'Periodo',
+    imports_index: toNumber(item.imports_index),
+    consumption_index: toNumber(item.consumption_index),
+  }))
+  const distributionChart = steel.charts.distribution.map((item) => ({
+    metric: item.metric,
+    value_numero: toNumber(item.value),
+    period_label: item.period_label ?? (item.period ? monthLabel(item.period.slice(0, 7)) : ''),
+  }))
+  const marketReadingRows = steel.market_reading.map((item) => [
+    item.dimension,
+    item.indicator,
+    item.value === null ? 'Sem dados' : item.variation_label === 'MoM' ? signedMarketPercent(item.variation) : steelVolume(item.value),
+    `${signedMarketPercent(item.variation)} ${item.variation_label}`,
+    `${item.direction} ${item.signal}`,
+    item.source,
+  ])
+  const balanceRows = [
+    ['Demanda', String(steel.balance.components.demand_signal ?? 0)],
+    ['Producao', String(steel.balance.components.production_signal ?? 0)],
+    ['Importacoes', String(steel.balance.components.import_signal ?? 0)],
+    ['Estoque INDA', String(steel.balance.components.inventory_signal ?? 0)],
+    ['DemandSupplyGap', `${signedMarketPercent(steel.balance.demand_supply_gap)} p.p. - ${steel.balance.demand_supply_gap_label}`],
+  ]
+  const readingRows = steel.decision_readings.map((item) => [item.text])
+  const suspectRows = steel.quality.suspect_values.map((item) => [
+    item.indicator,
+    item.period ?? 'Sem periodo',
+    item.raw_value ?? 'Sem valor',
+    item.normalized_value ?? 'Bloqueado',
+    item.rule,
+  ])
+
+  return (
+    <>
+      {steel.kpis.length > 0 && (
+        <section className="kpi-grid">
+          {steel.kpis.map((item) => (
+            <Kpi
+              key={item.id}
+              title={item.title}
+              displayValue={steelVolume(item.value_tons)}
+              detail={`${signedMarketPercent(item.yoy)} YoY | ${item.source}${item.competence ? ` | ${item.competence}` : ''}`}
+              icon={item.id === 'imports' ? <Boxes /> : <LineChartIcon />}
+              tooltip={`${item.tooltip} Fonte: ${item.source}. Competencia: ${item.competence ?? 'sem competencia'}. Unidade: ${item.raw_unit ?? 'n/d'} x ${item.scale_factor ?? '1'} = ${item.normalized_unit ?? item.unit}.`}
+            />
+          ))}
+        </section>
+      )}
+
+      <section className="dashboard-grid">
+        <Panel title="Leitura do mercado" icon={<Gauge size={17} />} wide>
+          <DataTable columns={['Sinal', 'Indicador', 'Valor', 'Variacao', 'Direcao', 'Fonte']} rows={marketReadingRows} empty="Sem leitura de mercado para o periodo" />
+        </Panel>
+
+        {demandSupplyChart.length > 0 && (
+          <Panel title="Demanda x oferta no mercado brasileiro" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={demandSupplyChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="period_label" />
+                  <YAxis tickFormatter={(value) => steelVolume(value).replace(' t', '')} />
+                  <Tooltip formatter={(value, name) => [steelVolume(String(value)), name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Line connectNulls={false} type="monotone" dataKey="consumption" name="Consumo aparente" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                  <Line connectNulls={false} type="monotone" dataKey="internal_sales" name="Vendas internas" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                  <Line connectNulls={false} type="monotone" dataKey="production" name="Producao planos/laminados" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+
+        {yoyChart.length > 0 && (
+          <Panel title="Variacao anual dos principais indicadores" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={yoyChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="period_label" />
+                  <YAxis tickFormatter={(value) => `${marketNumber(value, 1)}%`} />
+                  <Tooltip formatter={(value, name) => [`${marketNumber(String(value), 1)}%`, name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <ReferenceLine y={0} stroke="#6B7280" />
+                  <Bar dataKey="internal_sales" name="Vendas internas YoY" fill="#253575" radius={[5, 5, 0, 0]} />
+                  <Bar dataKey="consumption" name="Consumo aparente YoY" fill="#F18800" radius={[5, 5, 0, 0]} />
+                  <Bar dataKey="production" name="Producao YoY" fill="#12805C" radius={[5, 5, 0, 0]} />
+                  <Bar dataKey="imports" name="Importacoes YoY" fill="#6B7280" radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+
+        {importPressureChart.length > 0 && (
+          <Panel title="Pressao das importacoes" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={importPressureChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="period_label" />
+                  <YAxis tickFormatter={(value) => marketNumber(value, 0)} />
+                  <Tooltip formatter={(value, name) => [marketNumber(String(value), 1), name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Line connectNulls={false} type="monotone" dataKey="imports_index" name="Importacoes Base 100" stroke="#B42318" strokeWidth={3} dot={{ r: 3 }} />
+                  <Line connectNulls={false} type="monotone" dataKey="consumption_index" name="Consumo Base 100" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+
+        {distributionChart.length > 0 && (
+          <Panel title="Rede de distribuicao de acos planos" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={distributionChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="metric" />
+                  <YAxis tickFormatter={(value) => `${marketNumber(value, 1)}%`} />
+                  <Tooltip formatter={(value, name) => [`${marketNumber(String(value), 1)}%`, name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <ReferenceLine y={0} stroke="#6B7280" />
+                  <Bar dataKey="value_numero" name="Variacao mensal INDA" fill="#F18800" radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+
+        <Panel title="Balanco do mercado" icon={<Gauge size={17} />} wide>
+          <div className="balance-callout">
+            <strong>{steel.balance.classification}</strong>
+            <span>Demanda: {steel.balance.demand_pressure} | Oferta: {steel.balance.supply_pressure}</span>
+          </div>
+          <DataTable columns={['Componente', 'Sinal']} rows={balanceRows} empty="Sem componentes de balanco" />
+        </Panel>
+
+        {readingRows.length > 0 && (
+          <Panel title="Leituras do mercado do aco" icon={<AlertTriangle size={17} />} wide>
+            <DataTable columns={['Leitura']} rows={readingRows} empty="Sem leituras matematicas para o periodo" />
+          </Panel>
+        )}
+
+        {suspectRows.length > 0 && (
+          <Panel title="Valores suspeitos bloqueados" icon={<AlertTriangle size={17} />} wide>
+            <DataTable columns={['Indicador', 'Periodo', 'Valor bruto', 'Valor normalizado', 'Regra']} rows={suspectRows} empty="Nenhum valor suspeito encontrado" />
           </Panel>
         )}
       </section>
