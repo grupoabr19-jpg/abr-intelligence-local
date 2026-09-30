@@ -2279,6 +2279,7 @@ function MarketOverview({ summary }: { summary: MarketSummary }) {
     `${formatNumber(item.available_components_count)} componentes`,
     item.period ? monthLabel(item.period.slice(0, 7)) : 'Sem periodo',
   ])
+  const macroSignal = (summary.decision_layer?.cockpit ?? []).find((item) => item.signal_key === 'macro_industrial_context')
 
   return (
     <>
@@ -2286,7 +2287,7 @@ function MarketOverview({ summary }: { summary: MarketSummary }) {
         <Kpi title="Fontes saudaveis" displayValue={formatNumber(summary.overview.healthy_count)} detail={`${formatNumber(summary.overview.configured_count)} fontes configuradas`} icon={<CheckCircle2 />} />
         <Kpi title="Fontes com erro" displayValue={formatNumber(summary.overview.error_count)} detail="Nao exibidas como aba operacional" icon={<AlertTriangle />} />
         <Kpi title="Abas ativas" displayValue={formatNumber(summary.available_tabs.length)} detail="Somente com fonte saudavel" icon={<TableProperties />} />
-        <Kpi title="Indicadores carregados" displayValue={formatNumber(summary.overview.latest_periods.reduce((sum, item) => sum + Number(item.rows || 0), 0))} detail="Linhas agregadas de mercado" icon={<Database />} />
+        <Kpi title="Macro industrial" displayValue={macroSignal?.classification ?? 'Sem sinal'} detail={macroSignal?.period ? `World Bank | ${monthLabel(macroSignal.period.slice(0, 7))}` : 'World Bank'} icon={<Database />} />
       </section>
       <section className="dashboard-grid">
         <Panel title="Sinais decisorios" icon={<Gauge size={17} />} wide>
@@ -2531,6 +2532,7 @@ function MarketImportsTab({ summary }: { summary: MarketSummary }) {
 function MarketConstructionTab({ summary }: { summary: MarketSummary }) {
   const construction = summary.construction
   const works = construction?.public_works
+  const worksSignal = (summary.decision_layer?.cockpit ?? []).find((item) => item.signal_key === 'public_works_pipeline')
   const worksRows = (works?.top_regions ?? []).map((item) => [
     item.uf,
     formatNumber(item.projects),
@@ -2543,7 +2545,7 @@ function MarketConstructionTab({ summary }: { summary: MarketSummary }) {
           <Kpi title="Projetos publicos" displayValue={formatNumber(works.kpis.projects)} detail="ObrasGov consolidado" icon={<CheckCircle2 />} />
           <Kpi title="Investimento previsto" displayValue={money(works.kpis.investment)} detail="ObrasGov consolidado" icon={<CircleDollarSign />} />
           <Kpi title="Empregos estimados" displayValue={formatNumber(works.kpis.jobs)} detail="Informado nos projetos" icon={<Gauge />} />
-          <Kpi title="Fontes ativas" displayValue={formatNumber(['ibge_construcao_sidra', 'cni_sondagem_construcao', 'obrasgov_projetos'].filter((key) => summary.healthy_sources.includes(key)).length)} detail="IBGE, CNI e ObrasGov" icon={<Database />} />
+          <Kpi title="Sinal ObrasGov" displayValue={worksSignal?.classification ?? 'Sem sinal'} detail={worksSignal?.period ? `Periodo ${monthLabel(worksSignal.period.slice(0, 7))}` : 'IBGE, CNI e ObrasGov'} icon={<Database />} />
         </section>
       )}
       <MarketIndicatorTab title="Construcao" icon={<BarChart3 size={17} />} data={construction} unitFallback="indice" />

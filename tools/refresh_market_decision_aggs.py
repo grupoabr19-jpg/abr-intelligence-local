@@ -610,7 +610,134 @@ def upsert_cockpit(cur: Any) -> int:
         """
     )
     solar_rows = cur.rowcount if cur.rowcount is not None else 0
-    return base_rows + solar_rows
+    cur.execute(
+        """
+        insert into public.agg_market_cockpit(
+          periodo_inicio, signal_key, family, title, classification, score,
+          available_components_count, drivers, target_tab, source_periods, refreshed_at
+        )
+        with latest_macro as (
+          select max(periodo_inicio) as periodo_inicio
+          from public.fact_world_bank_macro
+          where valor is not null
+        ),
+        macro as (
+          select
+            fwm.periodo_inicio,
+            fwm.country_code,
+            fwm.indicator_code,
+            fwm.indicator_name,
+            fwm.valor
+          from public.fact_world_bank_macro fwm
+          join latest_macro lm on lm.periodo_inicio = fwm.periodo_inicio
+          where fwm.valor is not null
+            and fwm.country_code in ('BRA', 'CHN', 'WLD')
+            and fwm.indicator_code in ('NY.GDP.MKTP.KD.ZG', 'NV.IND.TOTL.KD.ZG', 'NV.IND.MANF.KD.ZG')
+        ),
+        scored as (
+          select
+            max(periodo_inicio) as periodo_inicio,
+            count(*)::int as available_components_count,
+            sum(
+              case
+                when valor >= 3 then 1
+                when valor <= 0 then -1
+                else 0
+              end
+            )::int as score,
+            jsonb_agg(
+              jsonb_build_object(
+                'name', country_code || ' - ' || indicator_name,
+                'source', 'world_bank_wdi',
+                'indicator', indicator_code,
+                'value', valor,
+                'period', periodo_inicio
+              )
+              order by country_code, indicator_code
+            ) as drivers,
+            jsonb_object_agg(country_code || '_' || indicator_code, periodo_inicio::text) as source_periods
+          from macro
+        )
+        select
+          periodo_inicio,
+          'macro_industrial_context',
+          '',
+          'Contexto macro industrial',
+          case
+            when available_components_count < 3 then 'INSUFFICIENT_DATA'
+            when score >= 2 then 'FAVORAVEL'
+            when score <= -2 then 'DESFAVORAVEL'
+            else 'MISTO / NEUTRO'
+          end,
+          score,
+          available_components_count,
+          drivers,
+          'market-overview',
+          source_periods,
+          now()
+        from scored
+        where periodo_inicio is not null
+        """
+    )
+    macro_rows = cur.rowcount if cur.rowcount is not None else 0
+    cur.execute(
+        """
+        insert into public.agg_market_cockpit(
+          periodo_inicio, signal_key, family, title, classification, score,
+          available_components_count, drivers, target_tab, source_periods, refreshed_at
+        )
+        with latest_obras as (
+          select max(periodo_inicio) as periodo_inicio
+          from public.fact_obrasgov_investments
+        ),
+        obras as (
+          select
+            foi.periodo_inicio,
+            sum(foi.projetos)::int as projetos,
+            sum(foi.investimento_previsto) as investimento_previsto,
+            sum(foi.empregos_gerados) as empregos_gerados,
+            count(distinct foi.uf)::int as ufs
+          from public.fact_obrasgov_investments foi
+          join latest_obras lo on lo.periodo_inicio = foi.periodo_inicio
+          group by foi.periodo_inicio
+        )
+        select
+          periodo_inicio,
+          'public_works_pipeline',
+          '',
+          'ObrasGov - pipeline publico',
+          case
+            when projetos is null or projetos = 0 then 'INSUFFICIENT_DATA'
+            when investimento_previsto >= 10000000000 then 'ALTA OPORTUNIDADE'
+            when investimento_previsto >= 1000000000 then 'OPORTUNIDADE MODERADA'
+            else 'BAIXA OPORTUNIDADE'
+          end,
+          case
+            when projetos is null or projetos = 0 then null
+            when investimento_previsto >= 10000000000 then 1
+            when investimento_previsto >= 1000000000 then 0
+            else -1
+          end,
+          case when projetos is null or projetos = 0 then 1 else 4 end,
+          jsonb_build_array(
+            jsonb_build_object(
+              'name', 'ObrasGov projetos cadastrados',
+              'source', 'obrasgov_projetos',
+              'projects', projetos,
+              'investment', investimento_previsto,
+              'jobs', empregos_gerados,
+              'ufs', ufs
+            )
+          ),
+          'construction',
+          jsonb_build_object('obrasgov_projetos', periodo_inicio::text),
+          now()
+        from obras
+        where periodo_inicio is not null
+        """
+    )
+    obras_rows = cur.rowcount if cur.rowcount is not None else 0
+    return base_rows + solar_rows + macro_rows + obras_rows
 
 
 def refresh() -> dict[str, Any]:
