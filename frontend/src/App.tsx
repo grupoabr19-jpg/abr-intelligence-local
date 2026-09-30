@@ -2244,7 +2244,7 @@ function MarketTab({ summary, tab, title }: { summary?: MarketSummary; tab: Inte
   if (tab === 'steel-market') return <MarketIndicatorTab title="Mercado do Aco" icon={<BarChart3 size={17} />} data={summary.steel_market} unitFallback="mil t" />
   if (tab === 'market-prices') return <MarketPricesTab summary={summary} />
   if (tab === 'imports') return <MarketImportsTab summary={summary} />
-  if (tab === 'industry') return <MarketIndicatorTab title="Industria" icon={<Gauge size={17} />} data={summary.industry} unitFallback="indice" />
+  if (tab === 'industry') return <MarketDemandTab summary={summary} />
   if (tab === 'construction') return <MarketConstructionTab summary={summary} />
   if (tab === 'opportunities') return <MarketOpportunitiesTab summary={summary} />
   if (tab === 'solar') return <MarketSolarTab summary={summary} />
@@ -2370,6 +2370,26 @@ function MarketIndicatorTab({
           <DataTable columns={['Fonte', 'Indicador', 'Periodo', 'Geografia', 'Valor']} rows={rows} empty="Sem indicadores carregados" />
         </Panel>
       </section>
+    </>
+  )
+}
+
+function MarketDemandTab({ summary }: { summary: MarketSummary }) {
+  const demandRows = (summary.decision_layer?.demand_family ?? []).map((item) => [
+    item.family,
+    item.classification,
+    item.score === null || item.score === undefined ? 'Sem score' : formatNumber(item.score),
+    `${formatNumber(item.available_components_count)} drivers`,
+    item.period ? monthLabel(item.period.slice(0, 7)) : 'Sem periodo',
+  ])
+  return (
+    <>
+      <section className="dashboard-grid">
+        <Panel title="Demanda por familia" icon={<Gauge size={17} />} wide>
+          <DataTable columns={['Familia', 'Classificacao', 'Score', 'Base', 'Periodo']} rows={demandRows} empty="Demanda por familia ainda nao recalculada" />
+        </Panel>
+      </section>
+      <MarketIndicatorTab title="Industria" icon={<Gauge size={17} />} data={summary.industry} unitFallback="indice" />
     </>
   )
 }

@@ -92,6 +92,35 @@ def classify_score(score: int | None, available: int, positive_label: str, negat
     return "MISTA / NEUTRA", "OK"
 
 
+def latest_series_period(series: dict[date, Decimal], cutoff: date) -> date | None:
+    candidates = [period for period in series if period <= cutoff]
+    return max(candidates) if candidates else None
+
+
+def previous_year_period(period: date) -> date:
+    return date(period.year - 1, period.month, 1)
+
+
+def latest_series_change(series: dict[date, Decimal], cutoff: date) -> tuple[Decimal | None, date | None, Decimal | None]:
+    current_period = latest_series_period(series, cutoff)
+    if not current_period:
+        return None, None, None
+    change = pct_change(series.get(current_period), series.get(previous_year_period(current_period)))
+    return change, current_period, series.get(current_period)
+
+
+def compact_signal(signals: list[int | None]) -> int | None:
+    valid = [item for item in signals if item is not None]
+    if not valid:
+        return None
+    score = sum(valid)
+    if score > 0:
+        return 1
+    if score < 0:
+        return -1
+    return 0
+
+
 def fetch_monthly_indicator(cur: Any, source_key: str, indicator_key: str) -> dict[date, Decimal]:
     cur.execute(
         """
@@ -106,6 +135,64 @@ def fetch_monthly_indicator(cur: Any, source_key: str, indicator_key: str) -> di
         (source_key, indicator_key),
     )
     return {row[0]: as_decimal(row[1]) for row in cur.fetchall()}
+
+
+def latest_indicator_value(cur: Any, source_key: str, indicator_key: str, period: date) -> tuple[Decimal | None, date | None, str | None]:
+    cur.execute(
+        """
+        select valor, periodo_inicio, periodo_label
+        from public.mercado_indicadores
+        where source_key = %s
+          and indicador_key = %s
+          and periodo_inicio <= %s
+          and valor is not null
+        order by periodo_inicio desc nulls last, coletado_em desc
+        limit 1
+        """,
+        (source_key, indicator_key, period),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None, None, None
+    return as_decimal(row[0]), row[1], row[2]
+
+
+def latest_drivers_from_patterns(cur: Any, source_key: str, patterns: tuple[str, ...], period: date, limit: int = 12) -> list[Driver]:
+    clauses = " or ".join(["indicador_key ilike %s or indicador_nome ilike %s" for _ in patterns])
+    params: list[Any] = []
+    for pattern in patterns:
+        params.extend([f"%{pattern}%", f"%{pattern}%"])
+    cur.execute(
+        f"""
+        select indicador_nome, valor, periodo_label, source_key
+        from (
+          select
+            indicador_key,
+            indicador_nome,
+            valor,
+            periodo_label,
+            source_key,
+            row_number() over (
+              partition by indicador_key
+              order by periodo_inicio desc nulls last, coletado_em desc
+            ) as ordem
+          from public.mercado_indicadores
+          where source_key = %s
+            and periodo_inicio <= %s
+            and valor is not null
+            and ({clauses})
+        ) ranked
+        where ordem = 1
+        order by indicador_nome
+        limit %s
+        """,
+        [source_key, period, *params, limit],
+    )
+    rows = cur.fetchall()
+    return [
+        Driver(row[0], as_decimal(row[1]), cni_signal(as_decimal(row[1])), row[3], row[2])
+        for row in rows
+    ]
 
 
 def latest_driver_from_patterns(cur: Any, source_key: str, patterns: tuple[str, ...], period: date) -> Driver | None:
@@ -136,45 +223,64 @@ def latest_driver_from_patterns(cur: Any, source_key: str, patterns: tuple[str, 
 def upsert_price_pressure(cur: Any) -> int:
     ptax = fetch_monthly_indicator(cur, "bcb_dolar_ptax", "bcb_ptax_cotacaoVenda")
     consumption = fetch_monthly_indicator(cur, "aco_brasil_estatistica_mensal", "aco_brasil_consumo_aparente_total")
+    internal_sales = fetch_monthly_indicator(cur, "aco_brasil_estatistica_mensal", "aco_brasil_vendas_internas_total")
     cur.execute("select max(periodo_inicio) from public.mercado_indicadores")
     latest = cur.fetchone()[0]
     if not latest:
         return 0
     period = month_start(latest)
 
-    previous_month = date(period.year - 1, period.month, 1) if period.year > 1 else None
     rows = []
     for family in FAMILIES:
-        fx_change = pct_change(ptax.get(period), ptax.get(previous_month)) if previous_month else None
+        fx_change, fx_period, fx_value = latest_series_change(ptax, period)
         fx_signal = signal_from_pct(fx_change)
 
-        demand_change = pct_change(consumption.get(period), consumption.get(previous_month)) if previous_month else None
-        demand_signal = signal_from_pct(demand_change, Decimal("3"))
+        consumption_change, consumption_period, consumption_value = latest_series_change(consumption, period)
+        consumption_signal = signal_from_pct(consumption_change, Decimal("3"))
+        sales_change, sales_period, sales_value = latest_series_change(internal_sales, period)
+        sales_signal = signal_from_pct(sales_change, Decimal("3"))
+        demand_signal = compact_signal([consumption_signal, sales_signal])
+
+        family_keys = [key for key, value in COMEX_TO_DECISION_FAMILY.items() if value == family]
+        cur.execute(
+            """
+            select max(periodo_inicio)
+            from public.fact_steel_import_monthly
+            where periodo_inicio <= %s
+              and familia_abr = any(%s)
+            """,
+            (period, family_keys),
+        )
+        import_period = cur.fetchone()[0]
 
         cur.execute(
             """
             with current_3m as (
               select coalesce(sum(toneladas), 0) tons, coalesce(sum(vl_fob_usd), 0) fob
               from public.fact_steel_import_monthly
-              where periodo_inicio between (%s::date - interval '2 months') and %s::date
+              where %s::date is not null
+                and periodo_inicio between (%s::date - interval '2 months') and %s::date
                 and familia_abr = any(%s)
             ),
             previous_3m as (
               select coalesce(sum(toneladas), 0) tons, coalesce(sum(vl_fob_usd), 0) fob
               from public.fact_steel_import_monthly
-              where periodo_inicio between (%s::date - interval '1 year' - interval '2 months') and (%s::date - interval '1 year')
+              where %s::date is not null
+                and periodo_inicio between (%s::date - interval '1 year' - interval '2 months') and (%s::date - interval '1 year')
                 and familia_abr = any(%s)
             )
             select current_3m.tons, current_3m.fob, previous_3m.tons, previous_3m.fob
             from current_3m, previous_3m
             """,
             (
-                period,
-                period,
-                [key for key, value in COMEX_TO_DECISION_FAMILY.items() if value == family],
-                period,
-                period,
-                [key for key, value in COMEX_TO_DECISION_FAMILY.items() if value == family],
+                import_period,
+                import_period,
+                import_period,
+                family_keys,
+                import_period,
+                import_period,
+                import_period,
+                family_keys,
             ),
         )
         tons_now, fob_now, tons_prev, fob_prev = [as_decimal(item) for item in cur.fetchone()]
@@ -184,21 +290,38 @@ def upsert_price_pressure(cur: Any) -> int:
         fob_prev_t = fob_prev / tons_prev if tons_prev and tons_prev != 0 else None
         fob_signal = signal_from_pct(pct_change(fob_now_t, fob_prev_t))
 
-        inda = latest_driver_from_patterns(cur, "inda_estatisticas", ("estoque",), period)
-        inda_signal = -inda.signal if inda and inda.signal is not None else None
+        inda_stock_yoy, inda_period, _ = latest_indicator_value(cur, "inda_estatisticas", "inda_estoque_variacao_ano_pct", period)
+        inda_stock_mom, inda_mom_period, _ = latest_indicator_value(cur, "inda_estatisticas", "inda_estoque_variacao_mes_pct", period)
+        inda_signal = compact_signal([
+            inverse_supply_signal(inda_stock_yoy, Decimal("5")),
+            inverse_supply_signal(inda_stock_mom, Decimal("3")),
+        ])
 
-        signals = [fx_signal, fob_signal, import_signal, inda_signal, demand_signal]
+        signals = [fx_signal, fob_signal, import_signal, inda_signal, consumption_signal, sales_signal]
         available = len([item for item in signals if item is not None])
         score = sum(item for item in signals if item is not None) if available else None
         classification, status = classify_score(score, available, "PRESSAO DE ALTA", "PRESSAO DE BAIXA")
         components = {
             "fx_change_pct": str(fx_change) if fx_change is not None else None,
+            "fx_value": str(fx_value) if fx_value is not None else None,
             "fob_usd_t": str(fob_now_t) if fob_now_t is not None else None,
             "import_3m_yoy_pct": str(import_change) if import_change is not None else None,
+            "inda_stock_yoy_pct": str(inda_stock_yoy) if inda_stock_yoy is not None else None,
+            "inda_stock_mom_pct": str(inda_stock_mom) if inda_stock_mom is not None else None,
             "inda_stock_signal": inda_signal,
-            "demand_yoy_pct": str(demand_change) if demand_change is not None else None,
+            "aco_consumption_yoy_pct": str(consumption_change) if consumption_change is not None else None,
+            "aco_internal_sales_yoy_pct": str(sales_change) if sales_change is not None else None,
         }
-        rows.append((period, family, fx_signal, fob_signal, import_signal, inda_signal, demand_signal, score, classification, available, status, components))
+        source_periods = {
+            "analysis_period": period.isoformat(),
+            "ptax": fx_period.isoformat() if fx_period else None,
+            "comex": import_period.isoformat() if import_period else None,
+            "inda_stock_yoy": inda_period.isoformat() if inda_period else None,
+            "inda_stock_mom": inda_mom_period.isoformat() if inda_mom_period else None,
+            "aco_consumption": consumption_period.isoformat() if consumption_period else None,
+            "aco_internal_sales": sales_period.isoformat() if sales_period else None,
+        }
+        rows.append((period, family, fx_signal, fob_signal, import_signal, inda_signal, demand_signal, score, classification, available, status, components, source_periods))
 
     cur.executemany(
         """
@@ -225,9 +348,9 @@ def upsert_price_pressure(cur: Any) -> int:
         """,
         [
             (
-                *row[:-1],
+                *row[:-2],
+                json.dumps(row[-2], ensure_ascii=False),
                 json.dumps(row[-1], ensure_ascii=False),
-                json.dumps({"period": period.isoformat()}, ensure_ascii=False),
             )
             for row in rows
         ],
@@ -237,20 +360,54 @@ def upsert_price_pressure(cur: Any) -> int:
 
 def demand_drivers(cur: Any, family: str, period: date) -> list[Driver]:
     drivers: list[Driver] = []
-    for source, patterns in (
-        ("ibge_pim_sidra", ("produto", "metal", "metalurgia", "maquina")),
-        ("cni_sondagem_industrial", ("demanda", "compras", "producao")),
-        ("ibge_construcao_sidra", ("construcao",)),
-        ("cni_sondagem_construcao", ("atividade", "insumos", "empreendimentos")),
+    industry_drivers = latest_drivers_from_patterns(
+        cur,
+        "cni_sondagem_industrial",
+        ("demanda", "compras", "producao", "capacidade", "empregados", "estoque"),
+        period,
+        limit=10,
+    )
+    construction_drivers = latest_drivers_from_patterns(
+        cur,
+        "cni_sondagem_construcao",
+        ("atividade", "compras", "insumos", "empreendimentos", "empregados"),
+        period,
+        limit=10,
+    )
+
+    pim_change, pim_period, pim_value = latest_series_change(fetch_monthly_indicator(cur, "ibge_pim_sidra", "ibge_pim_producao_fisica"), period)
+    if pim_period:
+        drivers.append(Driver("IBGE PIM producao fisica YoY", pim_value, signal_from_pct(pim_change, Decimal("2")), "ibge_pim_sidra", pim_period.isoformat()))
+    construction_change, construction_period, construction_value = latest_series_change(fetch_monthly_indicator(cur, "ibge_construcao_sidra", "ibge_construcao_indice"), period)
+    if construction_period:
+        drivers.append(Driver("IBGE construcao indice YoY", construction_value, signal_from_pct(construction_change, Decimal("2")), "ibge_construcao_sidra", construction_period.isoformat()))
+
+    consumption_change, consumption_period, consumption_value = latest_series_change(
+        fetch_monthly_indicator(cur, "aco_brasil_estatistica_mensal", "aco_brasil_consumo_aparente_total"),
+        period,
+    )
+    if consumption_period:
+        drivers.append(Driver("Aco Brasil consumo aparente YoY", consumption_value, signal_from_pct(consumption_change, Decimal("3")), "aco_brasil_estatistica_mensal", consumption_period.isoformat()))
+    sales_change, sales_period, sales_value = latest_series_change(
+        fetch_monthly_indicator(cur, "aco_brasil_estatistica_mensal", "aco_brasil_vendas_internas_total"),
+        period,
+    )
+    if sales_period:
+        drivers.append(Driver("Aco Brasil vendas internas YoY", sales_value, signal_from_pct(sales_change, Decimal("3")), "aco_brasil_estatistica_mensal", sales_period.isoformat()))
+
+    for indicator_key, label, threshold in (
+        ("inda_vendas_variacao_ano_pct", "INDA vendas variacao anual", Decimal("3")),
+        ("inda_compras_variacao_ano_pct", "INDA compras variacao anual", Decimal("3")),
     ):
-        driver = latest_driver_from_patterns(cur, source, patterns, period)
-        if driver:
-            drivers.append(driver)
-    if family == "CHAPAS":
-        return [item for item in drivers if item.source in {"ibge_pim_sidra", "cni_sondagem_industrial"}]
+        value, driver_period, period_label = latest_indicator_value(cur, "inda_estatisticas", indicator_key, period)
+        if driver_period:
+            drivers.append(Driver(label, value, signal_from_pct(value, threshold), "inda_estatisticas", period_label or driver_period.isoformat()))
+
+    if family in {"CHAPAS", "TUBOS / METALONS"}:
+        return [*industry_drivers, *drivers]
     if family in {"PERFIS", "TELHAS"}:
-        return [item for item in drivers if item.source in {"ibge_construcao_sidra", "cni_sondagem_construcao"}]
-    return drivers
+        return [*construction_drivers, *drivers]
+    return [*industry_drivers, *construction_drivers, *drivers]
 
 
 def upsert_demand_family(cur: Any) -> int:
@@ -283,7 +440,11 @@ def upsert_demand_family(cur: Any) -> int:
             }
             for item in drivers
         ]
-        rows.append((period, family, score, classification, available, status, payload))
+        source_periods: dict[str, list[str]] = defaultdict(list)
+        for item in drivers:
+            if item.period and item.period not in source_periods[item.source]:
+                source_periods[item.source].append(item.period)
+        rows.append((period, family, score, classification, available, status, payload, dict(source_periods)))
 
     cur.executemany(
         """
@@ -303,7 +464,7 @@ def upsert_demand_family(cur: Any) -> int:
           refreshed_at = now()
         """,
         [
-            (row[0], row[1], row[2], row[3], row[4], row[5], json.dumps(row[6], ensure_ascii=False), json.dumps({"period": period.isoformat()}))
+            (row[0], row[1], row[2], row[3], row[4], row[5], json.dumps(row[6], ensure_ascii=False), json.dumps(row[7], ensure_ascii=False))
             for row in rows
         ],
     )
