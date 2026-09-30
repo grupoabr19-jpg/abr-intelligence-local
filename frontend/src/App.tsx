@@ -87,6 +87,17 @@ type AttendanceSummary = NonNullable<DashboardSummary['attendance_summary']>
 type CollaboratorRankingRow = NonNullable<AttendanceSummary['ranking_colaboradores']>[number]
 type RegionRankingRow = NonNullable<AttendanceSummary['ranking_regioes']>[number]
 type MarketSummary = NonNullable<DashboardSummary['market_summary']>
+type MarketFilterState = {
+  dateFrom: string
+  dateTo: string
+  productFamily: string
+  region: string
+  country: string
+  segment: string
+  relevance: string
+  snapshot: string
+}
+type MarketTabFilterMap = Partial<Record<IntelligenceTab, MarketFilterState>>
 
 function formatNumber(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === '') return 'Sem dados'
@@ -206,6 +217,44 @@ function marketSourceShortName(sourceKey: string) {
   return labels[sourceKey] ?? sourceKey
 }
 
+function dateDaysAgo(days: number, cutoff = DEFAULT_DATE_TO) {
+  const date = new Date(`${cutoff}T00:00:00`)
+  date.setDate(date.getDate() - days)
+  return date.toISOString().slice(0, 10)
+}
+
+function dateMonthsAgo(months: number, cutoff = DEFAULT_DATE_TO) {
+  const date = new Date(`${cutoff}T00:00:00`)
+  date.setMonth(date.getMonth() - months)
+  return date.toISOString().slice(0, 10)
+}
+
+function marketDefaultFilter(tab: IntelligenceTab): MarketFilterState {
+  const monthsByTab: Partial<Record<IntelligenceTab, number>> = {
+    'market-overview': 12,
+    'steel-market': 12,
+    'market-prices': 6,
+    imports: 12,
+    industry: 24,
+    construction: 24,
+    regional: 12,
+    solar: 12,
+  }
+  const daysByTab: Partial<Record<IntelligenceTab, number>> = {
+    opportunities: 90,
+  }
+  return {
+    dateFrom: daysByTab[tab] ? dateDaysAgo(daysByTab[tab]) : dateMonthsAgo(monthsByTab[tab] ?? 12),
+    dateTo: DEFAULT_DATE_TO,
+    productFamily: 'ALL',
+    region: 'ALL',
+    country: 'ALL',
+    segment: tab === 'construction' ? 'CONSTRUCAO' : 'ALL',
+    relevance: 'ALL',
+    snapshot: 'latest',
+  }
+}
+
 const MACRO_AREAS: Array<{ key: MacroArea; label: string; title: string }> = [
   { key: 'business', label: 'Negocio', title: 'Inteligencia do Negocio' },
   { key: 'market', label: 'Mercado', title: 'Inteligencia de Mercado' },
@@ -283,6 +332,14 @@ function App() {
   const [rankingMetric, setRankingMetric] = useState<RankingMetric>('ganhas')
   const [slaView, setSlaView] = useState<RankingView>('retail')
   const [slaMetric, setSlaMetric] = useState<RankingMetric>('sla_5')
+  const [marketTabFilters, setMarketTabFilters] = useState<MarketTabFilterMap>(() => ({
+    'market-overview': marketDefaultFilter('market-overview'),
+    'market-prices': marketDefaultFilter('market-prices'),
+    imports: marketDefaultFilter('imports'),
+    industry: marketDefaultFilter('industry'),
+    construction: marketDefaultFilter('construction'),
+    opportunities: marketDefaultFilter('opportunities'),
+  }))
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null)
   const [refreshingSources, setRefreshingSources] = useState(false)
 
@@ -290,7 +347,14 @@ function App() {
     setLoading(true)
     setError(null)
     try {
-      setSummary(await fetchInternalDashboard({ dateFrom, dateTo }))
+      const marketFilter = marketTabFilters[intelligenceTab] ?? marketDefaultFilter(intelligenceTab)
+      setSummary(await fetchInternalDashboard({
+        dateFrom: macroArea === 'market' ? undefined : dateFrom,
+        dateTo: macroArea === 'market' ? undefined : dateTo,
+        marketTab: macroArea === 'market' ? intelligenceTab : undefined,
+        marketDateFrom: macroArea === 'market' ? marketFilter.dateFrom : undefined,
+        marketDateTo: macroArea === 'market' ? marketFilter.dateTo : undefined,
+      }))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao carregar dados')
     } finally {
@@ -400,6 +464,16 @@ function App() {
     setAreaFilter('todas')
     setStatusFilter('todos')
     setSearch('')
+  }
+  const activeMarketFilter = marketTabFilters[intelligenceTab] ?? marketDefaultFilter(intelligenceTab)
+  const updateActiveMarketFilter = (patch: Partial<MarketFilterState>) => {
+    setMarketTabFilters((current) => ({
+      ...current,
+      [intelligenceTab]: {
+        ...(current[intelligenceTab] ?? marketDefaultFilter(intelligenceTab)),
+        ...patch,
+      },
+    }))
   }
 
   const monthlySales = (summary?.sales_summary?.monthly ?? []).map((item) => ({
@@ -808,56 +882,58 @@ function App() {
         </div>
       </header>
 
-      <form className="toolbar" aria-label="Filtros do dashboard" onSubmit={submitFilters}>
-        <div className="control search-control">
-          <Search size={16} />
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={filterCopy.search} />
-        </div>
-        <label className="control date-control">
-          <CalendarDays size={16} />
-          <span>De</span>
-          <input type="date" value={dateFrom} max={dateTo} onChange={(event) => setDateFrom(event.target.value)} />
-        </label>
-        <label className="control date-control">
-          <CalendarDays size={16} />
-          <span>Ate</span>
-          <input type="date" value={dateTo} min={dateFrom} onChange={(event) => setDateTo(event.target.value)} />
-        </label>
-        <label className="control">
-          <Filter size={16} />
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="todos">{filterCopy.status}</option>
-            {macroArea === 'business' ? (
-              <>
-                <option value="validated">Validados</option>
-                <option value="validated_empty">Sem registro</option>
-                <option value="deprioritized">Fora da prioridade</option>
-              </>
-            ) : (
-              <>
-                <option value="active">Ativos</option>
-                <option value="attention">Pontos de atencao</option>
-                <option value="resolved">Resolvidos</option>
-              </>
-            )}
-          </select>
-        </label>
-        <label className="control">
-          <SlidersHorizontal size={16} />
-          <select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>
-            <option value="todas">{filterCopy.group}</option>
-            {filterCopy.options.map((option) => (
-              <option value={option} key={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="filter-button" type="submit" disabled={loading}>
-          <RefreshCw size={16} className={loading ? 'spin' : ''} />
-          Aplicar
-        </button>
-      </form>
+      {macroArea !== 'market' && (
+        <form className="toolbar" aria-label="Filtros do dashboard" onSubmit={submitFilters}>
+          <div className="control search-control">
+            <Search size={16} />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={filterCopy.search} />
+          </div>
+          <label className="control date-control">
+            <CalendarDays size={16} />
+            <span>De</span>
+            <input type="date" value={dateFrom} max={dateTo} onChange={(event) => setDateFrom(event.target.value)} />
+          </label>
+          <label className="control date-control">
+            <CalendarDays size={16} />
+            <span>Ate</span>
+            <input type="date" value={dateTo} min={dateFrom} onChange={(event) => setDateTo(event.target.value)} />
+          </label>
+          <label className="control">
+            <Filter size={16} />
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="todos">{filterCopy.status}</option>
+              {macroArea === 'business' ? (
+                <>
+                  <option value="validated">Validados</option>
+                  <option value="validated_empty">Sem registro</option>
+                  <option value="deprioritized">Fora da prioridade</option>
+                </>
+              ) : (
+                <>
+                  <option value="active">Ativos</option>
+                  <option value="attention">Pontos de atencao</option>
+                  <option value="resolved">Resolvidos</option>
+                </>
+              )}
+            </select>
+          </label>
+          <label className="control">
+            <SlidersHorizontal size={16} />
+            <select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>
+              <option value="todas">{filterCopy.group}</option>
+              {filterCopy.options.map((option) => (
+                <option value={option} key={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="filter-button" type="submit" disabled={loading}>
+            <RefreshCw size={16} className={loading ? 'spin' : ''} />
+            Aplicar
+          </button>
+        </form>
+      )}
 
       {error && (
         <section className="notice error">
@@ -887,6 +963,16 @@ function App() {
           </button>
         ))}
       </nav>
+
+      {macroArea === 'market' && (
+        <MarketFilterBar
+          tab={intelligenceTab}
+          value={activeMarketFilter}
+          loading={loading}
+          onChange={updateActiveMarketFilter}
+          onApply={() => void load()}
+        />
+      )}
 
       {intelligenceTab === 'executive' && (
         <>
@@ -2041,6 +2127,116 @@ function UnavailableTab({ title }: { title: string }) {
   )
 }
 
+function MarketFilterBar({
+  tab,
+  value,
+  loading,
+  onChange,
+  onApply,
+}: {
+  tab: IntelligenceTab
+  value: MarketFilterState
+  loading: boolean
+  onChange: (patch: Partial<MarketFilterState>) => void
+  onApply: () => void
+}) {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    onApply()
+  }
+  const showFamily = ['market-overview', 'steel-market', 'market-prices', 'imports', 'industry', 'construction', 'opportunities'].includes(tab)
+  const showCountry = ['market-prices', 'imports'].includes(tab)
+  const showRegion = ['regional', 'competition', 'opportunities', 'solar'].includes(tab)
+  const showSegment = ['industry', 'construction'].includes(tab)
+  const showRelevance = tab === 'opportunities'
+  const showSnapshot = tab === 'competition'
+
+  return (
+    <form className="toolbar market-filter-bar" aria-label="Filtros de mercado" onSubmit={submit}>
+      <label className="control date-control">
+        <CalendarDays size={16} />
+        <span>De</span>
+        <input type="date" value={value.dateFrom} max={value.dateTo} onChange={(event) => onChange({ dateFrom: event.target.value })} />
+      </label>
+      <label className="control date-control">
+        <CalendarDays size={16} />
+        <span>Ate</span>
+        <input type="date" value={value.dateTo} min={value.dateFrom} onChange={(event) => onChange({ dateTo: event.target.value })} />
+      </label>
+      {showFamily && (
+        <label className="control">
+          <Boxes size={16} />
+          <select value={value.productFamily} onChange={(event) => onChange({ productFamily: event.target.value })}>
+            <option value="ALL">Todas as familias</option>
+            <option value="CHAPAS">Chapas</option>
+            <option value="TUBOS / METALONS">Tubos / Metalons</option>
+            <option value="PERFIS">Perfis</option>
+            <option value="TELHAS">Telhas</option>
+          </select>
+        </label>
+      )}
+      {showCountry && (
+        <label className="control">
+          <SlidersHorizontal size={16} />
+          <select value={value.country} onChange={(event) => onChange({ country: event.target.value })}>
+            <option value="ALL">Todos os paises</option>
+            <option value="CHINA">China</option>
+            <option value="TURQUIA">Turquia</option>
+            <option value="INDIA">India</option>
+            <option value="COREIA DO SUL">Coreia do Sul</option>
+          </select>
+        </label>
+      )}
+      {showRegion && (
+        <label className="control">
+          <Filter size={16} />
+          <select value={value.region} onChange={(event) => onChange({ region: event.target.value })}>
+            <option value="ALL">Todas as regioes</option>
+            <option value="MG">MG</option>
+            <option value="SP">SP</option>
+            <option value="RJ">RJ</option>
+            <option value="PR">PR</option>
+          </select>
+        </label>
+      )}
+      {showSegment && (
+        <label className="control">
+          <Gauge size={16} />
+          <select value={value.segment} onChange={(event) => onChange({ segment: event.target.value })}>
+            <option value="ALL">Todos os segmentos</option>
+            <option value="INDUSTRIA">Industria</option>
+            <option value="CONSTRUCAO">Construcao</option>
+            <option value="INFRAESTRUTURA">Infraestrutura</option>
+          </select>
+        </label>
+      )}
+      {showRelevance && (
+        <label className="control">
+          <AlertTriangle size={16} />
+          <select value={value.relevance} onChange={(event) => onChange({ relevance: event.target.value })}>
+            <option value="ALL">Todas as relevancias</option>
+            <option value="HIGH">Alta relevancia</option>
+            <option value="MEDIUM">Media relevancia</option>
+          </select>
+        </label>
+      )}
+      {showSnapshot && (
+        <label className="control">
+          <Database size={16} />
+          <select value={value.snapshot} onChange={(event) => onChange({ snapshot: event.target.value })}>
+            <option value="latest">Snapshot mais recente</option>
+            <option value="all">Historico completo</option>
+          </select>
+        </label>
+      )}
+      <button className="filter-button" type="submit" disabled={loading}>
+        <RefreshCw size={16} className={loading ? 'spin' : ''} />
+        Aplicar
+      </button>
+    </form>
+  )
+}
+
 function MarketTab({ summary, tab, title }: { summary?: MarketSummary; tab: IntelligenceTab; title: string }) {
   if (!summary) return <UnavailableTab title={title} />
 
@@ -2076,6 +2272,13 @@ function MarketOverview({ summary }: { summary: MarketSummary }) {
     item.period ?? 'Sem periodo',
     marketValue(item.value, item.unit),
   ])
+  const cockpitRows = (summary.decision_layer?.cockpit ?? []).map((item) => [
+    item.title,
+    item.classification,
+    item.score === null || item.score === undefined ? 'Sem score' : formatNumber(item.score),
+    `${formatNumber(item.available_components_count)} componentes`,
+    item.period ? monthLabel(item.period.slice(0, 7)) : 'Sem periodo',
+  ])
 
   return (
     <>
@@ -2086,6 +2289,9 @@ function MarketOverview({ summary }: { summary: MarketSummary }) {
         <Kpi title="Indicadores carregados" displayValue={formatNumber(summary.overview.latest_periods.reduce((sum, item) => sum + Number(item.rows || 0), 0))} detail="Linhas agregadas de mercado" icon={<Database />} />
       </section>
       <section className="dashboard-grid">
+        <Panel title="Sinais decisorios" icon={<Gauge size={17} />} wide>
+          <DataTable columns={['Sinal', 'Classificacao', 'Score', 'Base', 'Periodo']} rows={cockpitRows} empty="Sinais decisorios ainda nao recalculados" />
+        </Panel>
         <Panel title="Ultimos periodos por fonte" icon={<CalendarDays size={17} />} wide>
           <DataTable columns={['Fonte', 'Periodo', 'Linhas', 'Status']} rows={periodRows} empty="Nenhuma fonte saudavel carregada" />
         </Panel>
@@ -2188,6 +2394,13 @@ function MarketPricesTab({ summary }: { summary: MarketSummary }) {
     marketValue(item.toneladas, 't'),
     marketValue(item.fob_usd_t, 'US$/t'),
   ])
+  const pressureRows = (summary.decision_layer?.price_pressure ?? []).map((item) => [
+    item.family,
+    item.classification,
+    item.score === null || item.score === undefined ? 'Sem score' : formatNumber(item.score),
+    `${formatNumber(item.available_components_count)} componentes`,
+    item.period ? monthLabel(item.period.slice(0, 7)) : 'Sem periodo',
+  ])
 
   return (
     <>
@@ -2231,6 +2444,9 @@ function MarketPricesTab({ summary }: { summary: MarketSummary }) {
           </Panel>
         )}
         <Panel title="Pressao por familia ABR" icon={<TableProperties size={17} />} wide>
+          <DataTable columns={['Familia', 'Classificacao', 'Score', 'Base', 'Periodo']} rows={pressureRows} empty="Matriz de pressao ainda nao recalculada" />
+        </Panel>
+        <Panel title="Importacao por familia ABR" icon={<TableProperties size={17} />} wide>
           <DataTable columns={['Familia', 'Toneladas 12M', 'FOB US$/t']} rows={familyRows} empty="Sem familias Comex aprovadas" />
         </Panel>
       </section>

@@ -101,10 +101,15 @@ async def get_internal_dashboard(
     response: Response,
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    market_tab: str | None = Query(default=None),
+    market_date_from: date | None = Query(default=None),
+    market_date_to: date | None = Query(default=None),
     include_sales_regions: bool = Query(default=False),
 ) -> dict:
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before or equal to date_to.")
+    if market_date_from and market_date_to and market_date_from > market_date_to:
+        raise HTTPException(status_code=422, detail="market_date_from must be before or equal to market_date_to.")
     set_dashboard_session_cookie(response)
     asyncio.create_task(dashboard_refresh_manager.ensure_daily_refresh(date_from=None, date_to=None))
     return await asyncio.to_thread(
@@ -112,6 +117,9 @@ async def get_internal_dashboard(
         date_from=date_from,
         date_to=date_to,
         include_sales_regions=include_sales_regions,
+        market_tab=market_tab,
+        market_date_from=market_date_from,
+        market_date_to=market_date_to,
     )
 
 

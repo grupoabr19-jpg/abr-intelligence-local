@@ -1833,6 +1833,138 @@ def market_registry_rows(cur: Any) -> list[dict[str, Any]]:
     ]
 
 
+def market_filter_defaults(cur: Any) -> dict[str, Any]:
+    cur.execute(
+        """
+        select tab_key, label, default_months, default_days, date_from, date_to, filters
+        from public.market_tab_filter_defaults
+        order by tab_key
+        """
+    )
+    return {
+        row[0]: {
+            "label": row[1],
+            "default_months": row[2],
+            "default_days": row[3],
+            "date_from": row[4].isoformat() if row[4] else None,
+            "date_to": row[5].isoformat() if row[5] else None,
+            "filters": row[6] or {},
+        }
+        for row in cur.fetchall()
+    }
+
+
+def market_decision_layer(cur: Any, date_to: date | None = None) -> dict[str, Any]:
+    date_clause = "where periodo_inicio <= %s::date" if date_to else ""
+    params: list[Any] = [date_to] if date_to else []
+
+    cur.execute(
+        f"""
+        select periodo_inicio, family, classification, status, score, available_components_count, components, source_periods
+        from public.agg_market_price_pressure
+        {date_clause}
+        order by periodo_inicio desc, family
+        limit 16
+        """,
+        params,
+    )
+    price_pressure = [
+        {
+            "period": row[0].isoformat() if row[0] else None,
+            "family": row[1],
+            "classification": row[2],
+            "status": row[3],
+            "score": row[4],
+            "available_components_count": row[5],
+            "components": row[6] or {},
+            "source_periods": row[7] or {},
+        }
+        for row in cur.fetchall()
+    ]
+
+    cur.execute(
+        f"""
+        select periodo_inicio, family, classification, status, score, available_components_count, drivers, source_periods
+        from public.agg_market_demand_family
+        {date_clause}
+        order by periodo_inicio desc, family
+        limit 16
+        """,
+        params,
+    )
+    demand = [
+        {
+            "period": row[0].isoformat() if row[0] else None,
+            "family": row[1],
+            "classification": row[2],
+            "status": row[3],
+            "score": row[4],
+            "available_components_count": row[5],
+            "drivers": row[6] or [],
+            "source_periods": row[7] or {},
+        }
+        for row in cur.fetchall()
+    ]
+
+    cur.execute(
+        f"""
+        select periodo_inicio, signal_key, family, title, classification, score,
+               available_components_count, drivers, target_tab, source_periods
+        from public.agg_market_cockpit
+        {date_clause}
+        order by periodo_inicio desc, signal_key
+        limit 20
+        """,
+        params,
+    )
+    cockpit = [
+        {
+            "period": row[0].isoformat() if row[0] else None,
+            "signal_key": row[1],
+            "family": row[2],
+            "title": row[3],
+            "classification": row[4],
+            "score": row[5],
+            "available_components_count": row[6],
+            "drivers": row[7] or [],
+            "target_tab": row[8],
+            "source_periods": row[9] or {},
+        }
+        for row in cur.fetchall()
+    ]
+
+    cur.execute(
+        f"""
+        select periodo_inicio, polo, uf, opportunities, high_relevance, total_value,
+               avg_relevance_score, product_matches
+        from public.agg_market_opportunities
+        {date_clause}
+        order by periodo_inicio desc, high_relevance desc, opportunities desc
+        limit 20
+        """,
+        params,
+    )
+    opportunities = [
+        {
+            "period": row[0].isoformat() if row[0] else None,
+            "polo": row[1] or None,
+            "uf": row[2] or None,
+            "opportunities": row[3],
+            "high_relevance": row[4],
+            "total_value": market_decimal(row[5]),
+            "avg_relevance_score": market_decimal(row[6]),
+            "product_matches": row[7] or {},
+        }
+        for row in cur.fetchall()
+    ]
+    return {
+        "price_pressure": price_pressure,
+        "demand_family": demand,
+        "cockpit": cockpit,
+        "opportunities": opportunities,
+    }
+
+
 def market_latest_indicators(cur: Any, source_keys: list[str], limit: int = 12) -> list[dict[str, Any]]:
     if not source_keys:
         return []
@@ -2271,11 +2403,18 @@ def market_opportunities_summary(cur: Any) -> dict[str, Any]:
     }
 
 
-def market_summary() -> dict[str, Any]:
+def market_summary(
+    *,
+    market_tab: str | None = None,
+    market_date_from: date | None = None,
+    market_date_to: date | None = None,
+) -> dict[str, Any]:
     env = load_env()
     with connect_database(env) as conn:
         with conn.cursor() as cur:
             sources = market_registry_rows(cur)
+            filter_defaults = market_filter_defaults(cur)
+            decision_layer = market_decision_layer(cur, date_to=market_date_to)
             healthy = {
                 row["source_key"]
                 for row in sources
@@ -2317,6 +2456,13 @@ def market_summary() -> dict[str, Any]:
 
     return {
         "sources": sources,
+        "active_filter": {
+            "tab": market_tab,
+            "date_from": market_date_from.isoformat() if market_date_from else None,
+            "date_to": market_date_to.isoformat() if market_date_to else None,
+        },
+        "filter_defaults": filter_defaults,
+        "decision_layer": decision_layer,
         "healthy_sources": sorted(healthy),
         "available_tabs": available_tabs,
         "overview": {
@@ -2364,6 +2510,9 @@ def internal_dashboard_summary(
     date_to: date | None = None,
     *,
     include_sales_regions: bool = False,
+    market_tab: str | None = None,
+    market_date_from: date | None = None,
+    market_date_to: date | None = None,
 ) -> dict[str, Any]:
     reports = list_reports()
     requirements = list_requirements()
@@ -2449,7 +2598,11 @@ def internal_dashboard_summary(
         warnings.append(f"Resumo de atendimento indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
     market: dict[str, Any] = {}
     try:
-        market = market_summary()
+        market = market_summary(
+            market_tab=market_tab,
+            market_date_from=market_date_from,
+            market_date_to=market_date_to,
+        )
     except BaseException as exc:
         warnings.append(f"Resumo de mercado indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
 

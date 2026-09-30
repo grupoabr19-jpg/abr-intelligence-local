@@ -205,6 +205,7 @@ class DashboardRefreshManager:
             RefreshStep("market_comex", "Mercado Comex: importacoes por NCM aprovado"),
             RefreshStep("market_gov", "Mercado governo: CAGED e PNCP configurados"),
             RefreshStep("market_public", "Mercado publico: Aco Brasil, CNI e INDA"),
+            RefreshStep("market_decision_aggs", "Mercado: recalcular sinais decisorios"),
             RefreshStep("kommo_collect", "Kommo API: leads, tarefas e eventos"),
             RefreshStep("atendimento_facts", "Atendimento: fatos, SLA e rankings"),
             RefreshStep("atendimento_contract", "Atendimento: contrato oficial"),
@@ -249,6 +250,8 @@ class DashboardRefreshManager:
             return [sys.executable, str(ROOT / "tools" / "collect_market_gov_sources.py"), "--source", "all"]
         if key == "market_public":
             return [sys.executable, str(ROOT / "tools" / "collect_market_sources.py"), "--source", "all"]
+        if key == "market_decision_aggs":
+            return [sys.executable, str(ROOT / "tools" / "refresh_market_decision_aggs.py")]
         if key == "kommo_collect":
             return [
                 sys.executable,
@@ -436,6 +439,13 @@ class DashboardRefreshManager:
                 "required_for_daily": False,
                 "database": "core",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso'",
+            },
+            {
+                "key": "market_decision_aggs",
+                "label": "Mercado - sinais decisorios",
+                "required_for_daily": False,
+                "database": "core",
+                "sql": "select max(refreshed_at) from public.agg_market_cockpit",
             },
         ]
         try:

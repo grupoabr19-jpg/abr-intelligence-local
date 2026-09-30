@@ -219,6 +219,66 @@ export type DashboardSummary = {
       error_message: string | null
       checked_at: string | null
     }>
+    active_filter?: {
+      tab: string | null
+      date_from: string | null
+      date_to: string | null
+    }
+    filter_defaults?: Record<
+      string,
+      {
+        label: string
+        default_months: number | null
+        default_days: number | null
+        date_from: string | null
+        date_to: string | null
+        filters: Record<string, unknown>
+      }
+    >
+    decision_layer?: {
+      price_pressure: Array<{
+        period: string | null
+        family: string
+        classification: string
+        status: string
+        score: number | null
+        available_components_count: number
+        components: Record<string, unknown>
+        source_periods: Record<string, unknown>
+      }>
+      demand_family: Array<{
+        period: string | null
+        family: string
+        classification: string
+        status: string
+        score: number | null
+        available_components_count: number
+        drivers: Array<Record<string, unknown>>
+        source_periods: Record<string, unknown>
+      }>
+      cockpit: Array<{
+        period: string | null
+        signal_key: string
+        family: string
+        title: string
+        classification: string
+        score: number | null
+        available_components_count: number
+        drivers: Array<Record<string, unknown>>
+        target_tab: string
+        source_periods: Record<string, unknown>
+      }>
+      opportunities: Array<{
+        period: string | null
+        polo: string | null
+        uf: string | null
+        opportunities: number
+        high_relevance: number
+        total_value: string | null
+        avg_relevance_score: string | null
+        product_matches: Record<string, unknown>
+      }>
+    }
     healthy_sources: string[]
     available_tabs: string[]
     overview: {
@@ -316,10 +376,19 @@ function apiHeaders(): HeadersInit {
   return ABR_API_KEY ? { 'x-api-key': ABR_API_KEY } : {}
 }
 
-export async function fetchInternalDashboard(filters?: { dateFrom?: string; dateTo?: string }): Promise<DashboardSummary> {
+export async function fetchInternalDashboard(filters?: {
+  dateFrom?: string
+  dateTo?: string
+  marketTab?: string
+  marketDateFrom?: string
+  marketDateTo?: string
+}): Promise<DashboardSummary> {
   const params = new URLSearchParams()
   if (filters?.dateFrom) params.set('date_from', filters.dateFrom)
   if (filters?.dateTo) params.set('date_to', filters.dateTo)
+  if (filters?.marketTab) params.set('market_tab', filters.marketTab)
+  if (filters?.marketDateFrom) params.set('market_date_from', filters.marketDateFrom)
+  if (filters?.marketDateTo) params.set('market_date_to', filters.marketDateTo)
   const query = params.toString()
   const response = await fetch(`${API_BASE_URL}/v1/dashboard/internal${query ? `?${query}` : ''}`, {
     credentials: 'include',
