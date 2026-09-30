@@ -170,6 +170,17 @@ SOURCES: tuple[SourceDefinition, ...] = (
         "https://pncp.gov.br/api/consulta/swagger-ui/index.html?configUrl=/pncp-api/v3/api-docs/swagger-config",
         "pncp",
     ),
+    SourceDefinition(
+        "world_bank_wdi",
+        "World Bank WDI",
+        "api",
+        "macro",
+        "anual",
+        ("WORLD_BANK_API_BASE_URL", "WORLD_BANK_COUNTRIES", "WORLD_BANK_INDICATORS", "WORLD_BANK_START_YEAR"),
+        "https://api.worldbank.org/v2",
+        "https://datahelpdesk.worldbank.org/knowledgebase/articles/898581-api-basic-call-structures",
+        "world_bank",
+    ),
 )
 
 
@@ -300,6 +311,18 @@ def check_pncp(client: httpx.Client, base_url: str) -> tuple[bool, dict[str, Any
     return True, metadata, None
 
 
+def check_world_bank(client: httpx.Client, base_url: str) -> tuple[bool, dict[str, Any], str | None]:
+    url = f"{base_url.rstrip('/')}/country/BRA/indicator/NY.GDP.MKTP.KD.ZG"
+    response = client.get(url, params={"format": "json", "per_page": 1})
+    metadata = {"status_code": response.status_code, "probe_url": str(response.url)}
+    if response.status_code >= 400:
+        return False, metadata, f"HTTP {response.status_code}"
+    payload = response.json()
+    records = payload[1] if isinstance(payload, list) and len(payload) > 1 and isinstance(payload[1], list) else []
+    metadata["records_seen"] = len(records)
+    return bool(records), metadata, None if records else "World Bank nao retornou registros no probe."
+
+
 def source_health(env: dict[str, str], client: httpx.Client, source: SourceDefinition) -> tuple[bool, bool, str, dict[str, Any], str | None]:
     url, configured = resolve_url(env, source)
     if not configured:
@@ -320,6 +343,8 @@ def source_health(env: dict[str, str], client: httpx.Client, source: SourceDefin
             reachable, metadata, error = check_ftp(url, timeout)
         elif source.health_kind == "pncp":
             reachable, metadata, error = check_pncp(client, url)
+        elif source.health_kind == "world_bank":
+            reachable, metadata, error = check_world_bank(client, url)
         else:
             reachable, metadata, error = http_ok(client, url)
     except Exception as exc:
