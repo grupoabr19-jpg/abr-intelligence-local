@@ -64,6 +64,7 @@ type IntelligenceTab =
   | 'imports'
   | 'construction'
   | 'industry'
+  | 'opportunities'
   | 'agro'
   | 'solar'
   | 'regional'
@@ -170,9 +171,11 @@ function marketNumber(value: number | string | null | undefined, maximumFraction
 
 function marketValue(value: number | string | null | undefined, unit?: string | null) {
   const normalizedUnit = String(unit ?? '').trim()
+  const loweredUnit = normalizedUnit.toLowerCase()
   if (normalizedUnit === '%') return percent(numericValue(value))
-  if (normalizedUnit.toLowerCase() === 'indice') return marketNumber(value, 2)
-  if (normalizedUnit.toLowerCase().includes('us$')) return `US$ ${marketNumber(value, 1)} mi`
+  if (loweredUnit === 'indice') return marketNumber(value, 2)
+  if (loweredUnit.includes('us$/t')) return `US$ ${marketNumber(value, 1)}/t`
+  if (loweredUnit.includes('us$')) return `US$ ${marketNumber(value, 1)}`
   if (normalizedUnit) return `${marketNumber(value, 1)} ${normalizedUnit}`
   return marketNumber(value, 1)
 }
@@ -188,6 +191,7 @@ function marketSourceShortName(sourceKey: string) {
     ibge_construcao_sidra: 'IBGE Construcao',
     ibge_pim_sidra: 'IBGE PIM',
     obrasgov_projetos: 'ObrasGov',
+    pncp_consulta: 'PNCP',
     world_bank_wdi: 'World Bank',
   }
   return labels[sourceKey] ?? sourceKey
@@ -218,15 +222,14 @@ const TABS_BY_MACRO: Record<MacroArea, Array<{ key: IntelligenceTab; label: stri
   market: [
     { key: 'market-overview', label: 'Visao Geral' },
     { key: 'steel-market', label: 'Mercado do Aco' },
-    { key: 'market-prices', label: 'Precos' },
+    { key: 'market-prices', label: 'Precos & Cambio' },
     { key: 'imports', label: 'Importacoes' },
-    { key: 'construction', label: 'Construcao' },
     { key: 'industry', label: 'Industria' },
-    { key: 'agro', label: 'Agro' },
-    { key: 'solar', label: 'Solar' },
+    { key: 'construction', label: 'Construcao' },
     { key: 'regional', label: 'Regional' },
     { key: 'competition', label: 'Concorrencia' },
-    { key: 'mills', label: 'Usinas' },
+    { key: 'opportunities', label: 'Oportunidades' },
+    { key: 'solar', label: 'Solar' },
   ],
   service: [
     { key: 'service-overview', label: 'Visao Geral' },
@@ -1979,7 +1982,7 @@ function App() {
 
 function Kpi({ title, value, displayValue, detail, icon }: { title: string; value?: number; displayValue?: string; detail: string; icon: ReactNode }) {
   return (
-    <article className="kpi-card">
+    <article className="kpi-card" title={`${title}: ${detail}`}>
       <div className="kpi-icon">{icon}</div>
       <div>
         <span>{title}</span>
@@ -2034,8 +2037,11 @@ function MarketTab({ summary, tab, title }: { summary?: MarketSummary; tab: Inte
 
   if (tab === 'market-overview') return <MarketOverview summary={summary} />
   if (tab === 'steel-market') return <MarketIndicatorTab title="Mercado do Aco" icon={<BarChart3 size={17} />} data={summary.steel_market} unitFallback="mil t" />
+  if (tab === 'market-prices') return <MarketPricesTab summary={summary} />
+  if (tab === 'imports') return <MarketImportsTab summary={summary} />
   if (tab === 'industry') return <MarketIndicatorTab title="Industria" icon={<Gauge size={17} />} data={summary.industry} unitFallback="indice" />
   if (tab === 'construction') return <MarketConstructionTab summary={summary} />
+  if (tab === 'opportunities') return <MarketOpportunitiesTab summary={summary} />
   if (tab === 'solar') return <MarketSolarTab summary={summary} />
 
   return <UnavailableTab title={title} />
@@ -2153,6 +2159,130 @@ function MarketIndicatorTab({
   )
 }
 
+function MarketPricesTab({ summary }: { summary: MarketSummary }) {
+  const prices = summary.prices
+  const comex = prices?.comex
+  const ptax = prices?.ptax
+  if (!comex?.kpis && !ptax?.latest) return <UnavailableTab title="Precos & Cambio" />
+
+  const monthly = (comex?.monthly ?? []).map((item) => ({
+    ...item,
+    fob_numero: numericValue(item.fob_usd_t),
+    cif_numero: numericValue(item.cif_proxy_usd_t),
+  }))
+  const ptaxSeries = (ptax?.series ?? []).map((item) => ({
+    period_label: item.period_label ?? 'Sem periodo',
+    value_numero: numericValue(item.value),
+  }))
+  const familyRows = (comex?.families ?? []).map((item) => [
+    item.family,
+    marketValue(item.toneladas, 't'),
+    marketValue(item.fob_usd_t, 'US$/t'),
+  ])
+
+  return (
+    <>
+      <section className="kpi-grid">
+        {ptax?.latest && <Kpi title="PTAX atual" displayValue={marketValue(ptax.latest.value, 'R$')} detail={`BCB | ${ptax.latest.period_label ?? 'Sem periodo'}`} icon={<CircleDollarSign />} />}
+        {ptax?.change_period_pct && <Kpi title="PTAX periodo" displayValue={percent(numericValue(ptax.change_period_pct))} detail="Variacao na janela carregada" icon={<LineChartIcon />} />}
+        {comex?.kpis && <Kpi title="FOB US$/t" displayValue={marketValue(comex.kpis.fob_usd_t, 'US$/t')} detail="SUM(VL_FOB) / toneladas" icon={<Gauge />} />}
+        {comex?.kpis && <Kpi title="Proxy CIF US$/t" displayValue={marketValue(comex.kpis.cif_proxy_usd_t, 'US$/t')} detail="FOB + frete + seguro / toneladas" icon={<BarChart3 />} />}
+      </section>
+      <section className="dashboard-grid">
+        {monthly.length > 0 && (
+          <Panel title="Valor unitario do aco importado" icon={<LineChartIcon size={17} />} wide>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={monthly}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="period_label" />
+                  <YAxis tickFormatter={(value) => marketValue(String(value), 'US$/t')} />
+                  <Tooltip formatter={(value, name) => [marketValue(String(value), 'US$/t'), name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Line type="monotone" dataKey="fob_numero" name="FOB US$/t" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+                  <Line type="monotone" dataKey="cif_numero" name="Proxy CIF US$/t" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+        {ptaxSeries.length > 0 && (
+          <Panel title="PTAX BCB" icon={<CircleDollarSign size={17} />} wide>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={ptaxSeries}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="period_label" />
+                  <YAxis tickFormatter={(value) => marketValue(String(value), 'R$')} />
+                  <Tooltip formatter={(value) => [marketValue(String(value), 'R$'), 'PTAX venda']} />
+                  <Line type="monotone" dataKey="value_numero" name="PTAX venda" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+        <Panel title="Pressao por familia ABR" icon={<TableProperties size={17} />} wide>
+          <DataTable columns={['Familia', 'Toneladas 12M', 'FOB US$/t']} rows={familyRows} empty="Sem familias Comex aprovadas" />
+        </Panel>
+      </section>
+    </>
+  )
+}
+
+function MarketImportsTab({ summary }: { summary: MarketSummary }) {
+  const imports = summary.imports
+  if (!imports?.kpis) return <UnavailableTab title="Importacoes" />
+  const monthly = (imports.monthly ?? []).map((item) => ({
+    ...item,
+    toneladas_numero: numericValue(item.toneladas),
+    fob_numero: numericValue(item.fob_usd_t),
+  }))
+  const countryRows = (imports.countries ?? []).map((item) => [item.country, marketValue(item.toneladas, 't')])
+  const detailRows = (imports.detail ?? []).map((item) => [
+    item.ncm,
+    item.family,
+    item.country,
+    marketValue(item.toneladas, 't'),
+    marketValue(item.fob_usd_t, 'US$/t'),
+    marketValue(item.freight_usd_t, 'US$/t'),
+  ])
+
+  return (
+    <>
+      <section className="kpi-grid">
+        <Kpi title="Toneladas 12M" displayValue={marketValue(imports.kpis.toneladas_12m, 't')} detail={`Comex | ate ${monthLabel(imports.latest_period.slice(0, 7))}`} icon={<Boxes />} />
+        <Kpi title="FOB US$/t" displayValue={marketValue(imports.kpis.fob_usd_t, 'US$/t')} detail="Media ponderada por tonelada" icon={<CircleDollarSign />} />
+        <Kpi title="Proxy CIF US$/t" displayValue={marketValue(imports.kpis.cif_proxy_usd_t, 'US$/t')} detail="FOB + frete + seguro" icon={<Gauge />} />
+        <Kpi title="Paises origem" displayValue={formatNumber(imports.kpis.countries)} detail="Top origens no recorte 12M" icon={<TableProperties />} />
+      </section>
+      <section className="dashboard-grid">
+        <Panel title="Importacoes mensais" icon={<LineChartIcon size={17} />} wide>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <ComposedChart data={monthly}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="period_label" />
+                <YAxis yAxisId="left" tickFormatter={(value) => marketValue(String(value), 't')} />
+                <YAxis yAxisId="right" orientation="right" tickFormatter={(value) => marketValue(String(value), 'US$/t')} />
+                <Tooltip formatter={(value, name) => [name === 'Toneladas' ? marketValue(String(value), 't') : marketValue(String(value), 'US$/t'), name]} />
+                <Legend verticalAlign="bottom" height={24} />
+                <Bar yAxisId="left" dataKey="toneladas_numero" name="Toneladas" fill="#253575" radius={[5, 5, 0, 0]} />
+                <Line yAxisId="right" type="monotone" dataKey="fob_numero" name="FOB US$/t" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </Panel>
+        <Panel title="Paises de origem" icon={<TableProperties size={17} />} wide>
+          <DataTable columns={['Pais', 'Toneladas 12M']} rows={countryRows} empty="Sem origem Comex carregada" />
+        </Panel>
+        <Panel title="Detalhe NCM aprovado" icon={<Database size={17} />} wide>
+          <DataTable columns={['NCM', 'Familia', 'Pais', 'Toneladas', 'FOB US$/t', 'Frete US$/t']} rows={detailRows} empty="Sem detalhe Comex carregado" />
+        </Panel>
+      </section>
+    </>
+  )
+}
+
 function MarketConstructionTab({ summary }: { summary: MarketSummary }) {
   const construction = summary.construction
   const works = construction?.public_works
@@ -2179,6 +2309,64 @@ function MarketConstructionTab({ summary }: { summary: MarketSummary }) {
           </Panel>
         </section>
       )}
+    </>
+  )
+}
+
+function MarketOpportunitiesTab({ summary }: { summary: MarketSummary }) {
+  const opportunities = summary.opportunities
+  if (!opportunities?.kpis) return <UnavailableTab title="Oportunidades" />
+  const monthly = (opportunities.monthly ?? []).map((item) => ({
+    ...item,
+    opportunities_numero: item.opportunities,
+  }))
+  const regionRows = (opportunities.top_regions ?? []).map((item) => [
+    item.uf,
+    formatNumber(item.opportunities),
+    money(item.value),
+  ])
+  const detailRows = (opportunities.detail ?? []).map((item) => [
+    item.date ? new Date(item.date).toLocaleDateString('pt-BR') : 'Sem data',
+    item.uf,
+    item.municipality || 'Sem municipio',
+    abbreviateLabel(item.agency || 'Sem orgao', 28),
+    abbreviateLabel(item.object || 'Sem objeto', 42),
+    money(item.value),
+    formatNumber(item.relevance_score),
+    item.id,
+  ])
+
+  return (
+    <>
+      <section className="kpi-grid">
+        <Kpi title="Oportunidades" displayValue={formatNumber(opportunities.kpis.opportunities)} detail={marketSourceShortName(opportunities.source)} icon={<CheckCircle2 />} />
+        <Kpi title="Alta relevancia" displayValue={formatNumber(opportunities.kpis.high_relevance)} detail="RelevanceScore >= 3" icon={<Gauge />} />
+        <Kpi title="Valor projetos" displayValue={money(opportunities.kpis.total_value)} detail="Valor dos projetos identificados" icon={<CircleDollarSign />} />
+        <Kpi title="UFs com oportunidade" displayValue={formatNumber(opportunities.kpis.regions)} detail="Polos/UFs com registros" icon={<TableProperties />} />
+      </section>
+      <section className="dashboard-grid">
+        {monthly.length > 0 && (
+          <Panel title="Oportunidades por mes" icon={<LineChartIcon size={17} />} wide>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={monthly}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="period_label" />
+                  <YAxis tickFormatter={(value) => formatNumber(String(value))} />
+                  <Tooltip formatter={(value) => [formatNumber(String(value)), 'Oportunidades']} />
+                  <Bar dataKey="opportunities_numero" name="Oportunidades" fill="#253575" radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+        <Panel title="Oportunidades por UF" icon={<TableProperties size={17} />} wide>
+          <DataTable columns={['UF', 'Oportunidades', 'Valor projetos']} rows={regionRows} empty="Sem regioes carregadas" />
+        </Panel>
+        <Panel title="Projetos para prospeccao" icon={<Database size={17} />} wide>
+          <DataTable columns={['Data', 'UF', 'Municipio', 'Orgao', 'Objeto', 'Valor', 'Score', 'ID']} rows={detailRows} empty="Sem projetos detalhados carregados" />
+        </Panel>
+      </section>
     </>
   )
 }

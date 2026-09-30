@@ -1901,6 +1901,140 @@ def market_indicator_series(cur: Any, source_key: str, indicator_key: str, limit
     ]
 
 
+def market_comex_summary(cur: Any) -> dict[str, Any]:
+    cur.execute("select max(periodo_inicio) from public.fact_steel_import_monthly")
+    latest_period = cur.fetchone()[0]
+    if not latest_period:
+        return {}
+
+    cur.execute(
+        """
+        select
+          coalesce(sum(toneladas), 0),
+          coalesce(sum(vl_fob_usd), 0),
+          coalesce(sum(vl_frete_usd), 0),
+          coalesce(sum(vl_seguro_usd), 0)
+        from public.fact_steel_import_monthly
+        where periodo_inicio >= (%s::date - interval '11 months')
+        """,
+        (latest_period,),
+    )
+    tons_12m, fob_12m, freight_12m, insurance_12m = cur.fetchone()
+    fob_usd_t = (fob_12m / tons_12m) if tons_12m else None
+    cif_proxy_usd_t = ((fob_12m + freight_12m + insurance_12m) / tons_12m) if tons_12m else None
+
+    cur.execute(
+        """
+        select periodo_inicio, coalesce(sum(toneladas), 0), coalesce(sum(vl_fob_usd), 0),
+               coalesce(sum(vl_frete_usd), 0), coalesce(sum(vl_seguro_usd), 0)
+        from public.fact_steel_import_monthly
+        group by periodo_inicio
+        order by periodo_inicio desc
+        limit 24
+        """
+    )
+    monthly = []
+    for period, tons, fob, freight, insurance in reversed(cur.fetchall()):
+        monthly.append(
+            {
+                "period": period.isoformat(),
+                "period_label": period.strftime("%m/%y"),
+                "toneladas": market_decimal(tons),
+                "fob_usd_t": market_decimal((fob / tons) if tons else None),
+                "cif_proxy_usd_t": market_decimal(((fob + freight + insurance) / tons) if tons else None),
+            }
+        )
+
+    cur.execute(
+        """
+        select coalesce(co_pais, 'NAO INFORMADO') as pais, coalesce(sum(toneladas), 0) as tons
+        from public.fact_steel_import_monthly
+        where periodo_inicio >= (%s::date - interval '11 months')
+        group by coalesce(co_pais, 'NAO INFORMADO')
+        order by tons desc
+        limit 10
+        """,
+        (latest_period,),
+    )
+    countries = [{"country": row[0], "toneladas": market_decimal(row[1])} for row in cur.fetchall()]
+
+    cur.execute(
+        """
+        select familia_abr, coalesce(sum(toneladas), 0), coalesce(sum(vl_fob_usd), 0)
+        from public.fact_steel_import_monthly
+        where periodo_inicio >= (%s::date - interval '11 months')
+        group by familia_abr
+        order by sum(toneladas) desc nulls last
+        limit 10
+        """,
+        (latest_period,),
+    )
+    families = [
+        {
+            "family": row[0],
+            "toneladas": market_decimal(row[1]),
+            "fob_usd_t": market_decimal((row[2] / row[1]) if row[1] else None),
+        }
+        for row in cur.fetchall()
+    ]
+
+    cur.execute(
+        """
+        select ncm, familia_abr, coalesce(co_pais, 'NAO INFORMADO') as pais,
+               coalesce(sum(toneladas), 0) as tons,
+               coalesce(sum(vl_fob_usd), 0) as fob,
+               coalesce(sum(vl_frete_usd), 0) as frete
+        from public.fact_steel_import_monthly
+        where periodo_inicio >= (%s::date - interval '11 months')
+        group by ncm, familia_abr, coalesce(co_pais, 'NAO INFORMADO')
+        order by tons desc
+        limit 20
+        """,
+        (latest_period,),
+    )
+    detail = [
+        {
+            "ncm": row[0],
+            "family": row[1],
+            "country": row[2],
+            "toneladas": market_decimal(row[3]),
+            "fob_usd_t": market_decimal((row[4] / row[3]) if row[3] else None),
+            "freight_usd_t": market_decimal((row[5] / row[3]) if row[3] else None),
+        }
+        for row in cur.fetchall()
+    ]
+
+    return {
+        "latest_period": latest_period.isoformat(),
+        "kpis": {
+            "toneladas_12m": market_decimal(tons_12m),
+            "fob_usd_t": market_decimal(fob_usd_t),
+            "cif_proxy_usd_t": market_decimal(cif_proxy_usd_t),
+            "countries": len(countries),
+        },
+        "monthly": monthly,
+        "countries": countries,
+        "families": families,
+        "detail": detail,
+    }
+
+
+def market_ptax_summary(cur: Any) -> dict[str, Any]:
+    series = market_indicator_series(cur, "bcb_dolar_ptax", "bcb_ptax_cotacaoVenda", limit=60)
+    if not series:
+        return {}
+    latest = series[-1]
+    first = series[0]
+    latest_value = numericValue = Decimal(str(latest["value"])) if latest.get("value") else Decimal("0")
+    first_value = Decimal(str(first["value"])) if first.get("value") else Decimal("0")
+    change = ((latest_value / first_value) - Decimal("1")) * Decimal("100") if first_value else None
+    return {
+        "latest": latest,
+        "change_period_pct": market_decimal(change),
+        "series": series,
+    }
+
+
 def market_solar_summary(cur: Any) -> dict[str, Any]:
     cur.execute("select max(periodo_inicio) from public.fact_solar_monthly")
     latest_period = cur.fetchone()[0]
@@ -2015,6 +2149,104 @@ def market_obrasgov_summary(cur: Any) -> dict[str, Any]:
     }
 
 
+def market_opportunities_summary(cur: Any) -> dict[str, Any]:
+    try:
+        cur.execute(
+            """
+            select
+              coalesce(count(*), 0),
+              coalesce(count(*) filter (where relevance_score >= 3), 0),
+              coalesce(sum(valor_estimado), 0),
+              coalesce(count(distinct uf), 0)
+            from public.fact_pncp_opportunities
+            """
+        )
+        opportunities, high_relevance, total_value, regions = cur.fetchone()
+        cur.execute(
+            """
+            select date_trunc('month', data_publicacao)::date as periodo, count(*) as oportunidades
+            from public.fact_pncp_opportunities
+            where data_publicacao is not null
+              and relevance_score >= 1
+            group by 1
+            order by 1 desc
+            limit 24
+            """
+        )
+        monthly = [
+            {"period": row[0].isoformat(), "period_label": row[0].strftime("%m/%y"), "opportunities": int(row[1] or 0)}
+            for row in reversed(cur.fetchall())
+        ]
+        cur.execute(
+            """
+            select coalesce(uf, 'NAO INFORMADO') as uf, count(*) as oportunidades, coalesce(sum(valor_estimado), 0) as valor
+            from public.fact_pncp_opportunities
+            group by coalesce(uf, 'NAO INFORMADO')
+            order by oportunidades desc, valor desc
+            limit 10
+            """
+        )
+        top_regions = [
+            {"uf": row[0], "opportunities": int(row[1] or 0), "value": market_decimal(row[2])}
+            for row in cur.fetchall()
+        ]
+        cur.execute(
+            """
+            select data_publicacao, coalesce(uf, ''), coalesce(municipio, ''), coalesce(orgao, ''),
+                   coalesce(objeto, ''), valor_estimado, relevance_score, pncp_id
+            from public.fact_pncp_opportunities
+            order by relevance_score desc, data_publicacao desc nulls last
+            limit 20
+            """
+        )
+        detail = [
+            {
+                "date": row[0].isoformat() if row[0] else None,
+                "uf": row[1],
+                "municipality": row[2],
+                "agency": row[3],
+                "object": row[4],
+                "value": market_decimal(row[5]),
+                "relevance_score": int(row[6] or 0),
+                "id": row[7],
+            }
+            for row in cur.fetchall()
+        ]
+        if opportunities:
+            return {
+                "source": "pncp_consulta",
+                "kpis": {
+                    "opportunities": int(opportunities or 0),
+                    "high_relevance": int(high_relevance or 0),
+                    "total_value": market_decimal(total_value),
+                    "regions": int(regions or 0),
+                },
+                "monthly": monthly,
+                "top_regions": top_regions,
+                "detail": detail,
+            }
+    except Exception:
+        pass
+    obras = market_obrasgov_summary(cur)
+    if not obras.get("kpis"):
+        return {}
+    return {
+        "source": "obrasgov_projetos",
+        "kpis": {
+            "opportunities": obras["kpis"]["projects"],
+            "high_relevance": 0,
+            "total_value": obras["kpis"]["investment"],
+            "regions": len(obras.get("top_regions", [])),
+        },
+        "monthly": [],
+        "top_regions": [
+            {"uf": item["uf"], "opportunities": item["projects"], "value": item["investment"]}
+            for item in obras.get("top_regions", [])
+        ],
+        "detail": [],
+    }
+
+
 def market_summary() -> dict[str, Any]:
     env = load_env()
     with connect_database(env) as conn:
@@ -2025,18 +2257,6 @@ def market_summary() -> dict[str, Any]:
                 for row in sources
                 if row["status"] == "HEALTHY" and row["configured"] and row["reachable"] and row["last_row_count"] > 0
             }
-
-            available_tabs = ["market-overview"]
-            if healthy & {"aco_brasil_estatistica_mensal", "inda_estatisticas"}:
-                available_tabs.append("steel-market")
-            if healthy & {"ibge_construcao_sidra", "cni_sondagem_construcao", "obrasgov_projetos"}:
-                available_tabs.append("construction")
-            if healthy & {"ibge_pim_sidra", "cni_sondagem_industrial"}:
-                available_tabs.append("industry")
-            if "aneel_dados_abertos" in healthy:
-                available_tabs.append("solar")
-            if "comex_stat_ncm" in healthy:
-                available_tabs.extend(["market-prices", "imports"])
 
             steel_sources = [key for key in ("aco_brasil_estatistica_mensal", "inda_estatisticas") if key in healthy]
             construction_sources = [key for key in ("ibge_construcao_sidra", "cni_sondagem_construcao") if key in healthy]
@@ -2051,8 +2271,25 @@ def market_summary() -> dict[str, Any]:
             industry_series = market_indicator_series(cur, "cni_sondagem_industrial", "cni_industria_expectativa_demanda")
             construction_series = market_indicator_series(cur, "ibge_construcao_sidra", "ibge_construcao_indice")
 
+            comex = market_comex_summary(cur) if "comex_stat_ncm" in healthy else {}
+            ptax = market_ptax_summary(cur) if "bcb_dolar_ptax" in healthy else {}
             solar = market_solar_summary(cur) if "aneel_dados_abertos" in healthy else {}
             public_works = market_obrasgov_summary(cur) if "obrasgov_projetos" in healthy else {}
+            opportunities = market_opportunities_summary(cur) if healthy & {"pncp_consulta", "obrasgov_projetos"} else {}
+
+            tab_rules = [
+                ("market-overview", True),
+                ("steel-market", bool(steel_sources)),
+                ("market-prices", bool(comex or ptax)),
+                ("imports", bool(comex)),
+                ("industry", bool(industry_sources)),
+                ("construction", bool(construction_sources or public_works)),
+                ("regional", False),
+                ("competition", False),
+                ("opportunities", bool(opportunities)),
+                ("solar", bool(solar)),
+            ]
+            available_tabs = [key for key, enabled in tab_rules if enabled]
 
     return {
         "sources": sources,
@@ -2084,10 +2321,16 @@ def market_summary() -> dict[str, Any]:
             "series": construction_series,
             "public_works": public_works,
         },
+        "prices": {
+            "ptax": ptax,
+            "comex": comex,
+        },
+        "imports": comex,
         "industry": {
             "indicators": industry_indicators,
             "series": industry_series,
         },
+        "opportunities": opportunities,
         "solar": solar,
     }
 

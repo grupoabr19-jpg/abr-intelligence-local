@@ -232,6 +232,15 @@ export type DashboardSummary = {
       indicators: MarketIndicator[]
       series: MarketSeriesPoint[]
     }
+    prices?: {
+      ptax?: {
+        latest: MarketSeriesPoint
+        change_period_pct: string
+        series: MarketSeriesPoint[]
+      }
+      comex?: MarketComexSummary
+    }
+    imports?: MarketComexSummary
     construction?: {
       indicators: MarketIndicator[]
       series: MarketSeriesPoint[]
@@ -243,6 +252,22 @@ export type DashboardSummary = {
     industry?: {
       indicators: MarketIndicator[]
       series: MarketSeriesPoint[]
+    }
+    opportunities?: {
+      source: string
+      kpis: { opportunities: number; high_relevance: number; total_value: string; regions: number }
+      monthly: Array<{ period: string; period_label: string; opportunities: number }>
+      top_regions: Array<{ uf: string; opportunities: number; value: string }>
+      detail: Array<{
+        date: string | null
+        uf: string
+        municipality: string
+        agency: string
+        object: string
+        value: string
+        relevance_score: number
+        id: string
+      }>
     }
     solar?: {
       latest_period: string
@@ -269,6 +294,15 @@ export type MarketSeriesPoint = {
   period: string | null
   period_label: string | null
   value: string
+}
+
+export type MarketComexSummary = {
+  latest_period: string
+  kpis: { toneladas_12m: string; fob_usd_t: string; cif_proxy_usd_t: string; countries: number }
+  monthly: Array<{ period: string; period_label: string; toneladas: string; fob_usd_t: string; cif_proxy_usd_t: string }>
+  countries: Array<{ country: string; toneladas: string }>
+  families: Array<{ family: string; toneladas: string; fob_usd_t: string }>
+  detail: Array<{ ncm: string; family: string; country: string; toneladas: string; fob_usd_t: string; freight_usd_t: string }>
 }
 
 const DEFAULT_API_BASE_URL =
