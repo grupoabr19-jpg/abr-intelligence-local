@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -32,6 +33,8 @@ PENDING_MARKET_SOURCES = (
 )
 
 STALE_REFRESH_MINUTES = 30
+AUTO_REFRESH_CHECK_SECONDS = int(os.environ.get("ABR_AUTO_REFRESH_CHECK_SECONDS", "1800") or "1800")
+AUTO_REFRESH_START_DELAY_SECONDS = int(os.environ.get("ABR_AUTO_REFRESH_START_DELAY_SECONDS", "20") or "20")
 
 
 RefreshStatus = Literal["queued", "running", "succeeded", "partial", "failed", "skipped"]
@@ -71,6 +74,7 @@ class DashboardRefreshManager:
         self._current_job: DashboardRefreshJob | None = None
         self._history: list[DashboardRefreshJob] = []
         self._daily_checked_for: str | None = None
+        self._auto_loop_started = False
 
     async def status(self) -> dict[str, Any]:
         async with self._lock:
@@ -88,8 +92,6 @@ class DashboardRefreshManager:
         today = date.today()
         today_key = today.isoformat()
         async with self._lock:
-            if self._daily_checked_for == today_key:
-                return self._current_job
             self._daily_checked_for = today_key
             if self._current_job and self._current_job.status in {"queued", "running"}:
                 return self._current_job
@@ -97,7 +99,22 @@ class DashboardRefreshManager:
         fresh = await asyncio.to_thread(self._is_fresh_today)
         if fresh:
             return None
+        if date_from is None and date_to is None:
+            date_from, date_to = self._default_auto_refresh_range()
         return await self.start_refresh(mode="auto", date_from=date_from, date_to=date_to, force=False)
+
+    async def run_auto_refresh_loop(self) -> None:
+        async with self._lock:
+            if self._auto_loop_started:
+                return
+            self._auto_loop_started = True
+        await asyncio.sleep(max(AUTO_REFRESH_START_DELAY_SECONDS, 0))
+        while True:
+            try:
+                await self.ensure_daily_refresh(date_from=None, date_to=None)
+            except Exception:
+                pass
+            await asyncio.sleep(max(AUTO_REFRESH_CHECK_SECONDS, 300))
 
     async def start_refresh(
         self,
@@ -107,6 +124,8 @@ class DashboardRefreshManager:
         date_to: date | None,
         force: bool,
     ) -> DashboardRefreshJob:
+        if mode == "auto" and date_from is None and date_to is None:
+            date_from, date_to = self._default_auto_refresh_range()
         start = date_from or date(date.today().year, 1, 1)
         end = date_to or date.today()
         await asyncio.to_thread(self._mark_stale_jobs)
@@ -326,6 +345,11 @@ class DashboardRefreshManager:
         freshness = self._source_freshness()
         core = [item for item in freshness if item["required_for_daily"]]
         return bool(core) and all(item["updated_today"] for item in core)
+
+    @staticmethod
+    def _default_auto_refresh_range() -> tuple[date, date]:
+        yesterday = date.today() - timedelta(days=1)
+        return date(yesterday.year, 1, 1), yesterday
 
     def _source_freshness(self) -> list[dict[str, Any]]:
         today = date.today()

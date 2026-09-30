@@ -62,6 +62,11 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "service": "abr-data-api"}
 
 
+@app.on_event("startup")
+async def start_dashboard_auto_refresh() -> None:
+    asyncio.create_task(dashboard_refresh_manager.run_auto_refresh_loop())
+
+
 @app.get("/v1/aster/reports", response_model=list[ReportInfo], tags=["aster"], dependencies=[Depends(require_api_key)])
 async def get_aster_reports() -> list[dict]:
     return list_reports()
@@ -101,6 +106,7 @@ async def get_internal_dashboard(
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before or equal to date_to.")
     set_dashboard_session_cookie(response)
+    asyncio.create_task(dashboard_refresh_manager.ensure_daily_refresh(date_from=None, date_to=None))
     return await asyncio.to_thread(
         internal_dashboard_summary,
         date_from=date_from,
