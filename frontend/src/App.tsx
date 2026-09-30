@@ -229,6 +229,19 @@ function dateMonthsAgo(months: number, cutoff = DEFAULT_DATE_TO) {
   return date.toISOString().slice(0, 10)
 }
 
+function lastCompleteTwelveMonthsRange(cutoff = DEFAULT_DATE_TO) {
+  const current = new Date(`${cutoff}T00:00:00`)
+  let periodEnd = new Date(current.getFullYear(), current.getMonth() + 1, 0)
+  if (current.getDate() < periodEnd.getDate()) {
+    periodEnd = new Date(current.getFullYear(), current.getMonth(), 0)
+  }
+  const periodStart = new Date(periodEnd.getFullYear(), periodEnd.getMonth() - 11, 1)
+  return {
+    dateFrom: periodStart.toISOString().slice(0, 10),
+    dateTo: periodEnd.toISOString().slice(0, 10),
+  }
+}
+
 function marketDefaultFilter(tab: IntelligenceTab): MarketFilterState {
   const monthsByTab: Partial<Record<IntelligenceTab, number>> = {
     'market-overview': 12,
@@ -243,9 +256,10 @@ function marketDefaultFilter(tab: IntelligenceTab): MarketFilterState {
   const daysByTab: Partial<Record<IntelligenceTab, number>> = {
     opportunities: 90,
   }
+  const overviewRange = tab === 'market-overview' ? lastCompleteTwelveMonthsRange() : null
   return {
-    dateFrom: daysByTab[tab] ? dateDaysAgo(daysByTab[tab]) : dateMonthsAgo(monthsByTab[tab] ?? 12),
-    dateTo: DEFAULT_DATE_TO,
+    dateFrom: overviewRange?.dateFrom ?? (daysByTab[tab] ? dateDaysAgo(daysByTab[tab]) : dateMonthsAgo(monthsByTab[tab] ?? 12)),
+    dateTo: overviewRange?.dateTo ?? DEFAULT_DATE_TO,
     productFamily: 'ALL',
     region: 'ALL',
     country: 'ALL',
@@ -971,6 +985,12 @@ function App() {
           loading={loading}
           onChange={updateActiveMarketFilter}
           onApply={() => void load()}
+          onReset={() => {
+            setMarketTabFilters((current) => ({
+              ...current,
+              [intelligenceTab]: marketDefaultFilter(intelligenceTab),
+            }))
+          }}
         />
       )}
 
@@ -1711,7 +1731,7 @@ function App() {
       )}
 
       {macroArea === 'market' && (
-        <MarketTab summary={market} tab={intelligenceTab} title={activeTabLabel} />
+        <MarketTab summary={market} tab={intelligenceTab} title={activeTabLabel} onNavigate={setIntelligenceTab} />
       )}
 
       {macroArea === 'service' && intelligenceTab === 'service-overview' && (
@@ -2075,9 +2095,38 @@ function App() {
   )
 }
 
-function Kpi({ title, value, displayValue, detail, icon }: { title: string; value?: number; displayValue?: string; detail: string; icon: ReactNode }) {
+function Kpi({
+  title,
+  value,
+  displayValue,
+  detail,
+  icon,
+  tooltip,
+  onClick,
+}: {
+  title: string
+  value?: number
+  displayValue?: string
+  detail: string
+  icon: ReactNode
+  tooltip?: string
+  onClick?: () => void
+}) {
   return (
-    <article className="kpi-card" title={`${title}: ${detail}`}>
+    <article
+      className={`kpi-card ${onClick ? 'clickable' : ''}`}
+      title={tooltip ?? `${title}: ${detail}`}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (!onClick) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onClick()
+        }
+      }}
+    >
       <div className="kpi-icon">{icon}</div>
       <div>
         <span>{title}</span>
@@ -2133,12 +2182,14 @@ function MarketFilterBar({
   loading,
   onChange,
   onApply,
+  onReset,
 }: {
   tab: IntelligenceTab
   value: MarketFilterState
   loading: boolean
   onChange: (patch: Partial<MarketFilterState>) => void
   onApply: () => void
+  onReset: () => void
 }) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -2233,14 +2284,19 @@ function MarketFilterBar({
         <RefreshCw size={16} className={loading ? 'spin' : ''} />
         Aplicar
       </button>
+      {tab === 'market-overview' && (
+        <button className="ghost-button" type="button" disabled={loading} onClick={onReset}>
+          Restaurar padrao
+        </button>
+      )}
     </form>
   )
 }
 
-function MarketTab({ summary, tab, title }: { summary?: MarketSummary; tab: IntelligenceTab; title: string }) {
+function MarketTab({ summary, tab, title, onNavigate }: { summary?: MarketSummary; tab: IntelligenceTab; title: string; onNavigate: (tab: IntelligenceTab) => void }) {
   if (!summary) return <UnavailableTab title={title} />
 
-  if (tab === 'market-overview') return <MarketOverview summary={summary} />
+  if (tab === 'market-overview') return <MarketOverview summary={summary} onNavigate={onNavigate} />
   if (tab === 'steel-market') return <MarketIndicatorTab title="Mercado do Aco" icon={<BarChart3 size={17} />} data={summary.steel_market} unitFallback="mil t" />
   if (tab === 'market-prices') return <MarketPricesTab summary={summary} />
   if (tab === 'imports') return <MarketImportsTab summary={summary} />
@@ -2252,58 +2308,155 @@ function MarketTab({ summary, tab, title }: { summary?: MarketSummary; tab: Inte
   return <UnavailableTab title={title} />
 }
 
-function MarketOverview({ summary }: { summary: MarketSummary }) {
-  const sourceRows = summary.sources.map((item) => [
-    marketSourceShortName(item.source_key),
-    item.status,
-    item.latest_reference_period ?? 'Sem periodo',
-    formatNumber(item.last_row_count),
-    item.last_success_at ? new Date(item.last_success_at).toLocaleString('pt-BR') : 'Sem carga',
-  ])
-  const periodRows = summary.overview.latest_periods.map((item) => [
-    marketSourceShortName(item.source_key),
-    item.period ?? 'Sem periodo',
-    formatNumber(item.rows),
-    item.status,
-  ])
-  const macroRows = summary.overview.macro_indicators.map((item) => [
-    item.name,
-    item.geography ?? 'BR',
-    item.period ?? 'Sem periodo',
+function MarketOverview({ summary, onNavigate }: { summary: MarketSummary; onNavigate: (tab: IntelligenceTab) => void }) {
+  const overview = summary.overview_decision
+  if (!overview) return <UnavailableTab title="Visao Geral" />
+
+  const signedPercent = (value: string | null | undefined) => {
+    if (value === null || value === undefined || value === '') return 'Sem comparativo'
+    const number = numericValue(value)
+    const sign = number > 0 ? '+' : ''
+    return `${sign}${percent(number)}`
+  }
+  const signedNumber = (value: string | null | undefined) => {
+    if (value === null || value === undefined || value === '') return 'Sem comparativo'
+    const number = numericValue(value)
+    const sign = number > 0 ? '+' : ''
+    return `${sign}${marketNumber(number, 1)}`
+  }
+  const comparisonText = (label: string, value: string | null | undefined) => {
+    if (label.toLowerCase().includes('distancia')) return `${label}: ${signedNumber(value)} pts`
+    return `${label}: ${signedPercent(value)}`
+  }
+  const chartValue = (value: string | null | undefined) => nullableNumericValue(value)
+  const hasSeriesValue = (rows: Array<Record<string, unknown>>, keys: string[]) =>
+    rows.some((row) => keys.some((key) => row[key] !== null && row[key] !== undefined))
+  const steelChart = overview.charts.steel.map((item) => ({
+    period_label: item.period_label ?? (item.period ? monthLabel(item.period.slice(0, 7)) : 'Periodo'),
+    consumo_aparente: chartValue(item.consumo_aparente),
+    vendas_internas: chartValue(item.vendas_internas),
+  }))
+  const industryChart = overview.charts.industry.map((item) => ({
+    period_label: item.period_label ?? (item.period ? monthLabel(item.period.slice(0, 7)) : 'Periodo'),
+    ibge_pim: chartValue(item.ibge_pim),
+  }))
+  const constructionChart = overview.charts.construction.map((item) => ({
+    period_label: item.period_label ?? (item.period ? monthLabel(item.period.slice(0, 7)) : 'Periodo'),
+    ibge_construcao: chartValue(item.ibge_construcao),
+    cni_compra_insumos: chartValue(item.cni_compra_insumos),
+  }))
+  const distributionChart = overview.charts.distribution.map((item) => ({
+    metric: item.metric,
+    value_numero: chartValue(item.value),
+    period_label: item.period_label ?? (item.period ? monthLabel(item.period.slice(0, 7)) : ''),
+  }))
+  const signalRows = overview.signals.map((item) => [
+    item.dimension,
+    item.indicator,
     marketValue(item.value, item.unit),
+    signedPercent(item.change_3m),
+    signedPercent(item.yoy),
+    item.signal,
+    `${item.source}${item.competence ? ` | ${item.competence}` : ''}`,
   ])
-  const cockpitRows = (summary.decision_layer?.cockpit ?? []).map((item) => [
-    item.title,
-    item.classification,
-    item.score === null || item.score === undefined ? 'Sem score' : formatNumber(item.score),
-    `${formatNumber(item.available_components_count)} componentes`,
-    item.period ? monthLabel(item.period.slice(0, 7)) : 'Sem periodo',
-  ])
-  const macroSignal = (summary.decision_layer?.cockpit ?? []).find((item) => item.signal_key === 'macro_industrial_context')
+  const readingRows = overview.decision_readings.map((item) => [item.text])
 
   return (
     <>
-      <section className="kpi-grid">
-        <Kpi title="Fontes saudaveis" displayValue={formatNumber(summary.overview.healthy_count)} detail={`${formatNumber(summary.overview.configured_count)} fontes configuradas`} icon={<CheckCircle2 />} />
-        <Kpi title="Fontes com erro" displayValue={formatNumber(summary.overview.error_count)} detail="Nao exibidas como aba operacional" icon={<AlertTriangle />} />
-        <Kpi title="Abas ativas" displayValue={formatNumber(summary.available_tabs.length)} detail="Somente com fonte saudavel" icon={<TableProperties />} />
-        <Kpi title="Macro industrial" displayValue={macroSignal?.classification ?? 'Sem sinal'} detail={macroSignal?.period ? `World Bank | ${monthLabel(macroSignal.period.slice(0, 7))}` : 'World Bank'} icon={<Database />} />
-      </section>
+      {overview.kpis.length > 0 && (
+        <section className="kpi-grid">
+          {overview.kpis.map((item) => (
+            <Kpi
+              key={item.id}
+              title={item.title}
+              displayValue={marketValue(item.value, item.unit)}
+              detail={`${comparisonText(item.comparison_label, item.comparison_value)} | ${item.source}${item.competence ? ` | ${item.competence}` : ''}`}
+              icon={item.id === 'ptax' ? <CircleDollarSign /> : item.id.includes('cni') ? <Gauge /> : <LineChartIcon />}
+              tooltip={item.tooltip}
+              onClick={() => onNavigate(item.target_tab as IntelligenceTab)}
+            />
+          ))}
+        </section>
+      )}
       <section className="dashboard-grid">
-        <Panel title="Sinais decisorios" icon={<Gauge size={17} />} wide>
-          <DataTable columns={['Sinal', 'Classificacao', 'Score', 'Base', 'Periodo']} rows={cockpitRows} empty="Sinais decisorios ainda nao recalculados" />
+        <Panel title="Sinais do mercado" icon={<Gauge size={17} />} wide>
+          <DataTable columns={['Dimensao', 'Indicador', 'Valor atual', '3M', 'YoY', 'Sinal', 'Fonte']} rows={signalRows} empty="Sem sinais confiaveis no periodo" />
         </Panel>
-        <Panel title="Ultimos periodos por fonte" icon={<CalendarDays size={17} />} wide>
-          <DataTable columns={['Fonte', 'Periodo', 'Linhas', 'Status']} rows={periodRows} empty="Nenhuma fonte saudavel carregada" />
-        </Panel>
-        {macroRows.length > 0 && (
-          <Panel title="Contexto macro" icon={<LineChartIcon size={17} />} wide>
-            <DataTable columns={['Indicador', 'Geografia', 'Periodo', 'Valor']} rows={macroRows} empty="Sem indicadores macro carregados" />
+
+        {hasSeriesValue(steelChart, ['consumo_aparente', 'vendas_internas']) && (
+          <Panel title="Mercado brasileiro de aco" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={steelChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="period_label" />
+                  <YAxis tickFormatter={(value) => marketNumber(value, 0)} />
+                  <Tooltip formatter={(value, name) => [marketValue(String(value), 'mil t'), name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Line connectNulls type="monotone" dataKey="consumo_aparente" name="Consumo aparente" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                  <Line connectNulls type="monotone" dataKey="vendas_internas" name="Vendas internas" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
           </Panel>
         )}
-        <Panel title="Saude das fontes de mercado" icon={<Database size={17} />} wide>
-          <DataTable columns={['Fonte', 'Status', 'Periodo', 'Linhas', 'Ultima carga']} rows={sourceRows} empty="Registry de mercado vazio" />
-        </Panel>
+
+        {hasSeriesValue(industryChart, ['ibge_pim']) && (
+          <Panel title="Atividade dos setores consumidores" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={industryChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="period_label" />
+                  <YAxis tickFormatter={(value) => marketNumber(value, 1)} />
+                  <Tooltip formatter={(value, name) => [marketValue(String(value), 'indice'), name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Line connectNulls type="monotone" dataKey="ibge_pim" name="IBGE PIM" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+
+        {hasSeriesValue(constructionChart, ['ibge_construcao']) && (
+          <Panel title="Construcao" icon={<LineChartIcon size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ReLineChart data={constructionChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="period_label" />
+                  <YAxis tickFormatter={(value) => marketNumber(value, 1)} />
+                  <Tooltip formatter={(value, name) => [marketNumber(String(value), 1), name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Line connectNulls type="monotone" dataKey="ibge_construcao" name="IBGE construcao" stroke="#253575" strokeWidth={3} dot={{ r: 3 }} />
+                </ReLineChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+
+        {distributionChart.length > 0 && (
+          <Panel title="Distribuicao de aco planos" icon={<BarChart3 size={17} />}>
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={distributionChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="metric" />
+                  <YAxis tickFormatter={(value) => `${marketNumber(value, 1)}%`} />
+                  <Tooltip formatter={(value, name) => [`${marketNumber(String(value), 1)}%`, name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Bar dataKey="value_numero" name="Variacao mensal" fill="#F18800" radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          </Panel>
+        )}
+
+        {readingRows.length > 0 && (
+          <Panel title="Leituras para decisao" icon={<AlertTriangle size={17} />} wide>
+            <DataTable columns={['Leitura']} rows={readingRows} empty="Sem leituras geradas para o periodo" />
+          </Panel>
+        )}
       </section>
     </>
   )

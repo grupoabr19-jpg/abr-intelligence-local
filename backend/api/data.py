@@ -2057,6 +2057,507 @@ def market_indicator_series(cur: Any, source_key: str, indicator_key: str, limit
     ]
 
 
+def market_indicator_series_between(
+    cur: Any,
+    source_key: str,
+    indicator_key: str,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = 36,
+) -> list[dict[str, Any]]:
+    cur.execute(
+        """
+        select mi.periodo_inicio, mi.periodo_label, avg(mi.valor) as valor
+        from public.mercado_indicadores mi
+        left join public.market_indicator_metadata mim
+          on mim.source_key = mi.source_key
+         and mim.indicator_key = mi.indicador_key
+         and mim.active = true
+        where mi.source_key = %s
+          and mi.indicador_key = %s
+          and mi.valor is not null
+          and (%s::date is null or mi.periodo_inicio >= %s::date)
+          and (%s::date is null or mi.periodo_inicio <= %s::date)
+          and (
+            mim.source_key is null
+            or (
+              (mim.allow_zero or mi.valor <> 0)
+              and (mim.min_sanity_value is null or mi.valor >= mim.min_sanity_value)
+              and (mim.max_sanity_value is null or mi.valor <= mim.max_sanity_value)
+            )
+          )
+        group by mi.periodo_inicio, mi.periodo_label
+        order by mi.periodo_inicio desc nulls last
+        limit %s
+        """,
+        (source_key, indicator_key, date_from, date_from, date_to, date_to, limit),
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "period": row[0].isoformat() if row[0] else None,
+            "period_label": row[1],
+            "value": market_decimal(row[2]),
+        }
+        for row in reversed(rows)
+    ]
+
+
+def market_latest_indicator_before(
+    cur: Any,
+    source_key: str,
+    indicator_key: str,
+    date_to: date | None = None,
+) -> dict[str, Any] | None:
+    cur.execute(
+        """
+        select mi.source_key, mi.indicador_key, mi.indicador_nome, mi.periodo_inicio,
+               mi.periodo_label, mi.geografia, mi.unidade, mi.valor
+        from public.mercado_indicadores mi
+        left join public.market_indicator_metadata mim
+          on mim.source_key = mi.source_key
+         and mim.indicator_key = mi.indicador_key
+         and mim.active = true
+        where mi.source_key = %s
+          and mi.indicador_key = %s
+          and mi.valor is not null
+          and (%s::date is null or mi.periodo_inicio <= %s::date)
+          and (
+            mim.source_key is null
+            or (
+              (mim.allow_zero or mi.valor <> 0)
+              and (mim.min_sanity_value is null or mi.valor >= mim.min_sanity_value)
+              and (mim.max_sanity_value is null or mi.valor <= mim.max_sanity_value)
+            )
+          )
+        order by mi.periodo_inicio desc nulls last, mi.coletado_em desc
+        limit 1
+        """,
+        (source_key, indicator_key, date_to, date_to),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "source_key": row[0],
+        "indicator_key": row[1],
+        "name": row[2],
+        "period": row[3],
+        "period_iso": row[3].isoformat() if row[3] else None,
+        "period_label": row[4],
+        "geography": row[5],
+        "unit": row[6],
+        "value": row[7],
+        "value_text": market_decimal(row[7]),
+    }
+
+
+def market_pct_change(current: Decimal | None, previous: Decimal | None) -> Decimal | None:
+    if current is None or previous is None or previous == 0:
+        return None
+    return ((current / previous) - Decimal("1")) * Decimal("100")
+
+
+def market_one_year_before(value: date) -> date:
+    try:
+        return value.replace(year=value.year - 1)
+    except ValueError:
+        return value.replace(year=value.year - 1, day=28)
+
+
+def market_indicator_yoy(cur: Any, latest: dict[str, Any] | None) -> Decimal | None:
+    if not latest or not latest.get("period") or latest.get("value") is None:
+        return None
+    previous_cutoff = market_one_year_before(latest["period"])
+    previous = market_latest_indicator_before(cur, latest["source_key"], latest["indicator_key"], previous_cutoff)
+    return market_pct_change(latest["value"], previous["value"] if previous else None)
+
+
+def market_indicator_3m_change(cur: Any, latest: dict[str, Any] | None) -> Decimal | None:
+    if not latest or not latest.get("period"):
+        return None
+    cur.execute(
+        """
+        with bounds as (
+          select %s::date as cutoff
+        ),
+        current_window as (
+          select avg(mi.valor) as valor
+          from public.mercado_indicadores mi
+          left join public.market_indicator_metadata mim
+            on mim.source_key = mi.source_key
+           and mim.indicator_key = mi.indicador_key
+           and mim.active = true,
+          bounds
+          where mi.source_key = %s
+            and mi.indicador_key = %s
+            and mi.valor is not null
+            and mi.periodo_inicio <= bounds.cutoff
+            and mi.periodo_inicio > bounds.cutoff - interval '3 months'
+            and (
+              mim.source_key is null
+              or (
+                (mim.allow_zero or mi.valor <> 0)
+                and (mim.min_sanity_value is null or mi.valor >= mim.min_sanity_value)
+                and (mim.max_sanity_value is null or mi.valor <= mim.max_sanity_value)
+              )
+            )
+        ),
+        previous_window as (
+          select avg(mi.valor) as valor
+          from public.mercado_indicadores mi
+          left join public.market_indicator_metadata mim
+            on mim.source_key = mi.source_key
+           and mim.indicator_key = mi.indicador_key
+           and mim.active = true,
+          bounds
+          where mi.source_key = %s
+            and mi.indicador_key = %s
+            and mi.valor is not null
+            and mi.periodo_inicio <= bounds.cutoff - interval '3 months'
+            and mi.periodo_inicio > bounds.cutoff - interval '6 months'
+            and (
+              mim.source_key is null
+              or (
+                (mim.allow_zero or mi.valor <> 0)
+                and (mim.min_sanity_value is null or mi.valor >= mim.min_sanity_value)
+                and (mim.max_sanity_value is null or mi.valor <= mim.max_sanity_value)
+              )
+            )
+        )
+        select current_window.valor, previous_window.valor
+        from current_window, previous_window
+        """,
+        (latest["period"], latest["source_key"], latest["indicator_key"], latest["source_key"], latest["indicator_key"]),
+    )
+    current_avg, previous_avg = cur.fetchone()
+    return market_pct_change(current_avg, previous_avg)
+
+
+def market_indicator_card(
+    *,
+    item_id: str,
+    title: str,
+    latest: dict[str, Any] | None,
+    source_label: str,
+    comparison_label: str,
+    comparison_value: Decimal | None,
+    target_tab: str,
+    tooltip: str,
+    unit_override: str | None = None,
+) -> dict[str, Any] | None:
+    if not latest or latest.get("value") is None:
+        return None
+    return {
+        "id": item_id,
+        "title": title,
+        "value": market_decimal(latest["value"]),
+        "unit": unit_override if unit_override is not None else latest.get("unit"),
+        "comparison_label": comparison_label,
+        "comparison_value": market_decimal(comparison_value),
+        "source": source_label,
+        "competence": latest.get("period_label") or latest.get("period_iso"),
+        "target_tab": target_tab,
+        "tooltip": tooltip,
+    }
+
+
+def market_signal(
+    *,
+    dimension: str,
+    indicator: str,
+    latest: dict[str, Any] | None,
+    source_label: str,
+    signal: str,
+    change_3m: Decimal | None = None,
+    yoy: Decimal | None = None,
+    value_unit: str | None = None,
+) -> dict[str, Any] | None:
+    if not latest or latest.get("value") is None:
+        return None
+    return {
+        "dimension": dimension,
+        "indicator": indicator,
+        "value": market_decimal(latest["value"]),
+        "unit": value_unit if value_unit is not None else latest.get("unit"),
+        "change_3m": market_decimal(change_3m),
+        "yoy": market_decimal(yoy),
+        "signal": signal,
+        "source": source_label,
+        "competence": latest.get("period_label") or latest.get("period_iso"),
+    }
+
+
+def market_overview_decision(
+    cur: Any,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
+    indicators = {
+        "ptax": ("bcb_dolar_ptax", "bcb_ptax_cotacaoVenda", "BCB"),
+        "steel_consumption": ("aco_brasil_estatistica_mensal", "aco_brasil_consumo_aparente_total", "Aco Brasil"),
+        "steel_domestic_sales": ("aco_brasil_estatistica_mensal", "aco_brasil_vendas_internas_total", "Aco Brasil"),
+        "pim": ("ibge_pim_sidra", "ibge_pim_producao_fisica", "IBGE PIM"),
+        "construction": ("ibge_construcao_sidra", "ibge_construcao_indice", "IBGE"),
+        "cni_industry": ("cni_sondagem_industrial", "cni_industria_expectativa_demanda", "CNI Industria"),
+        "cni_inputs": (
+            "cni_sondagem_construcao",
+            "cni_construcao_10_expectativa_de_compras_de_insumos_e_materias_primas_para_os_proximos_seis_meses",
+            "CNI Construcao",
+        ),
+        "inda_sales": ("inda_estatisticas", "inda_vendas_variacao_mes_pct", "INDA"),
+        "inda_stock": ("inda_estatisticas", "inda_estoque_variacao_mes_pct", "INDA"),
+        "inda_purchases": ("inda_estatisticas", "inda_compras_variacao_mes_pct", "INDA"),
+        "inda_imports": ("inda_estatisticas", "inda_importacao_variacao_mes_pct", "INDA"),
+    }
+    latest = {
+        key: market_latest_indicator_before(cur, source_key, indicator_key, date_to)
+        for key, (source_key, indicator_key, _source_label) in indicators.items()
+    }
+    yoy = {key: market_indicator_yoy(cur, value) for key, value in latest.items()}
+    change_3m = {key: market_indicator_3m_change(cur, value) for key, value in latest.items()}
+
+    ptax_30d: Decimal | None = None
+    ptax = latest.get("ptax")
+    if ptax and ptax.get("period"):
+        cur.execute("select (%s::date - interval '30 days')::date", (ptax["period"],))
+        ptax_previous_cutoff = cur.fetchone()[0]
+        ptax_previous = market_latest_indicator_before(cur, "bcb_dolar_ptax", "bcb_ptax_cotacaoVenda", ptax_previous_cutoff)
+        ptax_30d = market_pct_change(ptax["value"], ptax_previous["value"] if ptax_previous else None)
+
+    cards = [
+        market_indicator_card(
+            item_id="ptax",
+            title="PTAX venda",
+            latest=ptax,
+            source_label="BCB",
+            comparison_label="30 dias",
+            comparison_value=ptax_30d,
+            target_tab="market-prices",
+            tooltip="Dolar PTAX venda mais recente ate o corte. Formula: variacao contra a cotacao valida de aproximadamente 30 dias antes. Unidade: R$/US$.",
+            unit_override="R$/US$",
+        ),
+        market_indicator_card(
+            item_id="steel_consumption",
+            title="Consumo aparente de aco",
+            latest=latest.get("steel_consumption"),
+            source_label="Aco Brasil",
+            comparison_label="YoY",
+            comparison_value=yoy.get("steel_consumption"),
+            target_tab="steel-market",
+            tooltip="Consumo aparente informado pelo Aco Brasil. Formula YoY: valor atual dividido pelo mesmo periodo do ano anterior menos 1. Unidade original da fonte.",
+        ),
+        market_indicator_card(
+            item_id="pim",
+            title="Atividade industrial",
+            latest=latest.get("pim"),
+            source_label="IBGE PIM",
+            comparison_label="YoY",
+            comparison_value=yoy.get("pim"),
+            target_tab="industry",
+            tooltip="Indice de producao fisica industrial disponivel no SIDRA. Formula YoY: valor atual dividido pelo mesmo periodo do ano anterior menos 1.",
+        ),
+        market_indicator_card(
+            item_id="construction",
+            title="Atividade da construcao",
+            latest=latest.get("construction"),
+            source_label="IBGE",
+            comparison_label="YoY",
+            comparison_value=yoy.get("construction"),
+            target_tab="construction",
+            tooltip="Indice da construcao no SIDRA. Formula YoY: valor atual dividido pelo mesmo periodo do ano anterior menos 1.",
+        ),
+        market_indicator_card(
+            item_id="cni_industry",
+            title="Expectativa demanda industrial",
+            latest=latest.get("cni_industry"),
+            source_label="CNI Industria",
+            comparison_label="Distancia de 50",
+            comparison_value=(latest["cni_industry"]["value"] - Decimal("50")) if latest.get("cni_industry") else None,
+            target_tab="industry",
+            tooltip="Indicador de expectativa de demanda da CNI. Valores acima de 50 indicam expectativa positiva; abaixo de 50 indicam retração.",
+        ),
+        market_indicator_card(
+            item_id="cni_inputs",
+            title="Compra de insumos construcao",
+            latest=latest.get("cni_inputs"),
+            source_label="CNI Construcao",
+            comparison_label="Distancia de 50",
+            comparison_value=(latest["cni_inputs"]["value"] - Decimal("50")) if latest.get("cni_inputs") else None,
+            target_tab="construction",
+            tooltip="Expectativa de compras de insumos e materias-primas na construcao. Base neutra: 50 pontos.",
+        ),
+        market_indicator_card(
+            item_id="inda_sales",
+            title="Distribuicao INDA",
+            latest=latest.get("inda_sales"),
+            source_label="INDA",
+            comparison_label="Estoque MoM",
+            comparison_value=latest["inda_stock"]["value"] if latest.get("inda_stock") else None,
+            target_tab="steel-market",
+            tooltip="Variacao mensal de vendas do INDA, acompanhada pela variacao mensal de estoque. Unidade: percentual ao mes.",
+            unit_override="%",
+        ),
+    ]
+    cards = [card for card in cards if card]
+
+    def signal_for_change(value: Decimal | None, positive: str, negative: str, stable: str = "estavel") -> str:
+        if value is None:
+            return "sem comparativo"
+        if value > Decimal("2"):
+            return positive
+        if value < Decimal("-2"):
+            return negative
+        return stable
+
+    signals = [
+        market_signal(
+            dimension="Cambio",
+            indicator="PTAX venda",
+            latest=ptax,
+            source_label="BCB",
+            signal=signal_for_change(ptax_30d, "pressao externa maior", "pressao externa menor"),
+            change_3m=change_3m.get("ptax"),
+            yoy=yoy.get("ptax"),
+            value_unit="R$/US$",
+        ),
+        market_signal(
+            dimension="Mercado do aco",
+            indicator="Consumo aparente",
+            latest=latest.get("steel_consumption"),
+            source_label="Aco Brasil",
+            signal=signal_for_change(yoy.get("steel_consumption"), "acima do ano anterior", "abaixo do ano anterior"),
+            change_3m=change_3m.get("steel_consumption"),
+            yoy=yoy.get("steel_consumption"),
+        ),
+        market_signal(
+            dimension="Industria",
+            indicator="IBGE PIM",
+            latest=latest.get("pim"),
+            source_label="IBGE PIM",
+            signal=signal_for_change(yoy.get("pim"), "fortalecimento", "enfraquecimento", "misto"),
+            change_3m=change_3m.get("pim"),
+            yoy=yoy.get("pim"),
+        ),
+        market_signal(
+            dimension="Construcao",
+            indicator="IBGE construcao",
+            latest=latest.get("construction"),
+            source_label="IBGE",
+            signal=signal_for_change(yoy.get("construction"), "aceleracao", "recuo", "misto"),
+            change_3m=change_3m.get("construction"),
+            yoy=yoy.get("construction"),
+        ),
+        market_signal(
+            dimension="Distribuicao",
+            indicator="INDA vendas / estoque",
+            latest=latest.get("inda_sales"),
+            source_label="INDA",
+            signal=(
+                "estoque cresce com vendas em queda"
+                if latest.get("inda_stock") and latest.get("inda_sales") and latest["inda_stock"]["value"] > 2 and latest["inda_sales"]["value"] < 0
+                else "estoque cai com vendas em alta"
+                if latest.get("inda_stock") and latest.get("inda_sales") and latest["inda_stock"]["value"] < 0 and latest["inda_sales"]["value"] > 0
+                else "misto"
+            ),
+            change_3m=change_3m.get("inda_sales"),
+            yoy=yoy.get("inda_sales"),
+            value_unit="%",
+        ),
+    ]
+    signals = [signal for signal in signals if signal]
+
+    steel_series_keys = [
+        ("consumo_aparente", "aco_brasil_estatistica_mensal", "aco_brasil_consumo_aparente_total"),
+        ("vendas_internas", "aco_brasil_estatistica_mensal", "aco_brasil_vendas_internas_total"),
+    ]
+    steel_series_map: dict[str, dict[str, Any]] = {}
+    for output_key, source_key, indicator_key in steel_series_keys:
+        for point in market_indicator_series_between(cur, source_key, indicator_key, date_from=date_from, date_to=date_to, limit=24):
+            period = point["period"]
+            steel_series_map.setdefault(period, {"period": period, "period_label": point["period_label"]})[output_key] = point["value"]
+
+    industry_series_map: dict[str, dict[str, Any]] = {}
+    for point in market_indicator_series_between(cur, "ibge_pim_sidra", "ibge_pim_producao_fisica", date_from=date_from, date_to=date_to, limit=24):
+        industry_series_map[point["period"]] = {
+            "period": point["period"],
+            "period_label": point["period_label"],
+            "ibge_pim": point["value"],
+        }
+
+    construction_series_map: dict[str, dict[str, Any]] = {}
+    construction_keys = [
+        ("ibge_construcao", "ibge_construcao_sidra", "ibge_construcao_indice"),
+        ("cni_compra_insumos", "cni_sondagem_construcao", indicators["cni_inputs"][1]),
+    ]
+    for output_key, source_key, indicator_key in construction_keys:
+        for point in market_indicator_series_between(cur, source_key, indicator_key, date_from=date_from, date_to=date_to, limit=24):
+            period = point["period"]
+            construction_series_map.setdefault(period, {"period": period, "period_label": point["period_label"]})[output_key] = point["value"]
+
+    distribution_bars = []
+    for key, label in (
+        ("inda_sales", "Vendas"),
+        ("inda_purchases", "Compras"),
+        ("inda_stock", "Estoque"),
+        ("inda_imports", "Importacoes"),
+    ):
+        item = latest.get(key)
+        if item and item.get("value") is not None:
+            distribution_bars.append(
+                {
+                    "metric": label,
+                    "value": market_decimal(item["value"]),
+                    "period": item.get("period_iso"),
+                    "period_label": item.get("period_label"),
+                }
+            )
+
+    readings: list[dict[str, str]] = []
+    if yoy.get("pim") is not None and latest.get("cni_industry"):
+        cni_value = latest["cni_industry"]["value"]
+        if yoy["pim"] > Decimal("2") and cni_value > Decimal("52"):
+            readings.append({"key": "industry", "text": "Industria sinaliza fortalecimento: PIM cresce no ano e expectativa CNI esta acima de 52.", "severity": "positive"})
+        elif yoy["pim"] < 0 and cni_value < Decimal("50"):
+            readings.append({"key": "industry", "text": "Industria sinaliza enfraquecimento: PIM recua no ano e expectativa CNI esta abaixo de 50.", "severity": "attention"})
+        else:
+            readings.append({"key": "industry", "text": "Industria esta mista: atividade realizada e expectativa nao apontam na mesma direcao.", "severity": "neutral"})
+    if yoy.get("construction") is not None and latest.get("cni_inputs") and yoy["construction"] > Decimal("2") and latest["cni_inputs"]["value"] > Decimal("52"):
+        readings.append({"key": "construction", "text": "Construcao mostra aceleracao: indice setorial cresce no ano e expectativa de compra de insumos supera 52.", "severity": "positive"})
+    if latest.get("inda_stock") and latest.get("inda_sales"):
+        stock = latest["inda_stock"]["value"]
+        sales = latest["inda_sales"]["value"]
+        if stock > Decimal("2") and sales < 0:
+            readings.append({"key": "distribution", "text": "Distribuicao com estoque crescendo enquanto vendas caem, sinal de maior folga no canal.", "severity": "attention"})
+        elif stock < 0 and sales > 0:
+            readings.append({"key": "distribution", "text": "Distribuicao com estoque em reducao e vendas em alta, sinal de giro mais forte no canal.", "severity": "positive"})
+    if ptax_30d is not None:
+        if ptax_30d > Decimal("2"):
+            readings.append({"key": "fx", "text": "Cambio subiu mais de 2% em 30 dias, aumentando a pressao externa sobre itens importados.", "severity": "attention"})
+        elif ptax_30d < Decimal("-2"):
+            readings.append({"key": "fx", "text": "Cambio caiu mais de 2% em 30 dias, reduzindo a pressao externa sobre itens importados.", "severity": "positive"})
+    if yoy.get("steel_consumption") is not None and yoy["steel_consumption"] > Decimal("3"):
+        readings.append({"key": "steel", "text": "Consumo aparente de aco esta acima do mesmo periodo do ano anterior.", "severity": "positive"})
+
+    return {
+        "date_range": {
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+        },
+        "kpis": cards[:8],
+        "signals": signals,
+        "charts": {
+            "steel": [steel_series_map[key] for key in sorted(steel_series_map) if key],
+            "industry": [industry_series_map[key] for key in sorted(industry_series_map) if key],
+            "construction": [construction_series_map[key] for key in sorted(construction_series_map) if key],
+            "distribution": distribution_bars,
+        },
+        "decision_readings": readings[:5],
+    }
+
+
 def market_comex_summary(cur: Any) -> dict[str, Any]:
     cur.execute("select max(periodo_inicio) from public.fact_steel_import_monthly")
     latest_period = cur.fetchone()[0]
@@ -2429,6 +2930,11 @@ def market_summary(
             construction_indicators = market_latest_indicators(cur, construction_sources, limit=16)
             industry_indicators = market_latest_indicators(cur, industry_sources, limit=16)
             macro_indicators = market_latest_indicators(cur, ["world_bank_wdi"] if "world_bank_wdi" in healthy else [], limit=8)
+            overview_decision = market_overview_decision(
+                cur,
+                date_from=market_date_from,
+                date_to=market_date_to,
+            )
 
             steel_series = market_indicator_series(cur, "aco_brasil_estatistica_mensal", "aco_brasil_consumo_aparente_total")
             industry_series = market_indicator_series(cur, "cni_sondagem_industrial", "cni_industria_expectativa_demanda")
@@ -2482,6 +2988,7 @@ def market_summary(
             ],
             "macro_indicators": macro_indicators,
         },
+        "overview_decision": overview_decision,
         "steel_market": {
             "indicators": steel_indicators,
             "series": steel_series,

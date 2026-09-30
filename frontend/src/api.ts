@@ -288,6 +288,39 @@ export type DashboardSummary = {
       latest_periods: Array<{ source_key: string; source_name: string; period: string | null; rows: number; status: string }>
       macro_indicators: MarketIndicator[]
     }
+    overview_decision?: {
+      date_range: { date_from: string | null; date_to: string | null }
+      kpis: Array<{
+        id: string
+        title: string
+        value: string | null
+        unit: string | null
+        comparison_label: string
+        comparison_value: string | null
+        source: string
+        competence: string | null
+        target_tab: string
+        tooltip: string
+      }>
+      signals: Array<{
+        dimension: string
+        indicator: string
+        value: string | null
+        unit: string | null
+        change_3m: string | null
+        yoy: string | null
+        signal: string
+        source: string
+        competence: string | null
+      }>
+      charts: {
+        steel: Array<{ period: string | null; period_label: string | null; consumo_aparente?: string | null; vendas_internas?: string | null }>
+        industry: Array<{ period: string | null; period_label: string | null; ibge_pim?: string | null }>
+        construction: Array<{ period: string | null; period_label: string | null; ibge_construcao?: string | null; cni_compra_insumos?: string | null }>
+        distribution: Array<{ metric: string; value: string | null; period: string | null; period_label: string | null }>
+      }
+      decision_readings: Array<{ key: string; text: string; severity: string }>
+    }
     steel_market?: {
       indicators: MarketIndicator[]
       series: MarketSeriesPoint[]
