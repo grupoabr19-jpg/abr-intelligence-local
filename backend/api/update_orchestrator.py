@@ -208,6 +208,7 @@ class DashboardRefreshManager:
             RefreshStep("kommo_collect", "Kommo API: leads, tarefas e eventos"),
             RefreshStep("atendimento_facts", "Atendimento: fatos, SLA e rankings"),
             RefreshStep("atendimento_contract", "Atendimento: contrato oficial"),
+            RefreshStep("drive_spreadsheets", "Google Drive Archive: planilhas novas"),
         ]
         for query_id in ASTER_REFRESH_REPORTS:
             steps.append(RefreshStep(f"aster_{query_id}", f"Aster ERP: relatorio {query_id}"))
@@ -261,6 +262,8 @@ class DashboardRefreshManager:
             return [sys.executable, str(ROOT / "tools" / "refresh_atendimento_facts.py")]
         if key == "atendimento_contract":
             return [sys.executable, str(ROOT / "tools" / "refresh_atendimento_official_contract.py")]
+        if key == "drive_spreadsheets":
+            return [sys.executable, str(ROOT / "tools" / "collect_drive_spreadsheets.py")]
         if key.startswith("aster_"):
             query_id = key.removeprefix("aster_")
             if key == "aster_sales_fact":
@@ -298,6 +301,8 @@ class DashboardRefreshManager:
             return 1_000
         if key == "kommo_collect":
             return 600
+        if key == "drive_spreadsheets":
+            return 1_200
         return 300
 
     async def _run_command(self, command: list[str], timeout_seconds: int) -> dict[str, Any]:
@@ -375,6 +380,13 @@ class DashboardRefreshManager:
                 "required_for_daily": True,
                 "database": "crm",
                 "sql": "select max(finished_at) from public.atendimento_ingestion_runs where status = 'sucesso'",
+            },
+            {
+                "key": "drive_spreadsheets",
+                "label": "Google Drive Archive - planilhas",
+                "required_for_daily": True,
+                "database": "core",
+                "sql": "select ultima_sincronizacao from public.fontes_dados where nome = 'Google Drive Archive'",
             },
             {
                 "key": "market_api",

@@ -210,6 +210,73 @@ def upload_drive_file(token: str, parent_id: str, path: Path) -> dict[str, Any]:
             return response.json()
 
 
+def list_drive_children(token: str, parent_id: str, *, page_size: int = 100) -> list[dict[str, Any]]:
+    query = f"'{drive_query_literal(parent_id)}' in parents and trashed = false"
+    fields = (
+        "nextPageToken,files(id,name,mimeType,modifiedTime,size,webViewLink,"
+        "parents,md5Checksum)"
+    )
+    files: list[dict[str, Any]] = []
+    page_token: str | None = None
+    with httpx.Client(timeout=120) as client:
+        while True:
+            response = client.get(
+                "https://www.googleapis.com/drive/v3/files",
+                headers=drive_headers(token),
+                params={
+                    "q": query,
+                    "fields": fields,
+                    "pageSize": str(page_size),
+                    "pageToken": page_token,
+                    "supportsAllDrives": "true",
+                    "includeItemsFromAllDrives": "true",
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+            files.extend(payload.get("files") or [])
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                break
+    return files
+
+
+def download_drive_file(token: str, file_id: str, destination: Path) -> int:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with httpx.Client(timeout=900, follow_redirects=True) as client:
+        with client.stream(
+            "GET",
+            f"https://www.googleapis.com/drive/v3/files/{file_id}",
+            headers=drive_headers(token),
+            params={"alt": "media", "supportsAllDrives": "true"},
+        ) as response:
+            response.raise_for_status()
+            bytes_written = 0
+            with destination.open("wb") as file_obj:
+                for chunk in response.iter_bytes(1024 * 1024):
+                    file_obj.write(chunk)
+                    bytes_written += len(chunk)
+    return bytes_written
+
+
+def export_drive_file(token: str, file_id: str, destination: Path, mime_type: str) -> int:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with httpx.Client(timeout=900, follow_redirects=True) as client:
+        with client.stream(
+            "GET",
+            f"https://www.googleapis.com/drive/v3/files/{file_id}/export",
+            headers=drive_headers(token),
+            params={"mimeType": mime_type},
+        ) as response:
+            response.raise_for_status()
+            bytes_written = 0
+            with destination.open("wb") as file_obj:
+                for chunk in response.iter_bytes(1024 * 1024):
+                    file_obj.write(chunk)
+                    bytes_written += len(chunk)
+    return bytes_written
+
+
 def archive_records(
     *,
     source_system: str,
