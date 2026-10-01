@@ -447,6 +447,86 @@ export type DashboardSummary = {
     construction?: {
       indicators: MarketIndicator[]
       series: MarketSeriesPoint[]
+      decision?: {
+        cards: Array<{
+          id: string
+          title: string
+          value: string | null
+          unit: string | null
+          detail: string | null
+          source: string | null
+          period: string | null
+          period_label: string | null
+          raw_value: string | null
+          scale_factor: string | null
+          neutral_value: string | null
+        }>
+        signal: {
+          classification: string
+          score: number | null
+          valid_drivers: number
+          positive: number
+          neutral: number
+          negative: number
+          components: Array<{
+            key: string
+            label: string
+            source: string
+            kind: string
+            value: string | null
+            raw_value: string | null
+            yoy: string | null
+            signal: number | null
+            period: string | null
+            period_label: string | null
+            unit: string | null
+            status: string
+          }>
+        }
+        families: Array<{
+          family: string
+          classification: string
+          index: string | null
+          trend_3m: string | null
+          trend_direction: string
+          positive_drivers: number
+          neutral_drivers: number
+          negative_drivers: number
+          coverage: string
+        }>
+        demand_chart: Array<Record<string, string | null>>
+        heatmap: Array<{
+          family: string
+          driver: string
+          driver_key: string
+          signal: number | null
+          weight: string | null
+          value: string | null
+          yoy: string | null
+          period: string | null
+          period_label: string | null
+          source: string | null
+        }>
+        activity_chart: Array<{ period: string; period_label: string | null; index: string | null; yoy: string | null; ma3: string | null; status: string }>
+        expectations_chart: Array<Record<string, string | null>>
+        projects: Array<{
+          date: string | null
+          uf: string
+          municipality: string
+          pole: string
+          agency: string
+          object: string
+          value: string | null
+          relevance_score: number
+          matches: string[]
+          products: string[]
+          status: string
+          link: string
+          id: string
+        }>
+        readings: Array<{ key: string; text: string; severity: string }>
+        quality: { cni_scale: string; null_rule: string; suspect_values: Array<Record<string, string | null>> }
+      }
       public_works?: {
         kpis: { projects: number; investment: string | null; jobs: string | null }
         top_regions: Array<{ uf: string; projects: number; investment: string | null }>

@@ -3112,6 +3112,534 @@ def market_industry_decision(
     }
 
 
+CONSTRUCTION_DRIVER_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "ibge_construcao": {
+        "label": "IBGE Construcao",
+        "source_key": "ibge_construcao_sidra",
+        "indicator_key": "ibge_construcao_indice",
+        "kind": "yoy",
+        "source": "IBGE 8886",
+    },
+    "cni_atividade": {
+        "label": "CNI Atividade",
+        "source_key": "cni_sondagem_construcao",
+        "indicator_key": "cni_construcao_9_expectativa_do_nivel_de_atividade_para_os_proximos_seis_meses",
+        "kind": "cni50",
+        "source": "CNI Construcao",
+    },
+    "cni_insumos": {
+        "label": "CNI Compra Insumos",
+        "source_key": "cni_sondagem_construcao",
+        "indicator_key": "cni_construcao_10_expectativa_de_compras_de_insumos_e_materias_primas_para_os_proximos_seis_meses",
+        "kind": "cni50",
+        "source": "CNI Construcao",
+    },
+    "cni_novos": {
+        "label": "CNI Novos Empreend.",
+        "source_key": "cni_sondagem_construcao",
+        "indicator_key": "cni_construcao_11_expectativa_de_novos_empreendimentos_e_servicos_para_os_proximos_seis_meses",
+        "kind": "cni50",
+        "source": "CNI Construcao",
+    },
+    "cni_emprego": {
+        "label": "CNI Emprego",
+        "source_key": "cni_sondagem_construcao",
+        "indicator_key": "cni_construcao_12_expectativa_do_numero_de_empregados_para_os_proximos_seis_meses",
+        "kind": "cni50",
+        "source": "CNI Construcao",
+    },
+    "caged_construcao": {
+        "label": "Caged Construcao",
+        "source_key": "caged_microdados",
+        "indicator_key": "caged_construcao_saldo",
+        "kind": "balance",
+        "source": "Caged",
+    },
+    "projetos": {
+        "label": "Projetos",
+        "source_key": "pncp_consulta",
+        "indicator_key": "relevant_projects",
+        "kind": "projects",
+        "source": "PNCP / ObrasGov",
+    },
+}
+
+
+CONSTRUCTION_FAMILY_WEIGHTS: dict[str, dict[str, Decimal]] = {
+    "TELHAS": {
+        "ibge_construcao": Decimal("0.20"),
+        "cni_insumos": Decimal("0.25"),
+        "cni_novos": Decimal("0.25"),
+        "caged_construcao": Decimal("0.15"),
+        "projetos": Decimal("0.15"),
+    },
+    "PERFIS": {
+        "ibge_construcao": Decimal("0.20"),
+        "cni_novos": Decimal("0.25"),
+        "cni_insumos": Decimal("0.20"),
+        "caged_construcao": Decimal("0.15"),
+        "projetos": Decimal("0.20"),
+    },
+    "TUBOS / METALONS": {
+        "ibge_construcao": Decimal("0.20"),
+        "cni_atividade": Decimal("0.20"),
+        "cni_insumos": Decimal("0.20"),
+        "caged_construcao": Decimal("0.20"),
+        "projetos": Decimal("0.20"),
+    },
+    "CHAPAS": {
+        "ibge_construcao": Decimal("0.25"),
+        "cni_insumos": Decimal("0.25"),
+        "cni_novos": Decimal("0.20"),
+        "projetos": Decimal("0.30"),
+    },
+}
+
+
+PROJECT_RELEVANCE_TERMS: tuple[tuple[str, int], ...] = (
+    ("estrutura metalica", 5),
+    ("estrutura metálica", 5),
+    ("cobertura metalica", 5),
+    ("cobertura metálica", 5),
+    ("telha metalica", 5),
+    ("telha metálica", 5),
+    ("perfil metalico", 5),
+    ("perfil metálico", 5),
+    ("tubo de aco", 5),
+    ("tubo de aço", 5),
+    ("metalon", 5),
+    ("chapa de aco", 5),
+    ("chapa de aço", 5),
+    ("galpao", 4),
+    ("galpão", 4),
+    ("serralheria", 3),
+    ("gradil", 2),
+    ("alambrado", 2),
+    ("aco", 1),
+    ("aço", 1),
+    ("construcao", 1),
+    ("construção", 1),
+    ("reforma", 1),
+)
+
+
+def market_ascii(value: str) -> str:
+    return "".join(
+        char for char in unicodedata.normalize("NFKD", value.lower())
+        if not unicodedata.combining(char)
+    )
+
+
+def construction_project_matches(text: str) -> tuple[int, list[str], list[str]]:
+    normalized = market_ascii(text)
+    score = 0
+    matches: list[str] = []
+    products: set[str] = set()
+    for term, weight in PROJECT_RELEVANCE_TERMS:
+        normalized_term = market_ascii(term)
+        if normalized_term in normalized:
+            score += weight
+            matches.append(term)
+            if normalized_term in {"cobertura metalica", "galpao"}:
+                products.update(["TELHAS", "PERFIS", "TUBOS / METALONS"])
+            elif normalized_term in {"estrutura metalica"}:
+                products.update(["PERFIS", "TUBOS / METALONS", "CHAPAS"])
+            elif normalized_term in {"telha metalica"}:
+                products.add("TELHAS")
+            elif normalized_term in {"perfil metalico"}:
+                products.add("PERFIS")
+            elif normalized_term in {"tubo de aco", "metalon", "gradil", "alambrado"}:
+                products.add("TUBOS / METALONS")
+            elif normalized_term in {"chapa de aco"}:
+                products.add("CHAPAS")
+            elif normalized_term == "serralheria":
+                products.update(["TUBOS / METALONS", "PERFIS"])
+    return score, sorted(set(matches)), sorted(products)
+
+
+def construction_signal_label(score: int | None, valid_count: int) -> str:
+    if score is None or valid_count < 3:
+        return "INSUFFICIENT_DATA"
+    if score >= 2:
+        return "ACELERANDO"
+    if score <= -2:
+        return "DESACELERANDO"
+    return "ESTAVEL / MISTO"
+
+
+def construction_driver_snapshot(
+    cur: Any,
+    driver_key: str,
+    cutoff: date | None,
+    *,
+    relevant_projects: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    config = CONSTRUCTION_DRIVER_DEFINITIONS[driver_key]
+    if config["kind"] == "projects":
+        projects = relevant_projects or []
+        high_count = len([item for item in projects if item["relevance_score"] >= 5])
+        signal = 1 if high_count >= 3 else 0 if projects else None
+        return {
+            "key": driver_key,
+            "label": config["label"],
+            "source": config["source"],
+            "kind": config["kind"],
+            "value": str(len(projects)) if projects else None,
+            "raw_value": str(len(projects)) if projects else None,
+            "yoy": None,
+            "signal": signal,
+            "period": cutoff.isoformat() if cutoff else None,
+            "period_label": cutoff.strftime("%m/%y") if cutoff else None,
+            "unit": "projetos",
+            "status": "OK" if projects else "N/D",
+        }
+    latest = market_latest_indicator_before(cur, config["source_key"], config["indicator_key"], cutoff)
+    if not latest:
+        return {
+            "key": driver_key,
+            "label": config["label"],
+            "source": config["source"],
+            "kind": config["kind"],
+            "value": None,
+            "raw_value": None,
+            "yoy": None,
+            "signal": None,
+            "period": None,
+            "period_label": None,
+            "unit": None,
+            "status": "N/D",
+        }
+    value = latest["value"]
+    normalized_value = market_normalize_cni_value(value) if config["kind"] == "cni50" else value
+    yoy = None
+    if config["kind"] == "yoy":
+        previous = market_latest_indicator_before(cur, config["source_key"], config["indicator_key"], market_one_year_before(latest["period"]))
+        yoy = market_pct_change(normalized_value, previous["value"] if previous else None)
+    signal = market_driver_signal(config["kind"], normalized_value, yoy)
+    if config["kind"] == "balance":
+        signal = 1 if normalized_value and normalized_value > 0 else -1 if normalized_value and normalized_value < 0 else 0
+    return {
+        "key": driver_key,
+        "label": config["label"],
+        "source": config["source"],
+        "kind": config["kind"],
+        "value": market_decimal(normalized_value),
+        "raw_value": market_decimal(value),
+        "yoy": market_decimal(yoy),
+        "signal": signal,
+        "period": latest.get("period_iso"),
+        "period_label": latest.get("period_label"),
+        "unit": latest.get("unit"),
+        "status": "OK",
+    }
+
+
+def construction_relevant_projects(cur: Any, date_from: date | None, date_to: date | None, limit: int = 20) -> list[dict[str, Any]]:
+    try:
+        cur.execute(
+            """
+            select data_publicacao, coalesce(uf, ''), coalesce(municipio, ''), coalesce(orgao, ''),
+                   coalesce(objeto, ''), valor_estimado, coalesce(relevance_score, 0), pncp_id
+            from public.fact_pncp_opportunities
+            where (%s::date is null or data_publicacao >= %s::date)
+              and (%s::date is null or data_publicacao <= %s::date)
+              and upper(coalesce(uf, '')) in ('MG', 'SP')
+            order by relevance_score desc, valor_estimado desc nulls last, data_publicacao desc nulls last
+            limit 200
+            """,
+            (date_from, date_from, date_to, date_to),
+        )
+    except Exception:
+        return []
+    projects = []
+    for row in cur.fetchall():
+        calculated_score, matches, products = construction_project_matches(row[4] or "")
+        score = max(int(row[6] or 0), calculated_score)
+        if score < 3:
+            continue
+        projects.append(
+            {
+                "date": row[0].isoformat() if row[0] else None,
+                "uf": row[1],
+                "municipality": row[2],
+                "pole": row[2] or row[1] or "ABR",
+                "agency": row[3],
+                "object": row[4],
+                "value": market_decimal(row[5]),
+                "relevance_score": score,
+                "matches": matches,
+                "products": products,
+                "status": "monitorar",
+                "link": "",
+                "id": row[7],
+            }
+        )
+    projects.sort(key=lambda item: (item["relevance_score"], Decimal(str(item["value"] or "0"))), reverse=True)
+    return projects[:limit]
+
+
+def construction_family_index(driver_map: dict[str, dict[str, Any]], weights: dict[str, Decimal]) -> tuple[Decimal | None, list[dict[str, Any]]]:
+    weighted_sum = Decimal("0")
+    available_weight = Decimal("0")
+    rows: list[dict[str, Any]] = []
+    for driver_key, weight in weights.items():
+        driver = driver_map.get(driver_key)
+        signal = driver.get("signal") if driver else None
+        if signal is not None:
+            weighted_sum += Decimal(signal) * weight
+            available_weight += weight
+        rows.append(
+            {
+                "key": driver_key,
+                "label": CONSTRUCTION_DRIVER_DEFINITIONS[driver_key]["label"],
+                "weight": market_decimal(weight * Decimal("100")),
+                "signal": signal,
+                "value": driver.get("value") if driver else None,
+                "yoy": driver.get("yoy") if driver else None,
+                "period": driver.get("period") if driver else None,
+                "period_label": driver.get("period_label") if driver else None,
+                "source": driver.get("source") if driver else CONSTRUCTION_DRIVER_DEFINITIONS[driver_key]["source"],
+            }
+        )
+    if available_weight == 0:
+        return None, rows
+    return (weighted_sum / available_weight) * Decimal("100"), rows
+
+
+def market_construction_decision(
+    cur: Any,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
+    relevant_projects = construction_relevant_projects(cur, date_from, date_to)
+    driver_keys = sorted({key for weights in CONSTRUCTION_FAMILY_WEIGHTS.values() for key in weights} | {"cni_emprego"})
+    driver_map = {
+        key: construction_driver_snapshot(cur, key, date_to, relevant_projects=relevant_projects)
+        for key in driver_keys
+    }
+
+    general_keys = ["ibge_construcao", "cni_atividade", "cni_insumos", "cni_novos", "caged_construcao"]
+    general_components = [driver_map[key] for key in general_keys if key in driver_map]
+    valid_signals = [item["signal"] for item in general_components if item.get("signal") is not None]
+    general_score = sum(valid_signals) if valid_signals else None
+    general_signal = construction_signal_label(general_score, len(valid_signals))
+
+    history_start = date_from or ((date_to or date.today()) - timedelta(days=760))
+    series_map: dict[str, dict[date, dict[str, Any]]] = {}
+    all_periods: set[date] = set()
+    for key, config in CONSTRUCTION_DRIVER_DEFINITIONS.items():
+        if config["kind"] in {"projects", "balance"}:
+            continue
+        series = market_indicator_series_dimension_between(
+            cur,
+            source_key=config["source_key"],
+            indicator_key=config["indicator_key"],
+            date_from=history_start,
+            date_to=date_to,
+            limit=36,
+        )
+        by_period: dict[date, dict[str, Any]] = {}
+        values: list[Decimal] = []
+        for item in series:
+            period = item["period"]
+            if not period:
+                continue
+            value = market_normalize_cni_value(item["value"]) if config["kind"] == "cni50" else item["value"]
+            med = median(values[-6:]) if len(values) >= 3 else None
+            suspect = bool(med and value is not None and value < Decimal(str(med)) * Decimal("0.20"))
+            if value is not None and not suspect:
+                values.append(value)
+            previous = next((point for point in series if point["period"] == market_one_year_before(period)), None)
+            previous_value = previous["value"] if previous else None
+            previous_normalized = market_normalize_cni_value(previous_value) if config["kind"] == "cni50" else previous_value
+            yoy = market_pct_change(value, previous_normalized) if config["kind"] == "yoy" and not suspect else None
+            by_period[period] = {
+                "value": None if suspect else value,
+                "yoy": yoy,
+                "signal": None if suspect else market_driver_signal(config["kind"], value, yoy),
+                "period_label": item["period_label"],
+                "suspect": suspect,
+            }
+            all_periods.add(period)
+        series_map[key] = by_period
+
+    monthly_indexes: dict[str, dict[str, Any]] = {}
+    for period in sorted(all_periods):
+        point: dict[str, Any] = {"period": period.isoformat(), "period_label": None}
+        period_driver_map: dict[str, dict[str, Any]] = {}
+        for key, by_period in series_map.items():
+            if period in by_period:
+                period_driver_map[key] = by_period[period]
+                point["period_label"] = by_period[period]["period_label"]
+        for key in ("caged_construcao", "projetos"):
+            if driver_map.get(key):
+                period_driver_map[key] = driver_map[key]
+        for family, weights in CONSTRUCTION_FAMILY_WEIGHTS.items():
+            index, _rows = construction_family_index(period_driver_map, weights)
+            point[family] = market_decimal(index)
+        monthly_indexes[period.isoformat()] = point
+
+    three_month_reference = None
+    if all_periods:
+        latest_date = max(all_periods)
+        previous_periods = [period for period in all_periods if period <= latest_date - timedelta(days=92)]
+        if previous_periods:
+            three_month_reference = monthly_indexes[max(previous_periods).isoformat()]
+
+    families = []
+    heatmap = []
+    for family, weights in CONSTRUCTION_FAMILY_WEIGHTS.items():
+        index, drivers = construction_family_index(driver_map, weights)
+        previous_index = None
+        if three_month_reference:
+            previous_value = three_month_reference.get(family)
+            previous_index = Decimal(str(previous_value)) if previous_value not in (None, "") else None
+        trend_3m = (index - previous_index) if index is not None and previous_index is not None else None
+        positives = len([row for row in drivers if row["signal"] == 1])
+        neutrals = len([row for row in drivers if row["signal"] == 0])
+        negatives = len([row for row in drivers if row["signal"] == -1])
+        available = positives + neutrals + negatives
+        families.append(
+            {
+                "family": family,
+                "classification": market_demand_classification(index),
+                "index": market_decimal(index),
+                "trend_3m": market_decimal(trend_3m),
+                "trend_direction": (
+                    "melhorando" if trend_3m is not None and trend_3m > Decimal("10")
+                    else "piorando" if trend_3m is not None and trend_3m < Decimal("-10")
+                    else "estavel"
+                ),
+                "positive_drivers": positives,
+                "neutral_drivers": neutrals,
+                "negative_drivers": negatives,
+                "coverage": f"{available}/{len(drivers)}",
+                "drivers": drivers,
+            }
+        )
+        for row in drivers:
+            heatmap.append({"family": family, "driver": row["label"], "driver_key": row["key"], **row})
+
+    def card(driver_key: str, title: str) -> dict[str, Any]:
+        driver = driver_map.get(driver_key, {})
+        value = driver.get("value")
+        return {
+            "id": driver_key,
+            "title": title,
+            "value": driver.get("yoy") if driver.get("kind") == "yoy" else value,
+            "unit": "%" if driver.get("kind") == "yoy" else driver.get("unit") or "indice",
+            "detail": (
+                "YoY"
+                if driver.get("kind") == "yoy"
+                else market_decimal(Decimal(str(value)) - Decimal("50")) if value not in (None, "") and driver.get("unit") == "indice"
+                else "12M" if driver.get("kind") == "balance"
+                else "RelevanceScore >= 3"
+            ),
+            "source": driver.get("source"),
+            "period": driver.get("period"),
+            "period_label": driver.get("period_label"),
+            "raw_value": driver.get("raw_value"),
+            "scale_factor": "0.1" if driver.get("kind") == "cni50" and driver.get("raw_value") and driver.get("value") and Decimal(str(driver["raw_value"])) > Decimal("100") else "1",
+            "neutral_value": "50" if driver.get("kind") == "cni50" else None,
+        }
+
+    activity_chart = []
+    ibge_points = series_map.get("ibge_construcao", {})
+    ibge_values: list[Decimal] = []
+    for period in sorted(ibge_points):
+        point = ibge_points[period]
+        value = point.get("value")
+        if value is not None:
+            ibge_values.append(value)
+        ma3 = sum(ibge_values[-3:]) / Decimal(len(ibge_values[-3:])) if ibge_values else None
+        activity_chart.append(
+            {
+                "period": period.isoformat(),
+                "period_label": point.get("period_label"),
+                "index": market_decimal(value),
+                "yoy": market_decimal(point.get("yoy")),
+                "ma3": market_decimal(ma3),
+                "status": "SUSPECT_VALUE" if point.get("suspect") else "OK",
+            }
+        )
+
+    expectations_chart = []
+    for period in sorted(all_periods):
+        row = {"period": period.isoformat(), "period_label": None, "neutral": "50"}
+        for key, output in (("cni_atividade", "atividade"), ("cni_insumos", "insumos"), ("cni_novos", "novos"), ("cni_emprego", "emprego")):
+            point = series_map.get(key, {}).get(period)
+            if point:
+                row["period_label"] = point["period_label"]
+                row[output] = market_decimal(point.get("value"))
+        if any(name in row for name in ("atividade", "insumos", "novos", "emprego")):
+            expectations_chart.append(row)
+
+    readings = []
+    ibge = driver_map.get("ibge_construcao", {})
+    insumos = driver_map.get("cni_insumos", {})
+    novos = driver_map.get("cni_novos", {})
+    if ibge.get("yoy") is not None and Decimal(str(ibge["yoy"])) > Decimal("2") and insumos.get("value") and Decimal(str(insumos["value"])) > Decimal("52"):
+        readings.append({"key": "construction_strength", "severity": "positive", "text": "Atividade da construcao e intencao de compra de insumos apontam fortalecimento da demanda."})
+    if novos.get("value") and Decimal(str(novos["value"])) < Decimal("48"):
+        readings.append({"key": "new_projects_low", "severity": "attention", "text": "Expectativa de novos empreendimentos esta abaixo da neutralidade."})
+    best_family = max([item for item in families if item["index"] is not None], key=lambda item: Decimal(str(item["index"])), default=None)
+    if best_family and Decimal(str(best_family["index"])) >= Decimal("30"):
+        readings.append({"key": "family_positive", "severity": "positive", "text": f"{best_family['family']}: drivers apresentam predominancia positiva."})
+    if relevant_projects:
+        readings.append({"key": "relevant_projects", "severity": "positive", "text": f"Existem {len(relevant_projects)} projetos de aderencia ABR no recorte monitorado."})
+    if not readings:
+        readings.append({"key": "construction_mixed", "severity": "neutral", "text": "Sinais da construcao estao mistos; CNI recente pesa contra expansao no curto prazo."})
+
+    return {
+        "cards": [
+            card("ibge_construcao", "Atividade da Construcao"),
+            card("cni_atividade", "Expectativa de Atividade"),
+            card("cni_insumos", "Compra Esperada de Insumos"),
+            card("cni_novos", "Novos Empreendimentos"),
+            card("caged_construcao", "Emprego Construcao"),
+            {
+                "id": "relevant_projects",
+                "title": "Projetos ABR Relevantes",
+                "value": str(len(relevant_projects)),
+                "unit": "projetos",
+                "detail": "PNCP MG/SP | RelevanceScore >= 3",
+                "source": "PNCP",
+                "period": date_to.isoformat() if date_to else None,
+                "period_label": None,
+                "raw_value": str(len(relevant_projects)),
+                "scale_factor": "1",
+                "neutral_value": None,
+            },
+        ],
+        "signal": {
+            "classification": general_signal,
+            "score": general_score,
+            "valid_drivers": len(valid_signals),
+            "positive": len([value for value in valid_signals if value == 1]),
+            "neutral": len([value for value in valid_signals if value == 0]),
+            "negative": len([value for value in valid_signals if value == -1]),
+            "components": general_components,
+        },
+        "families": families,
+        "demand_chart": list(monthly_indexes.values()),
+        "heatmap": heatmap,
+        "activity_chart": activity_chart,
+        "expectations_chart": expectations_chart,
+        "projects": relevant_projects,
+        "readings": readings[:4],
+        "quality": {
+            "cni_scale": "Valores CNI no banco auditados na escala oficial; normalizacao automatica apenas se raw_value > 100.",
+            "null_rule": "Mes sem dado permanece null; valores suspeitos por queda artificial sao marcados como SUSPECT_VALUE.",
+            "suspect_values": [
+                {"period": item["period"], "value": item.get("index"), "status": item["status"]}
+                for item in activity_chart
+                if item["status"] == "SUSPECT_VALUE"
+            ],
+        },
+    }
+
+
 def market_steel_volume_series(
     cur: Any,
     indicator_key: str,
@@ -4178,6 +4706,11 @@ def market_summary(
                 date_from=market_date_from,
                 date_to=market_date_to,
             )
+            construction_decision = market_construction_decision(
+                cur,
+                date_from=market_date_from,
+                date_to=market_date_to,
+            )
 
             steel_series = market_indicator_series(cur, "aco_brasil_estatistica_mensal", "aco_brasil_consumo_aparente_total")
             industry_series = market_indicator_series(cur, "cni_sondagem_industrial", "cni_industria_expectativa_demanda")
@@ -4242,6 +4775,7 @@ def market_summary(
             "indicators": construction_indicators,
             "series": construction_series,
             "public_works": public_works,
+            "decision": construction_decision,
         },
         "prices": {
             "ptax": ptax,
