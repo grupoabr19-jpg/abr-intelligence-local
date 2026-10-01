@@ -3290,55 +3290,167 @@ function MarketConstructionTab({ summary }: { summary: MarketSummary }) {
 function MarketOpportunitiesTab({ summary }: { summary: MarketSummary }) {
   const opportunities = summary.opportunities
   if (!opportunities?.kpis) return <UnavailableTab title="Oportunidades" />
+  const raw = opportunities.raw_counts
   const monthly = (opportunities.monthly ?? []).map((item) => ({
     ...item,
-    opportunities_numero: item.opportunities,
+    period_label: item.period_label ? monthLabel(item.period_label) : monthLabel(item.period),
+    alta_numero: item.high ?? 0,
+    media_numero: item.medium ?? 0,
+    total_numero: item.total ?? item.opportunities ?? 0,
   }))
-  const regionRows = (opportunities.top_regions ?? []).map((item) => [
-    item.uf,
-    formatNumber(item.opportunities),
-    money(item.value),
+  const poleChart = (opportunities.top_regions ?? []).map((item) => ({
+    polo: item.polo ?? item.uf ?? 'Sem polo',
+    alta: item.high ?? 0,
+    media: item.medium ?? 0,
+    baixa: item.low ?? 0,
+    total: item.total ?? item.opportunities ?? 0,
+  }))
+  const familyChart = (opportunities.families ?? []).map((item) => ({
+    family: item.family,
+    shortName: abbreviateLabel(item.family, 22),
+    opportunities: item.opportunities,
+  }))
+  const scatter = (opportunities.scatter ?? []).map((item) => ({
+    ...item,
+    value_numero: numericValue(item.value),
+  }))
+  const rawRows = raw ? [
+    ['Registros encontrados PNCP', formatNumber(raw.pncp_raw)],
+    ['Registros agregados ObrasGov', formatNumber(raw.obrasgov_raw_projects)],
+    ['Registros classificaveis', formatNumber(raw.detail_sufficient)],
+    ['Registros classificados', formatNumber(raw.classified)],
+    ['Oportunidades relevantes', formatNumber(raw.relevant)],
+    ['Duplicidades removidas', formatNumber(raw.duplicates)],
+  ] : []
+  const readingRows = (opportunities.readings ?? []).map((item) => [
+    item.severity,
+    item.text,
+  ])
+  const regionRows = poleChart.map((item) => [
+    item.polo,
+    formatNumber(item.alta),
+    formatNumber(item.media),
+    formatNumber(item.baixa),
+    formatNumber(item.total),
   ])
   const detailRows = (opportunities.detail ?? []).map((item) => [
-    item.date ? new Date(item.date).toLocaleDateString('pt-BR') : 'Sem data',
-    item.uf,
+    item.priority ?? 'MONITORAR / DESCARTAR',
+    formatNumber(item.priority_score ?? item.relevance_score ?? 0),
+    item.polo_abr ?? 'Sem polo',
     item.municipality || 'Sem municipio',
+    item.source_type ?? 'PNCP',
+    item.date ? new Date(item.date).toLocaleDateString('pt-BR') : 'Sem data',
     abbreviateLabel(item.agency || 'Sem orgao', 28),
-    abbreviateLabel(item.object || 'Sem objeto', 42),
+    abbreviateLabel(item.object || 'Sem objeto', 56),
+    (item.product_match ?? []).join(', ') || 'Sem produto sugerido',
     money(item.value),
-    formatNumber(item.relevance_score),
-    item.id,
+    item.status ?? 'Sem status',
+    item.deadline ? new Date(item.deadline).toLocaleDateString('pt-BR') : 'Sem prazo',
+    item.opportunity_id ?? item.id ?? 'Sem ID',
+    item.link || 'Sem link',
   ])
 
   return (
     <>
       <section className="kpi-grid">
-        <Kpi title="Oportunidades" displayValue={formatNumber(opportunities.kpis.opportunities)} detail={marketSourceShortName(opportunities.source)} icon={<CheckCircle2 />} />
-        <Kpi title="Alta relevancia" displayValue={formatNumber(opportunities.kpis.high_relevance)} detail="RelevanceScore >= 3" icon={<Gauge />} />
-        <Kpi title="Valor projetos" displayValue={money(opportunities.kpis.total_value)} detail="Valor dos projetos identificados" icon={<CircleDollarSign />} />
-        <Kpi title="UFs com oportunidade" displayValue={formatNumber(opportunities.kpis.regions)} detail="Polos/UFs com registros" icon={<TableProperties />} />
+        <Kpi title="Oportunidades relevantes" displayValue={formatNumber(opportunities.kpis.opportunities)} detail="Territorio ABR ou entorno com score >= 30" icon={<CheckCircle2 />} />
+        <Kpi title="Alta prioridade" displayValue={formatNumber(opportunities.kpis.high_relevance)} detail="Score comercial >= 70" icon={<Gauge />} />
+        <Kpi title="Valor projetos relevantes" displayValue={money(opportunities.kpis.total_value)} detail="Nao e potencial de venda ABR" icon={<CircleDollarSign />} />
+        <Kpi title="Polos com oportunidade" displayValue={formatNumber(opportunities.kpis.regions)} detail={`${formatNumber(opportunities.kpis.new_30d ?? 0)} novas em 30 dias`} icon={<TableProperties />} />
       </section>
       <section className="dashboard-grid">
         {monthly.length > 0 && (
-          <Panel title="Oportunidades por mes" icon={<LineChartIcon size={17} />} wide>
+          <Panel title="Novas oportunidades no tempo" icon={<LineChartIcon size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
                 <BarChart data={monthly}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="period_label" />
                   <YAxis tickFormatter={(value) => formatNumber(String(value))} />
-                  <Tooltip formatter={(value) => [formatNumber(String(value)), 'Oportunidades']} />
-                  <Bar dataKey="opportunities_numero" name="Oportunidades" fill="#253575" radius={[5, 5, 0, 0]} />
+                  <Tooltip formatter={(value, name) => [formatNumber(String(value)), name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Bar dataKey="alta_numero" name="Alta" stackId="a" fill="#12805C" radius={[5, 5, 0, 0]} />
+                  <Bar dataKey="media_numero" name="Media" stackId="a" fill="#F18800" radius={[5, 5, 0, 0]} />
+                  <Bar dataKey="total_numero" name="Total" fill="#253575" radius={[5, 5, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
         )}
-        <Panel title="Oportunidades por UF" icon={<TableProperties size={17} />} wide>
-          <DataTable columns={['UF', 'Oportunidades', 'Valor projetos']} rows={regionRows} empty="Sem regioes carregadas" />
+        <Panel title="Oportunidades por polo ABR" icon={<TableProperties size={17} />}>
+          {poleChart.length > 0 ? (
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={poleChart.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 92 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => formatNumber(String(value))} />
+                  <YAxis type="category" dataKey="polo" width={128} interval={0} />
+                  <Tooltip formatter={(value, name) => [formatNumber(String(value)), name]} />
+                  <Legend verticalAlign="bottom" height={24} />
+                  <Bar dataKey="alta" name="Alta" stackId="a" fill="#12805C" radius={[0, 5, 5, 0]} />
+                  <Bar dataKey="media" name="Media" stackId="a" fill="#F18800" radius={[0, 5, 5, 0]} />
+                  <Bar dataKey="baixa" name="Baixa" stackId="a" fill="#8EA0D8" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          ) : (
+            <DataTable columns={['Status']} rows={[]} empty="Sem polos classificados no recorte" />
+          )}
+        </Panel>
+        <Panel title="Produto ABR sugerido" icon={<Boxes size={17} />}>
+          {familyChart.length > 0 ? (
+            <ChartFrame>
+              <ResponsiveContainer>
+                <BarChart data={familyChart.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 88 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => formatNumber(String(value))} />
+                  <YAxis type="category" dataKey="shortName" width={126} interval={0} />
+                  <Tooltip formatter={(value) => [formatNumber(String(value)), 'Oportunidades']} labelFormatter={(_, payload) => payload?.[0]?.payload?.family ?? ''} />
+                  <Bar dataKey="opportunities" fill="#253575" radius={[0, 5, 5, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          ) : (
+            <DataTable columns={['Status']} rows={[]} empty="Sem produto sugerido porque nao ha objeto detalhado classificavel" />
+          )}
+        </Panel>
+        <Panel title="Prioridade x valor do projeto" icon={<CircleDollarSign size={17} />}>
+          {scatter.length > 0 ? (
+            <ChartFrame>
+              <ResponsiveContainer>
+                <ScatterChart margin={{ top: 12, right: 18, bottom: 12, left: 6 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" dataKey="priority_score" name="Score" domain={[0, 100]} />
+                  <YAxis type="number" dataKey="value_numero" name="Valor" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                  <Tooltip
+                    cursor={{ strokeDasharray: '3 3' }}
+                    formatter={(value, name) => [name === 'Valor' ? money(String(value)) : formatNumber(String(value)), name]}
+                    labelFormatter={(_, payload) => payload?.[0]?.payload?.object ?? ''}
+                  />
+                  <Scatter data={scatter.slice(0, SCATTER_LIMIT)} fill="#12805C" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </ChartFrame>
+          ) : (
+            <DataTable columns={['Status']} rows={[]} empty="Sem projetos com score e valor para comparar" />
+          )}
+        </Panel>
+        <Panel title="Leitura comercial" icon={<AlertTriangle size={17} />} wide>
+          <DataTable columns={['Sinal', 'Leitura']} rows={readingRows} empty={opportunities.quality?.message ?? 'Sem leitura comercial disponivel'} />
+        </Panel>
+        <Panel title="Qualidade da fonte" icon={<Database size={17} />} wide>
+          <DataTable columns={['Etapa', 'Registros']} rows={rawRows} empty="Sem auditoria da fonte" />
+          {opportunities.quality?.message && <p className="panel-note">{opportunities.quality.message}</p>}
+        </Panel>
+        <Panel title="Ranking por polo" icon={<TableProperties size={17} />} wide>
+          <DataTable columns={['Polo', 'Alta', 'Media', 'Baixa', 'Total']} rows={regionRows} empty="Sem polos classificados" />
         </Panel>
         <Panel title="Projetos para prospeccao" icon={<Database size={17} />} wide>
-          <DataTable columns={['Data', 'UF', 'Municipio', 'Orgao', 'Objeto', 'Valor', 'Score', 'ID']} rows={detailRows} empty="Sem projetos detalhados carregados" />
+          <DataTable
+            columns={['Prioridade', 'Score', 'Polo', 'Municipio', 'Fonte', 'Data', 'Orgao', 'Objeto', 'Produto ABR', 'Valor', 'Status', 'Prazo', 'ID', 'Link']}
+            rows={detailRows}
+            empty="Sem projetos classificaveis neste recorte. Registros agregados nao entram na fila comercial."
+          />
         </Panel>
       </section>
     </>

@@ -618,6 +618,13 @@ h1 {
   width: 100%;
 }
 
+.panel-note {
+  margin: 10px 0 0;
+  color: #526079;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .recharts-cartesian-axis-tick-value {
   font-size: 10px;
 }

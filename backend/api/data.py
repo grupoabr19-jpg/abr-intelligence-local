@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import unicodedata
 from collections import defaultdict
@@ -4567,102 +4568,376 @@ def market_obrasgov_summary(cur: Any) -> dict[str, Any]:
     }
 
 
-def market_opportunities_summary(cur: Any) -> dict[str, Any]:
+OPPORTUNITY_KEYWORDS: tuple[tuple[str, int], ...] = (
+    ("estrutura metalica", 5),
+    ("estrutura em aco", 5),
+    ("cobertura metalica", 5),
+    ("telha metalica", 5),
+    ("telha de aco", 5),
+    ("perfil metalico", 5),
+    ("perfil de aco", 5),
+    ("tubo de aco", 5),
+    ("metalon", 5),
+    ("chapa de aco", 5),
+    ("galpao metalico", 5),
+    ("galpao", 4),
+    ("pavilhao metalico", 4),
+    ("mezanino metalico", 4),
+    ("estrutura de cobertura", 4),
+    ("cobertura industrial", 4),
+    ("serralheria estrutural", 4),
+    ("serralheria", 3),
+    ("esquadria metalica", 3),
+    ("guarda-corpo", 3),
+    ("corrimao", 3),
+    ("gradil", 3),
+    ("portao metalico", 3),
+    ("alambrado", 3),
+    ("ferragem", 2),
+    ("estrutura", 2),
+    ("cobertura", 2),
+    ("metalurgica", 2),
+    ("aco", 1),
+    ("construcao", 1),
+    ("reforma", 1),
+)
+
+OPPORTUNITY_NEGATIVE_KEYWORDS = (
+    "software",
+    "medicamento",
+    "alimentacao",
+    "servicos administrativos",
+    "consultoria",
+    "locacao de veiculos",
+    "material escolar",
+    "equipamento medico",
+    "material hospitalar",
+)
+
+OPPORTUNITY_POLE_ALIASES: dict[str, str] = {
+    "braganca paulista": "BRAGANCA",
+    "braganca": "BRAGANCA",
+    "jundiai": "JUNDIAI",
+    "varginha": "VARGINHA",
+    "pouso alegre": "POUSO ALEGRE",
+    "pocos de caldas": "POCOS DE CALDAS",
+    "ituba": "ITAJUBA",
+    "itajuba": "ITAJUBA",
+    "extrema": "EXTREMA",
+    "cambui": "CAMBUI",
+}
+
+
+def opportunity_text(value: str | None) -> str:
+    return market_ascii(value or "").replace("ç", "c")
+
+
+def opportunity_keyword_matches(text: str) -> tuple[int, list[str], bool]:
+    normalized = opportunity_text(text)
+    if any(opportunity_text(term) in normalized for term in OPPORTUNITY_NEGATIVE_KEYWORDS):
+        return 0, [], True
+    score = 0
+    matches: list[str] = []
+    for term, weight in OPPORTUNITY_KEYWORDS:
+        normalized_term = opportunity_text(term)
+        if normalized_term in normalized:
+            score += weight
+            matches.append(term)
+    generic_only = matches and all(opportunity_text(term) in {"aco", "construcao", "reforma"} for term in matches)
+    if generic_only:
+        score = min(score, 2)
+    return score, sorted(set(matches)), False
+
+
+def opportunity_product_match(matches: list[str]) -> list[str]:
+    products: set[str] = set()
+    normalized = {opportunity_text(term) for term in matches}
+    if normalized & {"cobertura metalica"}:
+        products.update(["TELHAS", "PERFIS", "TUBOS / METALONS"])
+    if normalized & {"telha metalica", "telha de aco"}:
+        products.add("TELHAS")
+    if normalized & {"estrutura metalica", "estrutura em aco"}:
+        products.update(["PERFIS", "TUBOS / METALONS", "CHAPAS"])
+    if normalized & {"galpao metalico", "galpao"}:
+        products.update(["TELHAS", "PERFIS", "TUBOS / METALONS", "CHAPAS"])
+    if normalized & {"serralheria", "serralheria estrutural"}:
+        products.update(["TUBOS / METALONS", "PERFIS", "CHAPAS"])
+    if normalized & {"gradil", "portao metalico"}:
+        products.update(["TUBOS / METALONS", "PERFIS"])
+    if normalized & {"guarda-corpo", "corrimao", "alambrado", "tubo de aco", "metalon"}:
+        products.add("TUBOS / METALONS")
+    if normalized & {"mezanino metalico", "perfil metalico", "perfil de aco"}:
+        products.add("PERFIS")
+    if normalized & {"chapa de aco"}:
+        products.add("CHAPAS")
+    return sorted(products)
+
+
+def opportunity_portfolio_score(keyword_score: int, matches: list[str], irrelevant: bool) -> int:
+    if irrelevant or keyword_score <= 0:
+        return 0
+    specific = [term for term in matches if opportunity_text(term) not in {"aco", "construcao", "reforma"}]
+    high_fit_terms = {opportunity_text(source) for source, weight in OPPORTUNITY_KEYWORDS if weight == 5}
+    if any(opportunity_text(term) in high_fit_terms for term in specific):
+        return 40
+    if keyword_score >= 6 and specific:
+        return 30
+    if keyword_score >= 3 and specific:
+        return 20
+    return 10
+
+
+def opportunity_territory(municipality: str | None, uf: str | None) -> dict[str, str]:
+    normalized_city = opportunity_text(municipality)
+    polo = OPPORTUNITY_POLE_ALIASES.get(normalized_city)
+    if polo:
+        return {"territory_class": "TERRITORIO_ATUAL_ABR", "polo_abr": polo, "route_match": municipality or polo}
+    if (uf or "").upper() in {"MG", "SP"}:
+        return {"territory_class": "EXPANSAO_ENTORNO_ESTRATEGICO", "polo_abr": "ENTORNO", "route_match": uf or ""}
+    return {"territory_class": "FORA_AREA", "polo_abr": "FORA_AREA", "route_match": uf or ""}
+
+
+def opportunity_recency_score(published_at: date | None, date_to: date | None) -> int:
+    if not published_at:
+        return 0
+    reference = date_to or date.today()
+    days = (reference - published_at).days
+    if days <= 30:
+        return 10
+    if days <= 60:
+        return 7
+    if days <= 90:
+        return 5
+    if days <= 180:
+        return 2
+    return 0
+
+
+def opportunity_size_score(value: Decimal | None) -> int:
+    if value is None:
+        return 0
+    if value >= Decimal("10000000"):
+        return 10
+    if value >= Decimal("5000000"):
+        return 8
+    if value >= Decimal("1000000"):
+        return 6
+    if value >= Decimal("250000"):
+        return 4
+    return 2
+
+
+def opportunity_priority_label(score: int) -> str:
+    if score >= 70:
+        return "ALTA PRIORIDADE"
+    if score >= 50:
+        return "MEDIA PRIORIDADE"
+    if score >= 30:
+        return "BAIXA PRIORIDADE"
+    return "MONITORAR / DESCARTAR"
+
+
+def opportunity_fingerprint(municipality: str, agency: str, object_text: str, value: Decimal | None, published_at: date | None) -> str:
+    value_band = "sem_valor"
+    if value is not None:
+        if value >= Decimal("10000000"):
+            value_band = "10m_plus"
+        elif value >= Decimal("1000000"):
+            value_band = "1m_10m"
+        elif value >= Decimal("250000"):
+            value_band = "250k_1m"
+        else:
+            value_band = "ate_250k"
+    period = published_at.strftime("%Y-%m") if published_at else "sem_data"
+    base = "|".join([opportunity_text(municipality), opportunity_text(agency), opportunity_text(object_text)[:120], value_band, period])
+    return hashlib.sha1(base.encode("utf-8")).hexdigest()[:16]
+
+
+def market_opportunities_summary(
+    cur: Any,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
+    reference_to = date_to or date.today()
+    reference_from = date_from or reference_to - timedelta(days=90)
     try:
         cur.execute(
             """
-            select
-              coalesce(count(*), 0),
-              coalesce(count(*) filter (where relevance_score >= 3), 0),
-              coalesce(sum(valor_estimado), 0),
-              coalesce(count(distinct uf), 0)
+            select count(*), count(*) filter (
+              where pncp_id is not null
+                and coalesce(objeto, '') <> ''
+                and coalesce(municipio, uf, '') <> ''
+                and data_publicacao is not null
+            )
             from public.fact_pncp_opportunities
             """
         )
-        opportunities, high_relevance, total_value, regions = cur.fetchone()
-        cur.execute(
-            """
-            select date_trunc('month', data_publicacao)::date as periodo, count(*) as oportunidades
-            from public.fact_pncp_opportunities
-            where data_publicacao is not null
-              and relevance_score >= 1
-            group by 1
-            order by 1 desc
-            limit 24
-            """
-        )
-        monthly = [
-            {"period": row[0].isoformat(), "period_label": row[0].strftime("%m/%y"), "opportunities": int(row[1] or 0)}
-            for row in reversed(cur.fetchall())
-        ]
-        cur.execute(
-            """
-            select coalesce(uf, 'NAO INFORMADO') as uf, count(*) as oportunidades, coalesce(sum(valor_estimado), 0) as valor
-            from public.fact_pncp_opportunities
-            group by coalesce(uf, 'NAO INFORMADO')
-            order by oportunidades desc, valor desc
-            limit 10
-            """
-        )
-        top_regions = [
-            {"uf": row[0], "opportunities": int(row[1] or 0), "value": market_decimal(row[2])}
-            for row in cur.fetchall()
-        ]
+        raw_pncp_count, detail_sufficient_count = cur.fetchone()
+
         cur.execute(
             """
             select data_publicacao, coalesce(uf, ''), coalesce(municipio, ''), coalesce(orgao, ''),
-                   coalesce(objeto, ''), valor_estimado, relevance_score, pncp_id
+                   coalesce(objeto, ''), valor_estimado, relevance_score, pncp_id, termos_encontrados
             from public.fact_pncp_opportunities
-            order by relevance_score desc, data_publicacao desc nulls last
-            limit 20
+            where data_publicacao >= %s::date
+              and data_publicacao <= %s::date
+            order by data_publicacao desc nulls last
+            limit 500
             """
+            ,
+            (reference_from, reference_to),
         )
-        detail = [
-            {
-                "date": row[0].isoformat() if row[0] else None,
-                "uf": row[1],
-                "municipality": row[2],
-                "agency": row[3],
-                "object": row[4],
-                "value": market_decimal(row[5]),
-                "relevance_score": int(row[6] or 0),
-                "id": row[7],
-            }
-            for row in cur.fetchall()
-        ]
-        if opportunities:
-            return {
-                "source": "pncp_consulta",
-                "kpis": {
-                    "opportunities": int(opportunities or 0),
-                    "high_relevance": int(high_relevance or 0),
-                    "total_value": market_decimal(total_value),
-                    "regions": int(regions or 0),
-                },
-                "monthly": monthly,
-                "top_regions": top_regions,
-                "detail": detail,
-            }
+        classified = []
+        fingerprints: set[str] = set()
+        duplicates = 0
+        for row in cur.fetchall():
+            published_at, uf, municipality, agency, object_text, value, _relevance_score, external_id, _terms = row
+            if not external_id or not object_text or not (municipality or uf) or not published_at:
+                continue
+            fingerprint = opportunity_fingerprint(municipality, agency, object_text, value, published_at)
+            if fingerprint in fingerprints:
+                duplicates += 1
+                continue
+            fingerprints.add(fingerprint)
+            keyword_score, matches, irrelevant = opportunity_keyword_matches(object_text)
+            products = opportunity_product_match(matches)
+            territory = opportunity_territory(municipality, uf)
+            portfolio_score = opportunity_portfolio_score(keyword_score, matches, irrelevant)
+            territory_score = 20 if territory["territory_class"] == "TERRITORIO_ATUAL_ABR" else 10 if territory["territory_class"] == "EXPANSAO_ENTORNO_ESTRATEGICO" else 0
+            timing_score = 15
+            recency_score = opportunity_recency_score(published_at, reference_to)
+            size_score = opportunity_size_score(value)
+            priority_score = portfolio_score + territory_score + timing_score + recency_score + size_score
+            if territory["territory_class"] == "FORA_AREA":
+                priority_score = min(priority_score, 29)
+            classified.append(
+                {
+                    "opportunity_id": external_id,
+                    "fingerprint": fingerprint,
+                    "source_type": "PNCP",
+                    "date": published_at.isoformat(),
+                    "uf": uf,
+                    "municipality": municipality,
+                    "agency": agency,
+                    "object": object_text,
+                    "value": market_decimal(value),
+                    "status": "PUBLICADA",
+                    "deadline": None,
+                    "link": "",
+                    "territory_class": territory["territory_class"],
+                    "polo_abr": territory["polo_abr"],
+                    "route_match": territory["route_match"],
+                    "keyword_score": keyword_score,
+                    "matches": matches,
+                    "product_match": products,
+                    "priority_score": priority_score,
+                    "priority": opportunity_priority_label(priority_score),
+                    "commercial_status": "NOVO",
+                    "score_components": {
+                        "portfolio_fit": portfolio_score,
+                        "territory": territory_score,
+                        "timing": timing_score,
+                        "recency": recency_score,
+                        "project_size": size_score,
+                    },
+                    "score_reasons": matches + [territory["polo_abr"], f"publicado ha {(reference_to - published_at).days} dias"],
+                }
+            )
+        relevant = [item for item in classified if item["territory_class"] != "FORA_AREA" and item["priority_score"] >= 30]
+        relevant.sort(key=lambda item: (item["priority_score"], item["date"], Decimal(str(item["value"] or "0"))), reverse=True)
+
+        by_pole: dict[str, dict[str, Any]] = {}
+        by_family: dict[str, int] = defaultdict(int)
+        by_month: dict[str, dict[str, int]] = {}
+        scatter = []
+        for item in relevant:
+            pole = item["polo_abr"]
+            by_pole.setdefault(pole, {"polo": pole, "high": 0, "medium": 0, "low": 0, "total": 0})
+            by_pole[pole]["total"] += 1
+            if item["priority_score"] >= 70:
+                by_pole[pole]["high"] += 1
+            elif item["priority_score"] >= 50:
+                by_pole[pole]["medium"] += 1
+            else:
+                by_pole[pole]["low"] += 1
+            for family in item["product_match"]:
+                by_family[family] += 1
+            month = item["date"][:7]
+            by_month.setdefault(month, {"period": month, "period_label": month, "high": 0, "medium": 0, "total": 0})
+            by_month[month]["total"] += 1
+            if item["priority_score"] >= 70:
+                by_month[month]["high"] += 1
+            elif item["priority_score"] >= 50:
+                by_month[month]["medium"] += 1
+            scatter.append(
+                {
+                    "id": item["opportunity_id"],
+                    "polo": item["polo_abr"],
+                    "municipality": item["municipality"],
+                    "object": item["object"],
+                    "value": item["value"],
+                    "priority_score": item["priority_score"],
+                    "product_match": item["product_match"],
+                }
+            )
+
+        obras = market_obrasgov_summary(cur)
+        raw_obras_count = int(obras.get("kpis", {}).get("projects") or 0)
+        total_value = sum((Decimal(str(item["value"])) for item in relevant if item.get("value")), Decimal("0"))
+        recent_30 = len([item for item in relevant if item.get("date") and (reference_to - date.fromisoformat(item["date"])).days <= 30])
+        return {
+            "source": "classified_public_opportunities",
+            "source_types": ["PNCP", "OBRASGOV"],
+            "kpis": {
+                "opportunities": len(relevant),
+                "high_relevance": len([item for item in relevant if item["priority_score"] >= 70]),
+                "total_value": market_decimal(total_value),
+                "regions": len({item["polo_abr"] for item in relevant}),
+                "new_30d": recent_30,
+                "deadlines_soon": 0,
+            },
+            "raw_counts": {
+                "pncp_raw": int(raw_pncp_count or 0),
+                "obrasgov_raw_projects": raw_obras_count,
+                "detail_sufficient": int(detail_sufficient_count or 0),
+                "classified": len(classified),
+                "relevant": len(relevant),
+                "duplicates": duplicates,
+                "insufficient_detail": max(raw_obras_count - int(detail_sufficient_count or 0), 0) if raw_obras_count else 0,
+            },
+            "top_regions": sorted(by_pole.values(), key=lambda item: (item["high"], item["medium"], item["total"]), reverse=True),
+            "families": [{"family": key, "opportunities": value} for key, value in sorted(by_family.items(), key=lambda item: item[1], reverse=True)],
+            "scatter": scatter[:40],
+            "monthly": [by_month[key] for key in sorted(by_month)],
+            "detail": relevant[:30],
+            "readings": opportunity_readings(relevant),
+            "quality": {
+                "message": "ObrasGov disponivel apenas agregado nesta carga; nao entra na fila comercial sem objeto/municipio/data por projeto.",
+                "minimum_fields": ["ID", "Fonte", "Objeto/descricao", "Municipio ou UF", "Data"],
+            },
+        }
     except Exception:
         pass
-    obras = market_obrasgov_summary(cur)
-    if not obras.get("kpis"):
-        return {}
-    return {
-        "source": "obrasgov_projetos",
-        "kpis": {
-            "opportunities": obras["kpis"]["projects"],
-            "high_relevance": 0,
-            "total_value": obras["kpis"]["investment"],
-            "regions": len(obras.get("top_regions", [])),
-        },
-        "monthly": [],
-        "top_regions": [
-            {"uf": item["uf"], "opportunities": item["projects"], "value": item["investment"]}
-            for item in obras.get("top_regions", [])
-        ],
-        "detail": [],
-    }
+    return {}
+
+
+def opportunity_readings(relevant: list[dict[str, Any]]) -> list[dict[str, str]]:
+    if not relevant:
+        return [{"key": "no_classified", "severity": "attention", "text": "Nenhuma oportunidade comercial classificada no recorte; registros agregados sem detalhe nao entram na fila."}]
+    readings = []
+    high = [item for item in relevant if item["priority_score"] >= 70]
+    if high:
+        top_pole = max({item["polo_abr"] for item in high}, key=lambda pole: len([item for item in high if item["polo_abr"] == pole]))
+        readings.append({"key": "high_pole", "severity": "positive", "text": f"{len(high)} oportunidades de alta prioridade; maior concentracao em {top_pole}."})
+    product_counts: dict[str, int] = defaultdict(int)
+    for item in relevant:
+        for product in item["product_match"]:
+            product_counts[product] += 1
+    if product_counts:
+        leaders = sorted(product_counts.items(), key=lambda item: item[1], reverse=True)[:2]
+        readings.append({"key": "products", "severity": "neutral", "text": " e ".join(product for product, _count in leaders) + f" aparecem em {sum(count for _product, count in leaders)} oportunidades relevantes."})
+    return readings[:4]
 
 
 def market_summary(
@@ -4721,7 +4996,11 @@ def market_summary(
             prices_decision = market_prices_decision(cur, date_from=market_date_from, date_to=market_date_to)
             solar = market_solar_summary(cur) if "aneel_dados_abertos" in healthy else {}
             public_works = market_obrasgov_summary(cur) if "obrasgov_projetos" in healthy else {}
-            opportunities = market_opportunities_summary(cur) if healthy & {"pncp_consulta", "obrasgov_projetos"} else {}
+            opportunities = (
+                market_opportunities_summary(cur, date_from=market_date_from, date_to=market_date_to)
+                if healthy & {"pncp_consulta", "obrasgov_projetos"}
+                else {}
+            )
 
             tab_rules = [
                 ("market-overview", True),

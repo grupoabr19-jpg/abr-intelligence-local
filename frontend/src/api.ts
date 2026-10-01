@@ -589,19 +589,60 @@ export type DashboardSummary = {
     }
     opportunities?: {
       source: string
-      kpis: { opportunities: number; high_relevance: number; total_value: string | null; regions: number }
-      monthly: Array<{ period: string; period_label: string; opportunities: number }>
-      top_regions: Array<{ uf: string; opportunities: number; value: string | null }>
+      source_types?: string[]
+      kpis: {
+        opportunities: number
+        high_relevance: number
+        total_value: string | null
+        regions: number
+        new_30d?: number
+        deadlines_soon?: number
+      }
+      raw_counts?: {
+        pncp_raw: number
+        obrasgov_raw_projects: number
+        detail_sufficient: number
+        classified: number
+        relevant: number
+        duplicates: number
+        insufficient_detail: number
+      }
+      monthly: Array<{ period: string; period_label: string; high?: number; medium?: number; total?: number; opportunities?: number }>
+      top_regions: Array<{ polo?: string; uf?: string; high?: number; medium?: number; low?: number; total?: number; opportunities?: number; value?: string | null }>
+      families?: Array<{ family: string; opportunities: number }>
+      scatter?: Array<{
+        id: string
+        polo: string
+        municipality: string
+        object: string
+        value: string | null
+        priority_score: number
+        product_match: string[]
+      }>
       detail: Array<{
+        opportunity_id?: string
+        priority?: string
+        priority_score?: number
+        source_type?: string
         date: string | null
         uf: string
         municipality: string
         agency: string
         object: string
         value: string | null
-        relevance_score: number
-        id: string
+        status?: string
+        deadline?: string | null
+        link?: string
+        territory_class?: string
+        polo_abr?: string
+        route_match?: string
+        product_match?: string[]
+        commercial_status?: string
+        relevance_score?: number
+        id?: string
       }>
+      readings?: Array<{ key: string; text: string; severity: string }>
+      quality?: { message?: string; minimum_fields?: string[] }
     }
     solar?: {
       latest_period: string
