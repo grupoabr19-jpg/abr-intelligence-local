@@ -406,6 +406,10 @@ function App() {
         setRefreshMessage('Atualizacao ainda em andamento. O dashboard continua usando o ultimo dado valido.')
         return
       }
+      if (job.status === 'skipped') {
+        setRefreshMessage(job.message || 'Atualizacao pesada desabilitada neste servico. Execute o worker/cron de dados.')
+        return
+      }
 
       const failedSteps: RefreshStepStatus[] = Array.isArray(job.steps)
         ? job.steps.filter((step: RefreshStepStatus) => step.status === 'failed')

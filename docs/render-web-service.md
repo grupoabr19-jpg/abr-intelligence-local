@@ -25,6 +25,8 @@ HEADLESS=true
 ABR_API_KEY=
 ABR_DASHBOARD_PASSWORD=
 ABR_SESSION_SECRET=
+ABR_ENABLE_WEB_AUTO_REFRESH=false
+ABR_ENABLE_WEB_REFRESH_JOBS=false
 DATABASE_URL_POOLER=
 DATABASE_URL=
 SUPABASE_URL=
@@ -40,10 +42,40 @@ ASTER_LOGIN_PASSWORD=
 
 Nao precisa configurar `VITE_ABR_API_BASE_URL` nesse modo: o frontend usa a mesma origem do Web Service. Tambem nao configure chaves `VITE_*` para autenticar o dashboard; o login usa cookie HttpOnly emitido pelo backend.
 
+## Memoria do Web Service
+
+O Web Service deve servir somente API e frontend. Nao execute coleta Aster/Kommo/Drive/Mercado dentro dele em instancia pequena do Render.
+
+Mantenha no Web Service:
+
+```env
+ABR_ENABLE_WEB_AUTO_REFRESH=false
+ABR_ENABLE_WEB_REFRESH_JOBS=false
+```
+
+Com isso:
+
+- o dashboard nao inicia coleta pesada no startup;
+- abrir o dashboard nao dispara robo em segundo plano;
+- o botao de atualizar nao executa subprocessos pesados no Web Service;
+- a coleta deve rodar em Worker/Cron separado usando o mesmo Dockerfile.
+
+Comando recomendado para Cron/Worker:
+
+```bash
+python tools/run_dashboard_refresh.py --mode auto
+```
+
+Para execucao manual com periodo especifico:
+
+```bash
+python tools/run_dashboard_refresh.py --mode manual --force --date-from 2026-01-01 --date-to 2026-09-30
+```
+
 ## Cron
 
 Se a conta nao aceitar Blueprint, o cron tambem precisa ser substituido por uma alternativa externa, por exemplo:
 
-- Render cron criado manualmente em conta paga.
-- GitHub Actions agendado chamando `POST /v1/spreadsheets/local/inspect`.
-- Cron externo chamando a API publicada com `x-api-key`.
+- Render Cron/Worker criado manualmente em conta paga rodando `python tools/run_dashboard_refresh.py --mode auto`.
+- GitHub Actions agendado executando o mesmo comando com as variaveis de ambiente.
+- Cron externo chamando uma rotina propria fora do Web Service.

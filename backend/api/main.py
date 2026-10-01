@@ -64,7 +64,8 @@ async def health() -> dict[str, str]:
 
 @app.on_event("startup")
 async def start_dashboard_auto_refresh() -> None:
-    asyncio.create_task(dashboard_refresh_manager.run_auto_refresh_loop())
+    if settings.abr_enable_web_auto_refresh:
+        asyncio.create_task(dashboard_refresh_manager.run_auto_refresh_loop())
 
 
 @app.get("/v1/aster/reports", response_model=list[ReportInfo], tags=["aster"], dependencies=[Depends(require_api_key)])
@@ -111,7 +112,8 @@ async def get_internal_dashboard(
     if market_date_from and market_date_to and market_date_from > market_date_to:
         raise HTTPException(status_code=422, detail="market_date_from must be before or equal to market_date_to.")
     set_dashboard_session_cookie(response)
-    asyncio.create_task(dashboard_refresh_manager.ensure_daily_refresh(date_from=None, date_to=None))
+    if settings.abr_enable_web_auto_refresh:
+        asyncio.create_task(dashboard_refresh_manager.ensure_daily_refresh(date_from=None, date_to=None))
     return await asyncio.to_thread(
         internal_dashboard_summary,
         date_from=date_from,
@@ -136,6 +138,24 @@ async def refresh_dashboard_data(
 ) -> dict:
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before or equal to date_to.")
+    if not settings.abr_enable_web_refresh_jobs:
+        return {
+            "job": {
+                "job_id": "web-refresh-disabled",
+                "mode": "manual",
+                "status": "skipped",
+                "date_from": date_from.isoformat() if date_from else None,
+                "date_to": date_to.isoformat() if date_to else None,
+                "created_at": None,
+                "started_at": None,
+                "finished_at": None,
+                "message": (
+                    "Atualizacao pesada desabilitada no Web Service para evitar estouro de memoria. "
+                    "Execute o worker/cron de dados."
+                ),
+                "steps": [],
+            }
+        }
     job = await dashboard_refresh_manager.start_refresh(
         mode="manual",
         date_from=date_from,

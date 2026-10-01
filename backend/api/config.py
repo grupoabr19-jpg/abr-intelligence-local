@@ -14,6 +14,8 @@ class ApiSettings(BaseSettings):
     abr_dashboard_read_key: str = ""
     abr_dashboard_password: str = ""
     abr_session_secret: str = ""
+    abr_enable_web_auto_refresh: bool = False
+    abr_enable_web_refresh_jobs: bool = False
 
 
 @lru_cache
