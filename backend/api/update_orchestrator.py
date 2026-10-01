@@ -196,25 +196,28 @@ class DashboardRefreshManager:
         )
 
     def _build_steps(self) -> list[RefreshStep]:
-        steps = [
-            RefreshStep("market_registry", "Mercado: verificar fontes configuradas"),
-            RefreshStep("market_api", "Mercado API: BCB e IBGE"),
-            RefreshStep("market_aneel", "Mercado ANEEL: geracao fotovoltaica"),
-            RefreshStep("market_world_bank", "Mercado World Bank: contexto macro"),
-            RefreshStep("market_obrasgov", "Mercado ObrasGov: projetos publicos"),
-            RefreshStep("market_comex", "Mercado Comex: importacoes por NCM aprovado"),
-            RefreshStep("market_gov", "Mercado governo: CAGED e PNCP configurados"),
-            RefreshStep("market_public", "Mercado publico: Aco Brasil, CNI e INDA"),
-            RefreshStep("market_decision_aggs", "Mercado: recalcular sinais decisorios"),
-            RefreshStep("kommo_collect", "Kommo API: leads, tarefas e eventos"),
-            RefreshStep("atendimento_facts", "Atendimento: fatos, SLA e rankings"),
-            RefreshStep("atendimento_contract", "Atendimento: contrato oficial"),
-            RefreshStep("drive_spreadsheets", "Google Drive: planilhas brutas novas"),
-        ]
+        steps: list[RefreshStep] = []
         for query_id in ASTER_REFRESH_REPORTS:
             steps.append(RefreshStep(f"aster_{query_id}", f"Aster ERP: relatorio {query_id}"))
-        steps.append(RefreshStep("aster_sales_fact", "Aster ERP: compactar vendas para dashboard"))
-        steps.append(RefreshStep("sales_cache", "Dashboard comercial: recalcular cache"))
+        steps.extend(
+            [
+                RefreshStep("aster_sales_fact", "Aster ERP: compactar vendas para dashboard"),
+                RefreshStep("sales_cache", "Dashboard comercial: recalcular cache"),
+                RefreshStep("drive_spreadsheets", "Google Drive: planilhas brutas novas"),
+                RefreshStep("kommo_collect", "Kommo API: leads, tarefas e eventos"),
+                RefreshStep("atendimento_facts", "Atendimento: fatos, SLA e rankings"),
+                RefreshStep("atendimento_contract", "Atendimento: contrato oficial"),
+                RefreshStep("market_registry", "Mercado: verificar fontes configuradas"),
+                RefreshStep("market_api", "Mercado API: BCB e IBGE"),
+                RefreshStep("market_aneel", "Mercado ANEEL: geracao fotovoltaica"),
+                RefreshStep("market_world_bank", "Mercado World Bank: contexto macro"),
+                RefreshStep("market_obrasgov", "Mercado ObrasGov: projetos publicos"),
+                RefreshStep("market_comex", "Mercado Comex: importacoes por NCM aprovado"),
+                RefreshStep("market_gov", "Mercado governo: CAGED e PNCP configurados"),
+                RefreshStep("market_public", "Mercado publico: Aco Brasil, CNI e INDA"),
+                RefreshStep("market_decision_aggs", "Mercado: recalcular sinais decisorios"),
+            ]
+        )
         steps.append(
             RefreshStep(
                 "pending_market_collectors",

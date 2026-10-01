@@ -79,3 +79,56 @@ Se a conta nao aceitar Blueprint, o cron tambem precisa ser substituido por uma 
 - Render Cron/Worker criado manualmente em conta paga rodando `python tools/run_dashboard_refresh.py --mode auto`.
 - GitHub Actions agendado executando o mesmo comando com as variaveis de ambiente.
 - Cron externo chamando uma rotina propria fora do Web Service.
+
+## Alternativa sem Render Cron
+
+Para conta Render free, mantenha o Web Service apenas servindo o dashboard e use o GitHub Actions para rodar o robo de dados diariamente. O workflow fica em:
+
+```text
+.github/workflows/daily-dashboard-refresh.yml
+```
+
+Ele roda todos os dias as 08:30 UTC, equivalente a 05:30 em Sao Paulo, e tambem pode ser acionado manualmente em `Actions > Daily dashboard refresh > Run workflow`.
+
+Secrets necessarios no GitHub:
+
+```text
+DATABASE_URL_POOLER
+DATABASE_URL
+DATABASE_CRM_URL_POOLER
+DATABASE_CRM_URL
+SUPABASE_URL
+SUPABASE_PUBLISHABLE_KEY
+SUPABASE_SECRET_KEY
+SUPABASE_CRM_URL
+SUPABASE_CRM_PUBLISHABLE_KEY
+SUPABASE_CRM_SECRET_KEY
+ASTER_BASE_URL
+ASTER_LOGIN_EMAIL
+ASTER_LOGIN_PASSWORD
+GOOGLE_OAUTH_CLIENT_ID
+GOOGLE_OAUTH_CLIENT_SECRET
+GOOGLE_OAUTH_REFRESH_TOKEN
+ARCHIVE_GOOGLE_DRIVE_FOLDER_ID
+DRIVE_SPREADSHEET_SOURCE_FOLDER_ID
+KOMMO_API_BASE_URL
+KOMMO_SUBDOMAIN
+KOMMO_CLIENT_ID
+KOMMO_CLIENT_SECRET
+KOMMO_REDIRECT_URI
+KOMMO_ACCESS_TOKEN
+KOMMO_REFRESH_TOKEN
+KOMMO_TOKEN_EXPIRES_AT
+KOMMO_COLLECT_EVENTS
+KOMMO_FIELD_ORIGIN
+KOMMO_FIELD_REGION
+KOMMO_FIELD_SEGMENT
+KOMMO_FIELD_TEMPERATURE
+```
+
+No Render, deixe estes dois valores desabilitados para evitar estouro de memoria no Web Service:
+
+```env
+ABR_ENABLE_WEB_AUTO_REFRESH=false
+ABR_ENABLE_WEB_REFRESH_JOBS=false
+```

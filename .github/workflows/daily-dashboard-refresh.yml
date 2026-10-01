@@ -1,0 +1,88 @@
+name: Daily dashboard refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "Opcional: data inicial YYYY-MM-DD"
+        required: false
+        type: string
+      date_to:
+        description: "Opcional: data final YYYY-MM-DD"
+        required: false
+        type: string
+  schedule:
+    # 08:30 UTC = 05:30 America/Sao_Paulo.
+    - cron: "30 8 * * *"
+
+concurrency:
+  group: daily-dashboard-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Run data robot
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      HEADLESS: "true"
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_POOLER }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_CRM_URL_POOLER: ${{ secrets.DATABASE_CRM_URL_POOLER }}
+      DATABASE_CRM_URL: ${{ secrets.DATABASE_CRM_URL }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      SUPABASE_CRM_URL: ${{ secrets.SUPABASE_CRM_URL }}
+      SUPABASE_CRM_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_CRM_PUBLISHABLE_KEY }}
+      SUPABASE_CRM_SECRET_KEY: ${{ secrets.SUPABASE_CRM_SECRET_KEY }}
+      ASTER_BASE_URL: ${{ secrets.ASTER_BASE_URL }}
+      ASTER_LOGIN_EMAIL: ${{ secrets.ASTER_LOGIN_EMAIL }}
+      ASTER_LOGIN_PASSWORD: ${{ secrets.ASTER_LOGIN_PASSWORD }}
+      GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+      GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+      ARCHIVE_STORAGE_PROVIDER: google_drive
+      ARCHIVE_GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.ARCHIVE_GOOGLE_DRIVE_FOLDER_ID }}
+      DRIVE_SPREADSHEET_SOURCE_FOLDER_ID: ${{ secrets.DRIVE_SPREADSHEET_SOURCE_FOLDER_ID }}
+      DRIVE_SPREADSHEET_STORE_RAW_ROWS: "false"
+      KOMMO_API_BASE_URL: ${{ secrets.KOMMO_API_BASE_URL }}
+      KOMMO_SUBDOMAIN: ${{ secrets.KOMMO_SUBDOMAIN }}
+      KOMMO_CLIENT_ID: ${{ secrets.KOMMO_CLIENT_ID }}
+      KOMMO_CLIENT_SECRET: ${{ secrets.KOMMO_CLIENT_SECRET }}
+      KOMMO_REDIRECT_URI: ${{ secrets.KOMMO_REDIRECT_URI }}
+      KOMMO_ACCESS_TOKEN: ${{ secrets.KOMMO_ACCESS_TOKEN }}
+      KOMMO_REFRESH_TOKEN: ${{ secrets.KOMMO_REFRESH_TOKEN }}
+      KOMMO_TOKEN_EXPIRES_AT: ${{ secrets.KOMMO_TOKEN_EXPIRES_AT }}
+      KOMMO_COLLECT_EVENTS: ${{ secrets.KOMMO_COLLECT_EVENTS }}
+      KOMMO_FIELD_ORIGIN: ${{ secrets.KOMMO_FIELD_ORIGIN }}
+      KOMMO_FIELD_REGION: ${{ secrets.KOMMO_FIELD_REGION }}
+      KOMMO_FIELD_SEGMENT: ${{ secrets.KOMMO_FIELD_SEGMENT }}
+      KOMMO_FIELD_TEMPERATURE: ${{ secrets.KOMMO_FIELD_TEMPERATURE }}
+      REFRESH_DATE_FROM: ${{ github.event.inputs.date_from || '' }}
+      REFRESH_DATE_TO: ${{ github.event.inputs.date_to || '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install browser
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run automatic refresh
+        run: |
+          ARGS="--mode auto --poll-seconds 15"
+          if [ -n "$REFRESH_DATE_FROM" ]; then ARGS="$ARGS --date-from $REFRESH_DATE_FROM"; fi
+          if [ -n "$REFRESH_DATE_TO" ]; then ARGS="$ARGS --date-to $REFRESH_DATE_TO"; fi
+          python tools/run_dashboard_refresh.py $ARGS
