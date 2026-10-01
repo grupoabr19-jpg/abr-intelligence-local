@@ -455,6 +455,57 @@ export type DashboardSummary = {
     industry?: {
       indicators: MarketIndicator[]
       series: MarketSeriesPoint[]
+      decision?: {
+        latest_period: string | null
+        cards: Array<{
+          id: string
+          title: string
+          value: string | null
+          unit: string | null
+          detail: string | null
+          source: string | null
+          period: string | null
+          period_label: string | null
+        }>
+        families: Array<{
+          family: string
+          classification: string
+          index: string | null
+          trend_3m: string | null
+          trend_direction: string
+          positive_drivers: number
+          negative_drivers: number
+          coverage: string
+          drivers: Array<{
+            key: string
+            label: string
+            weight: string | null
+            signal: number | null
+            value: string | null
+            yoy: string | null
+            period: string | null
+            period_label: string | null
+            source: string | null
+          }>
+        }>
+        demand_chart: Array<Record<string, string | null>>
+        heatmap: Array<{
+          family: string
+          driver: string
+          driver_key: string
+          signal: number | null
+          weight: string | null
+          value: string | null
+          yoy: string | null
+          period: string | null
+          period_label: string | null
+          source: string | null
+        }>
+        production_chart: Array<Record<string, string | null>>
+        expectations_chart: Array<Record<string, string | null>>
+        readings: Array<{ key: string; text: string; severity: string }>
+        methodology: Record<string, string>
+      }
     }
     opportunities?: {
       source: string

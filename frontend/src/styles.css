@@ -530,6 +530,64 @@ h1 {
   font-weight: 700;
 }
 
+.driver-heatmap {
+  display: grid;
+  min-width: 860px;
+  overflow: auto;
+  border: 1px solid var(--abr-border);
+  border-radius: 6px;
+}
+
+.driver-heatmap-head,
+.driver-heatmap-family,
+.driver-heatmap-cell {
+  min-height: 42px;
+  padding: 9px 10px;
+  border-right: 1px solid var(--abr-border);
+  border-bottom: 1px solid var(--abr-border);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.driver-heatmap-head {
+  color: #405273;
+  background: #f8fafc;
+  text-transform: uppercase;
+}
+
+.driver-heatmap-family {
+  color: var(--abr-blue);
+  background: #fff;
+}
+
+.driver-heatmap-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #475569;
+  background: #f8fafc;
+}
+
+.driver-heatmap-cell.positive {
+  color: #065f46;
+  background: #d1fae5;
+}
+
+.driver-heatmap-cell.negative {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.driver-heatmap-cell.neutral {
+  color: #374151;
+  background: #f3f4f6;
+}
+
+.driver-heatmap-cell.missing {
+  color: #6b7280;
+  background: #fff;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

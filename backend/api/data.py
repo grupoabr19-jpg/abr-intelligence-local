@@ -2558,6 +2558,560 @@ def market_overview_decision(
     }
 
 
+INDUSTRY_DRIVER_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "produtos_metal": {
+        "label": "Produtos de Metal",
+        "source_key": "ibge_pim_sidra",
+        "indicator_key": "ibge_pim_producao_fisica",
+        "classification_code": "129334",
+        "kind": "yoy",
+        "source": "IBGE PIM",
+    },
+    "maquinas": {
+        "label": "Maquinas e Equipamentos",
+        "source_key": "ibge_pim_sidra",
+        "indicator_key": "ibge_pim_producao_fisica",
+        "classification_code": "129337",
+        "kind": "yoy",
+        "source": "IBGE PIM",
+    },
+    "metalurgia": {
+        "label": "Metalurgia",
+        "source_key": "ibge_pim_sidra",
+        "indicator_key": "ibge_pim_producao_fisica",
+        "classification_code": "129333",
+        "kind": "yoy",
+        "source": "IBGE PIM",
+    },
+    "construcao_ibge": {
+        "label": "Construcao",
+        "source_key": "ibge_construcao_sidra",
+        "indicator_key": "ibge_construcao_indice",
+        "kind": "yoy",
+        "source": "IBGE",
+    },
+    "cni_demanda": {
+        "label": "CNI Demanda",
+        "source_key": "cni_sondagem_industrial",
+        "indicator_key": "cni_industria_expectativa_demanda",
+        "kind": "cni50",
+        "source": "CNI Industria",
+    },
+    "cni_compras": {
+        "label": "CNI Compras",
+        "source_key": "cni_sondagem_industrial",
+        "indicator_key": "cni_industria_expectativa_compras",
+        "kind": "cni50",
+        "source": "CNI Industria",
+    },
+    "cni_construcao_atividade": {
+        "label": "CNI Construcao",
+        "source_key": "cni_sondagem_construcao",
+        "indicator_key": "cni_construcao_9_expectativa_do_nivel_de_atividade_para_os_proximos_seis_meses",
+        "kind": "cni50",
+        "source": "CNI Construcao",
+    },
+    "cni_construcao_insumos": {
+        "label": "CNI Insumos",
+        "source_key": "cni_sondagem_construcao",
+        "indicator_key": "cni_construcao_10_expectativa_de_compras_de_insumos_e_materias_primas_para_os_proximos_seis_meses",
+        "kind": "cni50",
+        "source": "CNI Construcao",
+    },
+    "cni_construcao_empreendimentos": {
+        "label": "Novos Empreend.",
+        "source_key": "cni_sondagem_construcao",
+        "indicator_key": "cni_construcao_11_expectativa_de_novos_empreendimentos_e_servicos_para_os_proximos_seis_meses",
+        "kind": "cni50",
+        "source": "CNI Construcao",
+    },
+}
+
+
+INDUSTRY_FAMILY_WEIGHTS: dict[str, dict[str, Decimal]] = {
+    "CHAPAS": {
+        "produtos_metal": Decimal("0.25"),
+        "maquinas": Decimal("0.20"),
+        "cni_demanda": Decimal("0.20"),
+        "cni_compras": Decimal("0.15"),
+        "metalurgia": Decimal("0.10"),
+        "cni_construcao_insumos": Decimal("0.10"),
+    },
+    "TUBOS / METALONS": {
+        "produtos_metal": Decimal("0.20"),
+        "maquinas": Decimal("0.15"),
+        "cni_demanda": Decimal("0.15"),
+        "cni_compras": Decimal("0.15"),
+        "construcao_ibge": Decimal("0.15"),
+        "cni_construcao_insumos": Decimal("0.20"),
+    },
+    "PERFIS": {
+        "construcao_ibge": Decimal("0.25"),
+        "cni_construcao_empreendimentos": Decimal("0.20"),
+        "cni_construcao_insumos": Decimal("0.20"),
+        "produtos_metal": Decimal("0.15"),
+        "cni_construcao_atividade": Decimal("0.15"),
+        "maquinas": Decimal("0.05"),
+    },
+    "TELHAS": {
+        "cni_construcao_atividade": Decimal("0.25"),
+        "cni_construcao_empreendimentos": Decimal("0.20"),
+        "cni_construcao_insumos": Decimal("0.20"),
+        "construcao_ibge": Decimal("0.20"),
+        "produtos_metal": Decimal("0.10"),
+        "metalurgia": Decimal("0.05"),
+    },
+}
+
+
+def market_normalize_cni_value(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    if value > Decimal("100"):
+        return value / Decimal("10")
+    return value
+
+
+def market_driver_signal(kind: str, value: Decimal | None, yoy: Decimal | None) -> int | None:
+    if kind == "cni50":
+        normalized = market_normalize_cni_value(value)
+        if normalized is None:
+            return None
+        if normalized > Decimal("52"):
+            return 1
+        if normalized < Decimal("48"):
+            return -1
+        return 0
+    if yoy is None:
+        return None
+    if yoy > Decimal("2"):
+        return 1
+    if yoy < Decimal("-2"):
+        return -1
+    return 0
+
+
+def market_demand_classification(index: Decimal | None) -> str:
+    if index is None:
+        return "SEM DADOS"
+    if index >= Decimal("30"):
+        return "ACELERANDO"
+    if index >= Decimal("10"):
+        return "LEVE ACELERACAO"
+    if index > Decimal("-10"):
+        return "ESTAVEL / MISTO"
+    if index > Decimal("-30"):
+        return "LEVE DESACELERACAO"
+    return "DESACELERANDO"
+
+
+def market_latest_indicator_dimension_before(
+    cur: Any,
+    *,
+    source_key: str,
+    indicator_key: str,
+    date_to: date | None = None,
+    classification_code: str | None = None,
+) -> dict[str, Any] | None:
+    cur.execute(
+        """
+        select mi.source_key, mi.indicador_key, mi.indicador_nome, mi.periodo_inicio,
+               mi.periodo_label, mi.geografia, mi.unidade, mi.valor, mi.dimensoes
+        from public.mercado_indicadores mi
+        left join public.market_indicator_metadata mim
+          on mim.source_key = mi.source_key
+         and mim.indicator_key = mi.indicador_key
+         and mim.active = true
+        where mi.source_key = %s
+          and mi.indicador_key = %s
+          and (%s::text is null or mi.dimensoes->>'classification_code' = %s)
+          and mi.valor is not null
+          and (%s::date is null or mi.periodo_inicio <= %s::date)
+          and (
+            mim.source_key is null
+            or (
+              (mim.allow_zero or mi.valor <> 0)
+              and (mim.min_sanity_value is null or mi.valor >= mim.min_sanity_value)
+              and (mim.max_sanity_value is null or mi.valor <= mim.max_sanity_value)
+            )
+          )
+        order by mi.periodo_inicio desc nulls last, mi.coletado_em desc
+        limit 1
+        """,
+        (source_key, indicator_key, classification_code, classification_code, date_to, date_to),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "source_key": row[0],
+        "indicator_key": row[1],
+        "name": row[2],
+        "period": row[3],
+        "period_iso": row[3].isoformat() if row[3] else None,
+        "period_label": row[4],
+        "geography": row[5],
+        "unit": row[6],
+        "value": row[7],
+        "value_text": market_decimal(row[7]),
+        "dimensions": row[8] or {},
+    }
+
+
+def market_indicator_series_dimension_between(
+    cur: Any,
+    *,
+    source_key: str,
+    indicator_key: str,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    classification_code: str | None = None,
+    limit: int = 36,
+) -> list[dict[str, Any]]:
+    cur.execute(
+        """
+        select mi.periodo_inicio, mi.periodo_label, avg(mi.valor) as valor
+        from public.mercado_indicadores mi
+        left join public.market_indicator_metadata mim
+          on mim.source_key = mi.source_key
+         and mim.indicator_key = mi.indicador_key
+         and mim.active = true
+        where mi.source_key = %s
+          and mi.indicador_key = %s
+          and (%s::text is null or mi.dimensoes->>'classification_code' = %s)
+          and mi.valor is not null
+          and (%s::date is null or mi.periodo_inicio >= %s::date)
+          and (%s::date is null or mi.periodo_inicio <= %s::date)
+          and (
+            mim.source_key is null
+            or (
+              (mim.allow_zero or mi.valor <> 0)
+              and (mim.min_sanity_value is null or mi.valor >= mim.min_sanity_value)
+              and (mim.max_sanity_value is null or mi.valor <= mim.max_sanity_value)
+            )
+          )
+        group by mi.periodo_inicio, mi.periodo_label
+        order by mi.periodo_inicio desc nulls last
+        limit %s
+        """,
+        (source_key, indicator_key, classification_code, classification_code, date_from, date_from, date_to, date_to, limit),
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "period": row[0],
+            "period_iso": row[0].isoformat() if row[0] else None,
+            "period_label": row[1],
+            "value": row[2],
+        }
+        for row in reversed(rows)
+    ]
+
+
+def market_driver_snapshot(cur: Any, driver_key: str, cutoff: date | None) -> dict[str, Any]:
+    config = INDUSTRY_DRIVER_DEFINITIONS[driver_key]
+    latest = market_latest_indicator_dimension_before(
+        cur,
+        source_key=config["source_key"],
+        indicator_key=config["indicator_key"],
+        classification_code=config.get("classification_code"),
+        date_to=cutoff,
+    )
+    if not latest:
+        return {
+            "key": driver_key,
+            "label": config["label"],
+            "source": config["source"],
+            "kind": config["kind"],
+            "value": None,
+            "raw_value": None,
+            "yoy": None,
+            "signal": None,
+            "period": None,
+            "period_label": None,
+            "unit": None,
+            "status": "N/D",
+        }
+    value = latest["value"]
+    normalized_value = market_normalize_cni_value(value) if config["kind"] == "cni50" else value
+    yoy = None
+    if config["kind"] == "yoy" and latest.get("period"):
+        previous = market_latest_indicator_dimension_before(
+            cur,
+            source_key=config["source_key"],
+            indicator_key=config["indicator_key"],
+            classification_code=config.get("classification_code"),
+            date_to=market_one_year_before(latest["period"]),
+        )
+        yoy = market_pct_change(normalized_value, previous["value"] if previous else None)
+    signal = market_driver_signal(config["kind"], normalized_value, yoy)
+    return {
+        "key": driver_key,
+        "label": config["label"],
+        "source": config["source"],
+        "kind": config["kind"],
+        "value": market_decimal(normalized_value),
+        "raw_value": market_decimal(value),
+        "yoy": market_decimal(yoy),
+        "signal": signal,
+        "period": latest.get("period_iso"),
+        "period_label": latest.get("period_label"),
+        "unit": latest.get("unit"),
+        "status": "OK",
+    }
+
+
+def market_family_index(driver_map: dict[str, dict[str, Any]], weights: dict[str, Decimal]) -> tuple[Decimal | None, list[dict[str, Any]]]:
+    weighted_sum = Decimal("0")
+    available_weight = Decimal("0")
+    rows: list[dict[str, Any]] = []
+    for driver_key, weight in weights.items():
+        driver = driver_map.get(driver_key)
+        signal = driver.get("signal") if driver else None
+        if signal is not None:
+            weighted_sum += Decimal(signal) * weight
+            available_weight += weight
+        rows.append(
+            {
+                "key": driver_key,
+                "label": INDUSTRY_DRIVER_DEFINITIONS[driver_key]["label"],
+                "weight": market_decimal(weight * Decimal("100")),
+                "signal": signal,
+                "value": driver.get("value") if driver else None,
+                "yoy": driver.get("yoy") if driver else None,
+                "period": driver.get("period") if driver else None,
+                "period_label": driver.get("period_label") if driver else None,
+                "source": driver.get("source") if driver else INDUSTRY_DRIVER_DEFINITIONS[driver_key]["source"],
+            }
+        )
+    if available_weight == 0:
+        return None, rows
+    return (weighted_sum / available_weight) * Decimal("100"), rows
+
+
+def market_industry_decision(
+    cur: Any,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
+    driver_keys = sorted({key for weights in INDUSTRY_FAMILY_WEIGHTS.values() for key in weights})
+    driver_map = {key: market_driver_snapshot(cur, key, date_to) for key in driver_keys}
+
+    history_start = date_from or ((date_to or date.today()) - timedelta(days=760))
+    monthly_indexes: dict[str, dict[str, Any]] = {}
+    all_periods: set[date] = set()
+    driver_series: dict[str, dict[date, dict[str, Any]]] = {}
+    for driver_key in driver_keys:
+        config = INDUSTRY_DRIVER_DEFINITIONS[driver_key]
+        series = market_indicator_series_dimension_between(
+            cur,
+            source_key=config["source_key"],
+            indicator_key=config["indicator_key"],
+            classification_code=config.get("classification_code"),
+            date_from=history_start,
+            date_to=date_to,
+            limit=36,
+        )
+        by_period: dict[date, dict[str, Any]] = {}
+        for item in series:
+            period = item["period"]
+            if not period:
+                continue
+            value = item["value"]
+            normalized = market_normalize_cni_value(value) if config["kind"] == "cni50" else value
+            previous = next((p for p in series if p["period"] == market_one_year_before(period)), None)
+            previous_value = previous["value"] if previous else None
+            previous_normalized = market_normalize_cni_value(previous_value) if config["kind"] == "cni50" else previous_value
+            yoy = market_pct_change(normalized, previous_normalized) if config["kind"] == "yoy" else None
+            signal = market_driver_signal(config["kind"], normalized, yoy)
+            by_period[period] = {
+                "value": normalized,
+                "yoy": yoy,
+                "signal": signal,
+                "period_label": item["period_label"],
+            }
+            all_periods.add(period)
+        driver_series[driver_key] = by_period
+
+    for period in sorted(all_periods):
+        point = {"period": period.isoformat(), "period_label": None}
+        period_driver_map: dict[str, dict[str, Any]] = {}
+        for driver_key, by_period in driver_series.items():
+            if period in by_period:
+                period_driver_map[driver_key] = by_period[period]
+                point["period_label"] = by_period[period]["period_label"]
+        for family, weights in INDUSTRY_FAMILY_WEIGHTS.items():
+            index, _rows = market_family_index(period_driver_map, weights)
+            point[family] = market_decimal(index)
+        monthly_indexes[period.isoformat()] = point
+
+    latest_period = max(all_periods).isoformat() if all_periods else None
+    three_month_reference: dict[str, Any] | None = None
+    if all_periods:
+        latest_date = max(all_periods)
+        cutoff = latest_date - timedelta(days=92)
+        previous_periods = [period for period in all_periods if period <= cutoff]
+        if previous_periods:
+            three_month_reference = monthly_indexes[max(previous_periods).isoformat()]
+
+    families = []
+    heatmap = []
+    for family, weights in INDUSTRY_FAMILY_WEIGHTS.items():
+        index, drivers = market_family_index(driver_map, weights)
+        previous_index = None
+        if three_month_reference:
+            previous_value = three_month_reference.get(family)
+            previous_index = Decimal(str(previous_value)) if previous_value not in (None, "") else None
+        trend_3m = (index - previous_index) if index is not None and previous_index is not None else None
+        positive = len([row for row in drivers if row["signal"] == 1])
+        negative = len([row for row in drivers if row["signal"] == -1])
+        available = len([row for row in drivers if row["signal"] is not None])
+        coverage = f"{available}/{len(drivers)}"
+        families.append(
+            {
+                "family": family,
+                "classification": market_demand_classification(index),
+                "index": market_decimal(index),
+                "trend_3m": market_decimal(trend_3m),
+                "trend_direction": (
+                    "melhorando" if trend_3m is not None and trend_3m > 0
+                    else "piorando" if trend_3m is not None and trend_3m < 0
+                    else "estavel"
+                ),
+                "positive_drivers": positive,
+                "negative_drivers": negative,
+                "coverage": coverage,
+                "drivers": drivers,
+            }
+        )
+        for row in drivers:
+            heatmap.append(
+                {
+                    "family": family,
+                    "driver": row["label"],
+                    "driver_key": row["key"],
+                    "signal": row["signal"],
+                    "weight": row["weight"],
+                    "value": row["value"],
+                    "yoy": row["yoy"],
+                    "period": row["period"],
+                    "period_label": row["period_label"],
+                    "source": row["source"],
+                }
+            )
+
+    def card_for(driver_key: str, title: str) -> dict[str, Any]:
+        driver = driver_map.get(driver_key, {})
+        value = driver.get("value")
+        kind = driver.get("kind")
+        if kind == "yoy":
+            display_value = driver.get("yoy")
+            unit = "%"
+            detail = "YoY"
+        elif value is not None:
+            normalized = Decimal(str(value))
+            display_value = market_decimal(normalized)
+            unit = "indice"
+            detail = market_decimal(normalized - Decimal("50"))
+        else:
+            display_value = None
+            unit = "indice"
+            detail = None
+        return {
+            "id": driver_key,
+            "title": title,
+            "value": display_value,
+            "unit": unit,
+            "detail": detail,
+            "source": driver.get("source"),
+            "period": driver.get("period"),
+            "period_label": driver.get("period_label"),
+        }
+
+    production_chart = []
+    for period in sorted(all_periods):
+        row = {"period": period.isoformat(), "period_label": None}
+        for driver_key, output_key in (
+            ("produtos_metal", "produtos_metal"),
+            ("maquinas", "maquinas"),
+            ("metalurgia", "metalurgia"),
+        ):
+            point = driver_series.get(driver_key, {}).get(period)
+            if point:
+                row["period_label"] = point["period_label"]
+                row[output_key] = market_decimal(point["value"])
+                row[f"{output_key}_yoy"] = market_decimal(point["yoy"])
+        if any(key in row for key in ("produtos_metal", "maquinas", "metalurgia")):
+            production_chart.append(row)
+
+    expectations_chart = []
+    for period in sorted(all_periods):
+        row = {"period": period.isoformat(), "period_label": None, "neutral": "50"}
+        for driver_key, output_key in (
+            ("cni_demanda", "demanda"),
+            ("cni_compras", "compras"),
+            ("cni_construcao_insumos", "insumos_construcao"),
+        ):
+            point = driver_series.get(driver_key, {}).get(period)
+            if point:
+                row["period_label"] = point["period_label"]
+                row[output_key] = market_decimal(point["value"])
+        if any(key in row for key in ("demanda", "compras", "insumos_construcao")):
+            expectations_chart.append(row)
+
+    readings = []
+    weakest = min([item for item in families if item["index"] is not None], key=lambda item: Decimal(str(item["index"])), default=None)
+    strongest = max([item for item in families if item["index"] is not None], key=lambda item: Decimal(str(item["index"])), default=None)
+    if weakest:
+        readings.append(
+            {
+                "key": "weakest_family",
+                "severity": "attention" if weakest["negative_drivers"] > weakest["positive_drivers"] else "neutral",
+                "text": f"{weakest['family']}: {weakest['negative_drivers']} drivers negativos; indice {weakest['index']} e tendencia 3M {weakest['trend_direction']}.",
+            }
+        )
+    if strongest and strongest != weakest:
+        readings.append(
+            {
+                "key": "strongest_family",
+                "severity": "positive" if strongest["positive_drivers"] > strongest["negative_drivers"] else "neutral",
+                "text": f"{strongest['family']}: melhor sinal relativo, indice {strongest['index']} com cobertura {strongest['coverage']}.",
+            }
+        )
+    cni_demand = driver_map.get("cni_demanda", {})
+    cni_purchases = driver_map.get("cni_compras", {})
+    if cni_demand.get("value") is not None and cni_purchases.get("value") is not None:
+        readings.append(
+            {
+                "key": "cni_expectations",
+                "severity": "positive" if Decimal(str(cni_demand["value"])) > 50 and Decimal(str(cni_purchases["value"])) > 50 else "attention",
+                "text": f"Expectativas CNI: demanda {cni_demand['value']} e compras {cni_purchases['value']} na escala oficial de 50 pontos.",
+            }
+        )
+
+    return {
+        "latest_period": latest_period,
+        "cards": [
+            card_for("produtos_metal", "Produtos de Metal"),
+            card_for("maquinas", "Maquinas e Equipamentos"),
+            card_for("cni_demanda", "Expectativa de Demanda"),
+            card_for("cni_compras", "Compra de Materia-Prima"),
+        ],
+        "families": families,
+        "demand_chart": list(monthly_indexes.values()),
+        "heatmap": heatmap,
+        "production_chart": production_chart,
+        "expectations_chart": expectations_chart,
+        "readings": readings,
+        "methodology": {
+            "index_scale": "-100 a +100",
+            "yoy_signal": "> +2% = +1; -2% a +2% = 0; < -2% = -1",
+            "cni_signal": "> 52 = +1; 48 a 52 = 0; < 48 = -1",
+        },
+    }
+
+
 def market_steel_volume_series(
     cur: Any,
     indicator_key: str,
@@ -3619,6 +4173,11 @@ def market_summary(
                 date_from=market_date_from,
                 date_to=market_date_to,
             )
+            industry_decision = market_industry_decision(
+                cur,
+                date_from=market_date_from,
+                date_to=market_date_to,
+            )
 
             steel_series = market_indicator_series(cur, "aco_brasil_estatistica_mensal", "aco_brasil_consumo_aparente_total")
             industry_series = market_indicator_series(cur, "cni_sondagem_industrial", "cni_industria_expectativa_demanda")
@@ -3693,6 +4252,7 @@ def market_summary(
         "industry": {
             "indicators": industry_indicators,
             "series": industry_series,
+            "decision": industry_decision,
         },
         "opportunities": opportunities,
         "solar": solar,

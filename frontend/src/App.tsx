@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import {
   AlertTriangle,
@@ -2759,21 +2759,165 @@ function MarketIndicatorTab({
 }
 
 function MarketDemandTab({ summary }: { summary: MarketSummary }) {
-  const demandRows = (summary.decision_layer?.demand_family ?? []).map((item) => [
+  const decision = summary.industry?.decision
+  if (!decision?.families?.length) return <UnavailableTab title="Industria" />
+
+  const indexValue = (value: string | null | undefined) => {
+    if (value === null || value === undefined || value === '') return 'Sem dados'
+    const number = numericValue(value)
+    const sign = number > 0 ? '+' : ''
+    return `${sign}${marketNumber(number, 0)}`
+  }
+  const cardDisplay = (item: NonNullable<typeof decision>['cards'][number]) => {
+    if (item.unit === '%') return signedMarketPercent(item.value)
+    if (item.unit === 'indice') return marketValue(item.value, 'indice')
+    return marketValue(item.value, item.unit)
+  }
+  const cardDetail = (item: NonNullable<typeof decision>['cards'][number]) => {
+    if (item.unit === '%') return `${item.detail ?? 'YoY'} | ${item.source ?? 'Fonte'} | ${item.period_label ?? 'Sem periodo'}`
+    const distance = item.detail ? `${indexValue(item.detail)} vs 50` : 'Sem distancia'
+    return `${distance} | ${item.source ?? 'Fonte'} | ${item.period_label ?? 'Sem periodo'}`
+  }
+  const demandChart = decision.demand_chart.map((item) => ({
+    period_label: item.period ? monthLabel(String(item.period).slice(0, 7)) : String(item.period_label ?? 'Periodo'),
+    CHAPAS: nullableNumericValue(item.CHAPAS),
+    'TUBOS / METALONS': nullableNumericValue(item['TUBOS / METALONS']),
+    PERFIS: nullableNumericValue(item.PERFIS),
+    TELHAS: nullableNumericValue(item.TELHAS),
+  }))
+  const productionChart = decision.production_chart.map((item) => ({
+    period_label: item.period ? monthLabel(String(item.period).slice(0, 7)) : String(item.period_label ?? 'Periodo'),
+    produtos_metal: nullableNumericValue(item.produtos_metal),
+    maquinas: nullableNumericValue(item.maquinas),
+    metalurgia: nullableNumericValue(item.metalurgia),
+  }))
+  const expectationsChart = decision.expectations_chart.map((item) => ({
+    period_label: item.period ? monthLabel(String(item.period).slice(0, 7)) : String(item.period_label ?? 'Periodo'),
+    demanda: nullableNumericValue(item.demanda),
+    compras: nullableNumericValue(item.compras),
+    insumos_construcao: nullableNumericValue(item.insumos_construcao),
+    neutral: 50,
+  }))
+  const familyRows = decision.families.map((item) => [
     item.family,
     item.classification,
-    item.score === null || item.score === undefined ? 'Sem score' : formatNumber(item.score),
-    `${formatNumber(item.available_components_count)} drivers`,
-    item.period ? monthLabel(item.period.slice(0, 7)) : 'Sem periodo',
+    indexValue(item.index),
+    `${indexValue(item.trend_3m)} ${item.trend_direction}`,
+    String(item.positive_drivers),
+    String(item.negative_drivers),
+    item.coverage,
   ])
+  const readingRows = decision.readings.map((item) => [item.text])
+  const driverLabels = Array.from(new Set(decision.heatmap.map((item) => item.driver)))
+  const families = decision.families.map((item) => item.family)
+  const heatmapValue = (family: string, driver: string) => decision.heatmap.find((item) => item.family === family && item.driver === driver)
+  const signalLabel = (signal: number | null | undefined) => (signal === 1 ? '+1' : signal === -1 ? '-1' : signal === 0 ? '0' : 'N/D')
+  const signalClass = (signal: number | null | undefined) => (signal === 1 ? 'positive' : signal === -1 ? 'negative' : signal === 0 ? 'neutral' : 'missing')
+
   return (
     <>
+      <section className="kpi-grid">
+        {decision.cards.map((item) => (
+          <Kpi
+            key={item.id}
+            title={item.title}
+            displayValue={cardDisplay(item)}
+            detail={cardDetail(item)}
+            icon={<Gauge />}
+          />
+        ))}
+      </section>
       <section className="dashboard-grid">
         <Panel title="Demanda por familia" icon={<Gauge size={17} />} wide>
-          <DataTable columns={['Familia', 'Classificacao', 'Score', 'Base', 'Periodo']} rows={demandRows} empty="Demanda por familia ainda nao recalculada" />
+          <DataTable columns={['Familia', 'Sinal atual', 'Indice', '3M', 'Drivers +', 'Drivers -', 'Cobertura']} rows={familyRows} empty="Demanda por familia ainda nao recalculada" />
+        </Panel>
+
+        <Panel title="Evolucao da demanda por familia" icon={<LineChartIcon size={17} />} wide>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <ReLineChart data={demandChart}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="period_label" />
+                <YAxis domain={[-100, 100]} />
+                <Tooltip formatter={(value) => [indexValue(String(value)), 'Indice']} />
+                <Legend verticalAlign="bottom" height={24} />
+                <ReferenceLine y={30} stroke="#16a34a" strokeDasharray="4 4" />
+                <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="3 3" />
+                <ReferenceLine y={-30} stroke="#dc2626" strokeDasharray="4 4" />
+                <Line type="monotone" dataKey="CHAPAS" name="Chapas" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+                <Line type="monotone" dataKey="TUBOS / METALONS" name="Tubos/Metalons" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                <Line type="monotone" dataKey="PERFIS" name="Perfis" stroke="#0f766e" strokeWidth={3} dot={{ r: 2 }} />
+                <Line type="monotone" dataKey="TELHAS" name="Telhas" stroke="#9333ea" strokeWidth={3} dot={{ r: 2 }} />
+              </ReLineChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </Panel>
+
+        <Panel title="Heatmap de drivers" icon={<TableProperties size={17} />} wide>
+          <div className="driver-heatmap" style={{ gridTemplateColumns: `150px repeat(${driverLabels.length}, minmax(92px, 1fr))` }}>
+            <div className="driver-heatmap-head">Familia</div>
+            {driverLabels.map((driver) => (
+              <div key={driver} className="driver-heatmap-head">{driver}</div>
+            ))}
+            {families.map((family) => (
+              <Fragment key={family}>
+                <div key={`${family}-label`} className="driver-heatmap-family">{family}</div>
+                {driverLabels.map((driver) => {
+                  const cell = heatmapValue(family, driver)
+                  return (
+                    <div
+                      key={`${family}-${driver}`}
+                      className={`driver-heatmap-cell ${signalClass(cell?.signal)}`}
+                      title={`${driver} | peso ${cell?.weight ?? '0'}% | valor ${cell?.value ?? 'N/D'} | YoY ${signedMarketPercent(cell?.yoy)}`}
+                    >
+                      {signalLabel(cell?.signal)}
+                    </div>
+                  )
+                })}
+              </Fragment>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Producao dos setores consumidores" icon={<BarChart3 size={17} />}>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <ReLineChart data={productionChart}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="period_label" />
+                <YAxis tickFormatter={(value) => marketValue(String(value), 'indice')} />
+                <Tooltip formatter={(value, name) => [marketValue(String(value), 'indice'), name]} />
+                <Legend verticalAlign="bottom" height={24} />
+                <Line type="monotone" dataKey="produtos_metal" name="Produtos de Metal" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+                <Line type="monotone" dataKey="maquinas" name="Maquinas" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                <Line type="monotone" dataKey="metalurgia" name="Metalurgia" stroke="#0f766e" strokeWidth={3} dot={{ r: 2 }} />
+              </ReLineChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </Panel>
+
+        <Panel title="Expectativas CNI" icon={<Gauge size={17} />}>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <ReLineChart data={expectationsChart}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="period_label" />
+                <YAxis domain={[40, 60]} tickFormatter={(value) => marketValue(String(value), 'indice')} />
+                <Tooltip formatter={(value, name) => [marketValue(String(value), 'indice'), name]} />
+                <Legend verticalAlign="bottom" height={24} />
+                <ReferenceLine y={50} stroke="#6b7280" strokeDasharray="4 4" />
+                <Line type="monotone" dataKey="demanda" name="Demanda" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+                <Line type="monotone" dataKey="compras" name="Compras industria" stroke="#F18800" strokeWidth={3} dot={{ r: 2 }} />
+                <Line type="monotone" dataKey="insumos_construcao" name="Insumos construcao" stroke="#0f766e" strokeWidth={3} dot={{ r: 2 }} />
+              </ReLineChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </Panel>
+
+        <Panel title="Leituras para decisao" icon={<CheckCircle2 size={17} />} wide>
+          <DataTable columns={['Leitura']} rows={readingRows} empty="Sem leituras geradas para o periodo" />
         </Panel>
       </section>
-      <MarketIndicatorTab title="Industria" icon={<Gauge size={17} />} data={summary.industry} unitFallback="indice" />
     </>
   )
 }
