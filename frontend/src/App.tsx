@@ -88,6 +88,7 @@ type AttendanceSummary = NonNullable<DashboardSummary['attendance_summary']>
 type CollaboratorRankingRow = NonNullable<AttendanceSummary['ranking_colaboradores']>[number]
 type RegionRankingRow = NonNullable<AttendanceSummary['ranking_regioes']>[number]
 type MarketSummary = NonNullable<DashboardSummary['market_summary']>
+type DriveSpreadsheetSummary = NonNullable<DashboardSummary['drive_spreadsheets']>['latest_by_type'][string]
 type MarketFilterState = {
   dateFrom: string
   dateTo: string
@@ -114,6 +115,13 @@ function money(value: number | string | null | undefined) {
     currency: 'BRL',
     maximumFractionDigits: 0,
   }).format(number)
+}
+
+function dateTimeLabel(value: string | null | undefined) {
+  if (!value) return 'Sem data'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return 'Sem data'
+  return parsed.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
 }
 
 function percent(value: number | null | undefined) {
@@ -446,6 +454,14 @@ function App() {
   const areas = useMemo(() => Array.from(new Set(reports.map((item) => item.area))).sort(), [reports])
   const activeMacro = MACRO_AREAS.find((item) => item.key === macroArea) ?? MACRO_AREAS[0]
   const market = summary?.market_summary
+  const driveSpreadsheetCache = summary?.drive_spreadsheets?.latest_by_type ?? {}
+  const stockSpreadsheetSummaries = ['ESTOQUE_DISPONIVEL', 'ENVELHECIMENTO_ESTOQUE', 'ESTOQUE']
+    .map((type) => driveSpreadsheetCache[type])
+    .filter(Boolean) as DriveSpreadsheetSummary[]
+  const purchaseSpreadsheetSummaries = ['COTACAO']
+    .map((type) => driveSpreadsheetCache[type])
+    .filter(Boolean) as DriveSpreadsheetSummary[]
+  const logisticsSpreadsheetSummaries: DriveSpreadsheetSummary[] = []
   const marketAvailableTabsKey = (market?.available_tabs ?? ['market-overview']).join('|')
   const activeTabs = useMemo(() => {
     const tabs = TABS_BY_MACRO[macroArea]
@@ -1734,8 +1750,16 @@ function App() {
         </>
       )}
 
-      {macroArea === 'business' && ['stock', 'purchases', 'logistics'].includes(intelligenceTab) && (
-        <UnavailableTab title={activeTabLabel} />
+      {macroArea === 'business' && intelligenceTab === 'stock' && (
+        <SpreadsheetBackedTab title="Estoque" sheets={stockSpreadsheetSummaries} />
+      )}
+
+      {macroArea === 'business' && intelligenceTab === 'purchases' && (
+        <SpreadsheetBackedTab title="Compras" sheets={purchaseSpreadsheetSummaries} />
+      )}
+
+      {macroArea === 'business' && intelligenceTab === 'logistics' && (
+        <SpreadsheetBackedTab title="Logistica" sheets={logisticsSpreadsheetSummaries} />
       )}
 
       {macroArea === 'market' && (
@@ -2181,6 +2205,117 @@ function UnavailableTab({ title }: { title: string }) {
         </div>
       </Panel>
     </section>
+  )
+}
+
+function SpreadsheetBackedTab({ title, sheets }: { title: string; sheets: DriveSpreadsheetSummary[] }) {
+  if (!sheets.length) return <UnavailableTab title={title} />
+
+  const totalRows = sheets.reduce((sum, sheet) => sum + Number(sheet.row_count || sheet.payload?.rows || 0), 0)
+  const latest = [...sheets].sort((a, b) => String(b.drive_modified_time || '').localeCompare(String(a.drive_modified_time || '')))[0]
+  const numericTotals = sheets.flatMap((sheet) =>
+    (sheet.payload?.numeric_totals ?? []).slice(0, 6).map((item) => ({
+      ...item,
+      origem: sheet.detected_type,
+      arquivo: sheet.drive_file_name,
+    })),
+  )
+
+  return (
+    <>
+      <section className="kpi-grid">
+        <Kpi title="Planilhas lidas" value={sheets.length} detail="Fontes reconhecidas no Drive" icon={<Database />} />
+        <Kpi title="Linhas analisadas" value={totalRows} detail="Resumo compacto, sem bruto no banco" icon={<TableProperties />} />
+        <Kpi title="Arquivo mais recente" displayValue={dateTimeLabel(latest?.drive_modified_time)} detail={latest?.drive_file_name ?? 'Sem arquivo'} icon={<CalendarDays />} />
+      </section>
+
+      <section className="dashboard-grid">
+        <Panel title="Fontes carregadas" icon={<Database size={17} />} wide>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Arquivo</th>
+                  <th>Linhas</th>
+                  <th>Atualizado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sheets.map((sheet) => (
+                  <tr key={`${sheet.detected_type}:${sheet.drive_file_name}`}>
+                    <td>{sheet.detected_type}</td>
+                    <td>{sheet.drive_file_name}</td>
+                    <td>{formatNumber(sheet.row_count || sheet.payload?.rows)}</td>
+                    <td>{dateTimeLabel(sheet.drive_modified_time)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        <Panel title="Totais numericos detectados" icon={<BarChart3 size={17} />} wide>
+          {numericTotals.length ? (
+            <details open>
+              <summary>Ver campos numericos provaveis</summary>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Origem</th>
+                      <th>Campo</th>
+                      <th>Soma</th>
+                      <th>Preenchidos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {numericTotals.map((item) => (
+                      <tr key={`${item.origem}:${item.campo}`}>
+                        <td>{item.origem}</td>
+                        <td>{item.campo}</td>
+                        <td>{formatNumber(item.soma)}</td>
+                        <td>{formatNumber(item.preenchidos)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          ) : (
+            <div className="empty-state compact">
+              <strong>Campos numericos ainda nao identificados</strong>
+            </div>
+          )}
+        </Panel>
+
+        {sheets.map((sheet) => (
+          <Panel key={sheet.detected_type} title={`Campos de ${sheet.detected_type}`} icon={<TableProperties size={17} />}>
+            <details>
+              <summary>{formatNumber(sheet.payload?.headers?.length ?? 0)} campos encontrados</summary>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Campo</th>
+                      <th>Linhas</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(sheet.payload?.headers ?? []).slice(0, 20).map((header) => (
+                      <tr key={header.campo}>
+                        <td>{header.campo}</td>
+                        <td>{formatNumber(header.linhas)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </Panel>
+        ))}
+      </section>
+    </>
   )
 }
 

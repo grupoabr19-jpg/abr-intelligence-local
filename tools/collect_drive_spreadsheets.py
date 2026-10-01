@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import sys
+import unicodedata
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -45,8 +47,48 @@ GENERATED_ARCHIVE_SUFFIXES = (
 )
 DEFAULT_SOURCE_FOLDER_ID = "1e-ZFOdh5PpIOjX1xFU87uhIKHveL5EpU"
 DEFAULT_SOURCE_FOLDER_URL = f"https://drive.google.com/drive/folders/{DEFAULT_SOURCE_FOLDER_ID}"
-BUSINESS_SPREADSHEET_KEYWORDS = ("margem", "gabr", "gest", "produ", "ranking")
+BUSINESS_SPREADSHEET_KEYWORDS = (
+    "margem",
+    "gabr",
+    "gest",
+    "produ",
+    "ranking",
+    "estoque",
+    "envelhecimento",
+    "env estoque",
+    "aging",
+    "disponivel",
+    "cotac",
+    "orcament",
+    "proposta",
+)
 TRUTHY = {"1", "true", "t", "yes", "y", "sim", "s"}
+NUMERIC_COLUMN_HINTS = (
+    "valor",
+    "total",
+    "qtd",
+    "quant",
+    "saldo",
+    "estoque",
+    "peso",
+    "kg",
+    "ton",
+    "preco",
+    "custo",
+)
+CATEGORY_COLUMN_HINTS = (
+    "produto",
+    "familia",
+    "grupo",
+    "vendedor",
+    "cliente",
+    "status",
+    "situacao",
+    "cidade",
+    "uf",
+    "deposito",
+    "empresa",
+)
 
 
 def env_bool(env: dict[str, str], key: str, default: bool = False) -> bool:
@@ -68,6 +110,31 @@ def clean_cell(value: Any) -> str:
     return str(value).replace("\n", " / ").strip()
 
 
+def normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    return "".join(char for char in normalized if not unicodedata.combining(char)).lower().strip()
+
+
+def parse_compact_number(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if number == number and number not in (float("inf"), float("-inf")) else None
+    text = str(value).strip()
+    if not text:
+        return None
+    cleaned = "".join(char for char in text if char.isdigit() or char in ",.-")
+    if not cleaned or cleaned in {"-", ".", ","}:
+        return None
+    if "," in cleaned:
+        cleaned = cleaned.replace(".", "").replace(",", ".")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
 def file_key(file_info: dict[str, Any]) -> str:
     modified = file_info.get("modifiedTime") or "sem_data"
     return f"{file_info['id']}:{modified}"
@@ -76,10 +143,10 @@ def file_key(file_info: dict[str, Any]) -> str:
 def is_supported_spreadsheet(file_info: dict[str, Any]) -> bool:
     mime_type = file_info.get("mimeType") or ""
     name = file_info.get("name") or ""
-    lowered = name.lower()
+    lowered = normalize_text(name)
     if any(lowered.endswith(suffix) for suffix in GENERATED_ARCHIVE_SUFFIXES):
         return False
-    if lowered.startswith("_") or "nao excluir" in lowered or "não excluir" in lowered:
+    if lowered.startswith("_") or "nao excluir" in lowered:
         return False
     if not any(keyword in lowered for keyword in BUSINESS_SPREADSHEET_KEYWORDS):
         return False
@@ -219,8 +286,113 @@ def finish_ingestion(
     )
 
 
+def build_compact_summary(
+    *,
+    file_info: dict[str, Any],
+    detected_type: str,
+    worksheets: list[dict[str, Any]],
+    staging_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    header_counter: Counter[str] = Counter()
+    numeric_totals: dict[str, dict[str, float | int]] = {}
+    category_counts: dict[str, Counter[str]] = {}
+    sample_rows: list[dict[str, Any]] = []
+
+    for staging_row in staging_rows:
+        payload = staging_row.get("payload_original") or {}
+        if not isinstance(payload, dict):
+            continue
+        if len(sample_rows) < 3:
+            sample_rows.append({key: payload.get(key) for key in list(payload.keys())[:12]})
+        for key, value in payload.items():
+            if key in {"_drive_file_id", "_drive_file_name", "_sheet_name", "_row_number", "_detected_type"}:
+                continue
+            header_counter[key] += 1
+            normalized_key = normalize_text(key)
+            if any(hint in normalized_key for hint in NUMERIC_COLUMN_HINTS):
+                number = parse_compact_number(value)
+                if number is not None:
+                    stats = numeric_totals.setdefault(key, {"sum": 0.0, "count": 0})
+                    stats["sum"] = float(stats["sum"]) + number
+                    stats["count"] = int(stats["count"]) + 1
+            if any(hint in normalized_key for hint in CATEGORY_COLUMN_HINTS):
+                text = str(value or "").strip()
+                if text:
+                    category_counts.setdefault(key, Counter())[text[:120]] += 1
+
+    numeric_rows = [
+        {"campo": key, "soma": round(float(value["sum"]), 2), "preenchidos": int(value["count"])}
+        for key, value in numeric_totals.items()
+        if int(value["count"]) > 0
+    ]
+    numeric_rows.sort(key=lambda item: abs(float(item["soma"])), reverse=True)
+
+    category_rows = []
+    for key, counter in category_counts.items():
+        if not counter:
+            continue
+        category_rows.append(
+            {
+                "campo": key,
+                "valores": [{"valor": value, "linhas": count} for value, count in counter.most_common(8)],
+            }
+        )
+    category_rows.sort(key=lambda item: sum(value["linhas"] for value in item["valores"]), reverse=True)
+
+    return {
+        "detected_type": detected_type,
+        "drive_file_id": file_info["id"],
+        "drive_file_name": file_info.get("name"),
+        "drive_modified_time": file_info.get("modifiedTime"),
+        "source_folder_id": file_info.get("source_folder_id") or file_info.get("parent_id"),
+        "source_folder_url": file_info.get("source_folder_url"),
+        "rows": len(staging_rows),
+        "worksheets": worksheets,
+        "headers": [{"campo": key, "linhas": count} for key, count in header_counter.most_common(30)],
+        "numeric_totals": numeric_rows[:16],
+        "top_categories": category_rows[:8],
+        "sample_rows": sample_rows,
+    }
+
+
+def upsert_dashboard_cache(cur: Any, file_info: dict[str, Any], detected_type: str, payload: dict[str, Any]) -> None:
+    cache_key = f"drive_spreadsheet:{detected_type}:{file_info['id']}:{file_info.get('modifiedTime') or 'sem_data'}"
+    cur.execute(
+        """
+        insert into public.dashboard_drive_spreadsheet_cache(
+          cache_key, detected_type, drive_file_id, drive_file_name,
+          drive_modified_time, row_count, payload, refreshed_at
+        )
+        values (%s, %s, %s, %s, %s::timestamptz, %s, %s::jsonb, now())
+        on conflict (cache_key)
+        do update set
+          detected_type = excluded.detected_type,
+          drive_file_name = excluded.drive_file_name,
+          drive_modified_time = excluded.drive_modified_time,
+          row_count = excluded.row_count,
+          payload = excluded.payload,
+          refreshed_at = now()
+        """,
+        (
+            cache_key,
+            detected_type,
+            file_info["id"],
+            file_info.get("name") or file_info["id"],
+            file_info.get("modifiedTime"),
+            int(payload.get("rows") or 0),
+            Json(payload),
+        ),
+    )
+
+
 def detect_type(file_name: str, sheets: list[str]) -> str:
-    probe = f"{file_name} {' '.join(sheets)}".lower()
+    probe = normalize_text(f"{file_name} {' '.join(sheets)}")
+    if "envelhecimento" in probe or "aging" in probe or ("env" in probe and "estoque" in probe):
+        return "ENVELHECIMENTO_ESTOQUE"
+    if "estoque" in probe and ("disponivel" in probe or "saldo" in probe):
+        return "ESTOQUE_DISPONIVEL"
+    if "cotac" in probe or "orcament" in probe or "proposta" in probe:
+        return "COTACAO"
     if "gest" in probe and ("produ" in probe or "prod" in probe):
         return "GESTAO_PRODUCAO"
     if "margem" in probe or "gabr" in probe:
@@ -522,6 +694,14 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
                             drive_file_name=file_info.get("name") or file_info["id"],
                             sync_id=sync_id,
                         )
+                    compact_summary = build_compact_summary(
+                        file_info=file_info,
+                        detected_type=detected,
+                        worksheets=worksheets,
+                        staging_rows=staging_rows,
+                    )
+                    if execute:
+                        upsert_dashboard_cache(cur, file_info, detected, compact_summary)
                     inserted = insert_staging_rows(cur, staging_rows) if execute and store_raw_rows else 0
                     finish_ingestion(
                         cur,

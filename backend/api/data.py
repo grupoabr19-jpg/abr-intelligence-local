@@ -5340,6 +5340,43 @@ def market_summary(
     }
 
 
+def drive_spreadsheet_dashboard_cache() -> dict[str, Any]:
+    env = load_env()
+    try:
+        with connect_database(env) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select detected_type, drive_file_name, drive_modified_time, row_count, payload, refreshed_at
+                    from public.dashboard_drive_spreadsheet_cache
+                    order by detected_type, drive_modified_time desc nulls last, refreshed_at desc
+                    """
+                )
+                rows = cur.fetchall()
+    except Exception:
+        return {"available": False, "latest_by_type": {}, "history": []}
+
+    latest_by_type: dict[str, dict[str, Any]] = {}
+    history: list[dict[str, Any]] = []
+    for detected_type, file_name, modified_time, row_count, payload, refreshed_at in rows:
+        item = {
+            "detected_type": detected_type,
+            "drive_file_name": file_name,
+            "drive_modified_time": modified_time.isoformat() if modified_time else None,
+            "row_count": row_count,
+            "payload": payload if isinstance(payload, dict) else {},
+            "refreshed_at": refreshed_at.isoformat() if refreshed_at else None,
+        }
+        history.append(item)
+        latest_by_type.setdefault(str(detected_type), item)
+
+    return {
+        "available": bool(latest_by_type),
+        "latest_by_type": latest_by_type,
+        "history": history[:20],
+    }
+
+
 def internal_dashboard_summary(
     date_from: date | None = None,
     date_to: date | None = None,
@@ -5365,6 +5402,7 @@ def internal_dashboard_summary(
 
     history: list[dict[str, Any]] = []
     staging_by_entity: list[dict[str, Any]] = []
+    drive_spreadsheets: dict[str, Any] = {"available": False, "latest_by_type": {}, "history": []}
     try:
         env = load_env()
         with connect_database(env) as conn:
@@ -5412,6 +5450,10 @@ def internal_dashboard_summary(
                 ]
     except BaseException as exc:
         warnings.append(f"Banco indisponivel para resumo ao vivo: {type(exc).__name__}: {str(exc)[:160]}")
+    try:
+        drive_spreadsheets = drive_spreadsheet_dashboard_cache()
+    except BaseException as exc:
+        warnings.append(f"Resumo de planilhas do Drive indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
 
     regions: list[dict[str, Any]] = []
     sales_summary: dict[str, Any] = {}
@@ -5464,6 +5506,7 @@ def internal_dashboard_summary(
         "requirements": requirement_rows,
         "external_spreadsheet_sources": requirements["external_spreadsheet_sources"],
         "staging_by_entity": staging_by_entity,
+        "drive_spreadsheets": drive_spreadsheets,
         "recent_history": history,
         "sales_summary": sales_summary,
         "attendance_summary": attendance,

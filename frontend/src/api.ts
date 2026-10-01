@@ -40,6 +40,30 @@ export type DashboardSummary = {
     notes: string
   }>
   staging_by_entity: Array<{ entidade: string; linhas: number }>
+  drive_spreadsheets?: {
+    available: boolean
+    latest_by_type: Record<string, {
+      detected_type: string
+      drive_file_name: string
+      drive_modified_time: string | null
+      row_count: number
+      refreshed_at: string | null
+      payload: {
+        rows?: number
+        worksheets?: Array<{ sheet: string; rows: number; header_row?: number }>
+        headers?: Array<{ campo: string; linhas: number }>
+        numeric_totals?: Array<{ campo: string; soma: number; preenchidos: number }>
+        top_categories?: Array<{ campo: string; valores: Array<{ valor: string; linhas: number }> }>
+      }
+    }>
+    history: Array<{
+      detected_type: string
+      drive_file_name: string
+      drive_modified_time: string | null
+      row_count: number
+      refreshed_at: string | null
+    }>
+  }
   recent_history: Array<{
     entidade: string
     sync_id: string
