@@ -310,8 +310,17 @@ def check_ftp(url: str, timeout: int) -> tuple[bool, dict[str, Any], str | None]
 
 def check_pncp(client: httpx.Client, base_url: str) -> tuple[bool, dict[str, Any], str | None]:
     today = date.today()
-    url = f"{base_url.rstrip('/')}/contratacoes/publicacao"
-    params = {"dataInicial": today.strftime("%Y%m%d"), "dataFinal": today.strftime("%Y%m%d"), "pagina": 1, "tamanhoPagina": 1}
+    normalized_base_url = base_url.rstrip("/")
+    if "/swagger-ui" in normalized_base_url or "/api-docs" in normalized_base_url:
+        normalized_base_url = "https://pncp.gov.br/api/consulta/v1"
+    url = f"{normalized_base_url}/contratacoes/publicacao"
+    params = {
+        "dataInicial": today.strftime("%Y%m%d"),
+        "dataFinal": today.strftime("%Y%m%d"),
+        "codigoModalidadeContratacao": "6",
+        "pagina": 1,
+        "tamanhoPagina": 10,
+    }
     response = client.get(url, params=params)
     metadata = {"status_code": response.status_code, "probe_url": str(response.url)}
     if response.status_code == 400:

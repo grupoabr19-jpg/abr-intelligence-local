@@ -4,6 +4,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,21 @@ PNCP_TERMS = {
     "construcao": 1,
     "reforma": 1,
 }
+
+DEFAULT_PNCP_MODALITY_CODES = (
+    "1",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
+    "12",
+    "13",
+)
 
 
 def normalize_text(value: str) -> str:
@@ -106,7 +122,10 @@ def collect_caged(dry_run: bool = False) -> dict[str, Any]:
 
 
 def pncp_base_url(env: dict[str, str]) -> str:
-    return (env.get("PNCP_API_BASE_URL") or "https://pncp.gov.br/api/consulta/v1").rstrip("/")
+    configured = (env.get("PNCP_API_BASE_URL") or "https://pncp.gov.br/api/consulta/v1").strip().rstrip("/")
+    if "/swagger-ui" in configured or "/api-docs" in configured:
+        return "https://pncp.gov.br/api/consulta/v1"
+    return configured
 
 
 def pncp_rows(payload: Any) -> list[dict[str, Any]]:
@@ -124,32 +143,42 @@ def collect_pncp(date_from: date, date_to: date, dry_run: bool = False) -> dict[
         with conn.cursor() as cur:
             cur.execute("select codigo from public.pncp_modality_codes where ativo = true")
             modalities = [str(row[0]) for row in cur.fetchall()]
-            if not modalities:
-                if not dry_run:
-                    run_id = start_run(cur, "pncp_consulta", {"reason": "pncp_modality_codes vazia"})
-                    finish_run(
-                        cur,
-                        run_id,
-                        status="parcial",
-                        error="Nenhuma modalidade PNCP ativa aprovada. PNCP nao foi consultado para evitar classificacao indevida.",
-                    )
-                    conn.commit()
-                return {
-                    "source_key": "pncp_consulta",
-                    "status": "sem_modalidade_aprovada",
-                    "message": "Cadastre modalidades ativas em pncp_modality_codes antes de processar PNCP.",
-                }
+    modality_filter = "configured" if modalities else "default_safe_set"
+    modality_codes = modalities or list(DEFAULT_PNCP_MODALITY_CODES)
 
-    params = {
-        "dataInicial": date_from.strftime("%Y%m%d"),
-        "dataFinal": date_to.strftime("%Y%m%d"),
-        "pagina": 1,
-        "tamanhoPagina": 50,
-    }
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    skipped_modalities: list[dict[str, Any]] = []
     with httpx.Client(timeout=60, follow_redirects=True, headers={"user-agent": "ABR-Intelligence/1.0"}) as client:
-        response = client.get(f"{pncp_base_url(env)}/contratacoes/publicacao", params=params)
-        response.raise_for_status()
-        rows = [row for row in pncp_rows(response.json()) if str(row.get("modalidadeId") or row.get("modalidadeCodigo") or "") in modalities]
+        for modality_code in modality_codes:
+            params = {
+                "dataInicial": date_from.strftime("%Y%m%d"),
+                "dataFinal": date_to.strftime("%Y%m%d"),
+                "codigoModalidadeContratacao": modality_code,
+                "pagina": 1,
+                "tamanhoPagina": 50,
+            }
+            response = None
+            for attempt in range(3):
+                response = client.get(f"{pncp_base_url(env)}/contratacoes/publicacao", params=params)
+                if response.status_code != 429:
+                    break
+                time.sleep(2 + attempt * 3)
+            if response is None:
+                continue
+            if response.status_code == 204:
+                time.sleep(0.4)
+                continue
+            if response.status_code == 429:
+                skipped_modalities.append({"codigo": modality_code, "status_code": response.status_code})
+                time.sleep(0.8)
+                continue
+            response.raise_for_status()
+            for row in pncp_rows(response.json()):
+                pncp_id = str(row.get("numeroControlePNCP") or row.get("id") or row.get("sequencialCompra") or "")
+                if pncp_id:
+                    rows_by_id[pncp_id] = row
+            time.sleep(0.4)
+    rows = list(rows_by_id.values())
 
     opportunities = []
     for row in rows:
@@ -175,11 +204,31 @@ def collect_pncp(date_from: date, date_to: date, dry_run: bool = False) -> dict[
         )
 
     if dry_run:
-        return {"source_key": "pncp_consulta", "status": "dry_run", "rows_found": len(rows), "opportunities_found": len(opportunities)}
+        return {
+            "source_key": "pncp_consulta",
+            "status": "dry_run",
+            "base_url": pncp_base_url(env),
+            "modality_filter": modality_filter,
+            "modalities": modality_codes,
+            "skipped_modalities": skipped_modalities,
+            "rows_found": len(rows),
+            "opportunities_found": len(opportunities),
+        }
 
     with connect_database(env) as conn:
         with conn.cursor() as cur:
-            run_id = start_run(cur, "pncp_consulta", {"date_from": date_from.isoformat(), "date_to": date_to.isoformat(), "modalities": modalities})
+            run_id = start_run(
+                cur,
+                "pncp_consulta",
+                {
+                    "date_from": date_from.isoformat(),
+                    "date_to": date_to.isoformat(),
+                    "modalities": modality_codes,
+                    "skipped_modalities": skipped_modalities,
+                    "modality_filter": modality_filter,
+                    "base_url": pncp_base_url(env),
+                },
+            )
             try:
                 for item in opportunities:
                     cur.execute(
@@ -254,7 +303,16 @@ def collect_pncp(date_from: date, date_to: date, dry_run: bool = False) -> dict[
                 finish_run(cur, run_id, status="erro", found=len(rows), inserted=0, error=f"{type(exc).__name__}: {exc}")
                 conn.commit()
                 raise
-    return {"source_key": "pncp_consulta", "status": "sucesso", "rows_found": len(rows), "opportunities_inserted": len(opportunities)}
+    return {
+        "source_key": "pncp_consulta",
+        "status": "sucesso",
+        "base_url": pncp_base_url(env),
+        "modality_filter": modality_filter,
+        "modalities": modality_codes,
+        "skipped_modalities": skipped_modalities,
+        "rows_found": len(rows),
+        "opportunities_inserted": len(opportunities),
+    }
 
 
 def parse_args() -> argparse.Namespace:
