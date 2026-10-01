@@ -32,7 +32,7 @@ PENDING_MARKET_SOURCES = (
     "ANFAVEA",
 )
 
-STALE_REFRESH_MINUTES = 30
+STALE_REFRESH_MINUTES = int(os.environ.get("ABR_REFRESH_STALE_MINUTES", "240") or "240")
 AUTO_REFRESH_CHECK_SECONDS = int(os.environ.get("ABR_AUTO_REFRESH_CHECK_SECONDS", "1800") or "1800")
 AUTO_REFRESH_START_DELAY_SECONDS = int(os.environ.get("ABR_AUTO_REFRESH_START_DELAY_SECONDS", "20") or "20")
 
@@ -287,11 +287,15 @@ class DashboardRefreshManager:
                 "900",
             ]
         if key == "sales_cache":
+            cache_date_from = date.fromisoformat(job.date_from)
+            if job.mode == "auto":
+                cache_date_to = date.fromisoformat(job.date_to)
+                cache_date_from = date(cache_date_to.year, 1, 1)
             return [
                 sys.executable,
                 str(ROOT / "tools" / "refresh_dashboard_sales_cache.py"),
                 "--date-from",
-                job.date_from,
+                cache_date_from.isoformat(),
                 "--date-to",
                 job.date_to,
             ]
@@ -360,7 +364,7 @@ class DashboardRefreshManager:
     @staticmethod
     def _default_auto_refresh_range() -> tuple[date, date]:
         yesterday = date.today() - timedelta(days=1)
-        return date(yesterday.year, 1, 1), yesterday
+        return yesterday, yesterday
 
     def _source_freshness(self) -> list[dict[str, Any]]:
         today = date.today()
@@ -686,6 +690,15 @@ class DashboardRefreshManager:
                 json.dumps(step.result, ensure_ascii=False) if step.result is not None else None,
                 step.error,
             ),
+        )
+        cur.execute(
+            """
+            update public.dashboard_refresh_runs
+            set updated_at = now()
+            where job_id = %s::uuid
+              and status in ('queued', 'running')
+            """,
+            (job_id,),
         )
 
     def _stored_jobs(self) -> dict[str, Any]:

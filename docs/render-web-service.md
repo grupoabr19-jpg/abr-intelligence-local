@@ -53,6 +53,14 @@ ABR_ENABLE_WEB_AUTO_REFRESH=false
 ABR_ENABLE_WEB_REFRESH_JOBS=false
 ```
 
+Para execucoes longas fora do Web Service, o orquestrador usa heartbeat por etapa e considera um job stale somente depois de:
+
+```env
+ABR_REFRESH_STALE_MINUTES=240
+```
+
+No modo automatico, a extracao operacional busca somente o dia anterior para evitar recarregar o ano inteiro no Aster todos os dias. Depois da ingestao, o cache comercial do dashboard e recalculado no acumulado do ano ate a data final da carga.
+
 Com isso:
 
 - o dashboard nao inicia coleta pesada no startup;
