@@ -646,9 +646,49 @@ export type DashboardSummary = {
     }
     solar?: {
       latest_period: string
-      kpis: { last_12_new_mw: string | null; last_12_installations: number; cumulative_mw: string | null }
-      monthly: Array<{ period: string; period_label: string; new_mw: string | null; cumulative_mw: string | null; installations: number }>
-      top_regions: Array<{ uf: string; new_mw: string | null; installations: number }>
+      last_complete_month?: string
+      partial_periods?: string[]
+      unit_metadata?: {
+        field_name: string
+        raw_unit: string
+        normalized_unit: string
+        scale_factor: string
+        source_resource: string
+        validated_at: string
+      }
+      kpis: {
+        last_12_new_mw: string | null
+        last_12_installations: number
+        average_kw_per_installation?: string | null
+        mw_growth_yoy?: string | null
+        leader_pole?: string | null
+        leader_pole_mw?: string | null
+        leader_pole_yoy?: string | null
+        accelerating_poles?: number
+      }
+      signal?: {
+        label: string
+        score: number | null
+        components: Record<string, { value: string | null; signal: number | null }>
+      }
+      monthly: Array<{ period: string; period_label: string; new_mw: string | null; new_mw_ma3?: string | null; installations: number; is_partial_period?: boolean }>
+      radar_by_pole?: Array<{
+        polo: string
+        new_mw_12m: string | null
+        mw_yoy: string | null
+        installations_12m: number
+        installations_yoy: string | null
+        average_kw_per_installation: string | null
+        share: string | null
+        signal: string
+        coverage: string
+        latest_period: string | null
+      }>
+      scatter?: Array<{ polo: string; new_mw_12m: string | null; mw_yoy: string | null; installations_12m: number; signal: string }>
+      classes?: Array<{ class: string; new_mw_12m: string | null; installations_12m: number; average_kw_per_installation: string | null }>
+      readings?: Array<{ key: string; text: string; severity: string }>
+      quality?: { message?: string; coverage?: string; sanity_status?: string }
+      top_regions?: Array<{ uf: string; new_mw: string | null; installations: number }>
     }
   }
   sales_regions: Array<{ canal: string; regiao: string; linhas: number; valor_total: string }>

@@ -129,7 +129,10 @@ function minutes(value: number | null | undefined) {
 function numericValue(value: number | string | null | undefined) {
   if (value === null || value === undefined) return 0
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
-  const parsed = Number(value.replace(/[^\d,-.]/g, '').replace(/\./g, '').replace(',', '.'))
+  const cleaned = value.replace(/[^\d,.-]/g, '')
+  const parsed = cleaned.includes(',')
+    ? Number(cleaned.replace(/\./g, '').replace(',', '.'))
+    : Number(cleaned)
   return Number.isFinite(parsed) ? parsed : 0
 }
 
@@ -252,7 +255,7 @@ function marketDefaultFilter(tab: IntelligenceTab): MarketFilterState {
     industry: 24,
     construction: 24,
     regional: 12,
-    solar: 12,
+    solar: 24,
   }
   const daysByTab: Partial<Record<IntelligenceTab, number>> = {
     opportunities: 90,
@@ -2207,6 +2210,7 @@ function MarketFilterBar({
   const showRelevance = tab === 'opportunities'
   const showSnapshot = tab === 'competition'
   const steelShortcuts = tab === 'steel-market' ? [12, 24, 36] : []
+  const solarShortcuts = tab === 'solar' ? [12, 24, 36] : []
   const priceShortcuts = tab === 'market-prices' ? [
     { label: '30D', patch: { dateFrom: dateDaysAgo(30, value.dateTo), dateTo: value.dateTo } },
     { label: '90D', patch: { dateFrom: dateDaysAgo(90, value.dateTo), dateTo: value.dateTo } },
@@ -2242,6 +2246,21 @@ function MarketFilterBar({
       {steelShortcuts.length > 0 && (
         <div className="shortcut-group" aria-label="Atalhos de periodo">
           {steelShortcuts.map((months) => (
+            <button
+              className="ghost-button compact"
+              key={months}
+              type="button"
+              disabled={loading}
+              onClick={() => onChange({ dateFrom: dateMonthsAgo(months, value.dateTo), dateTo: value.dateTo })}
+            >
+              {months}M
+            </button>
+          ))}
+        </div>
+      )}
+      {solarShortcuts.length > 0 && (
+        <div className="shortcut-group" aria-label="Atalhos de periodo">
+          {solarShortcuts.map((months) => (
             <button
               className="ghost-button compact"
               key={months}
@@ -3460,45 +3479,146 @@ function MarketOpportunitiesTab({ summary }: { summary: MarketSummary }) {
 function MarketSolarTab({ summary }: { summary: MarketSummary }) {
   const solar = summary.solar
   if (!solar?.kpis) return <UnavailableTab title="Solar" />
-  const solarSignal = (summary.decision_layer?.cockpit ?? []).find((item) => item.signal_key === 'solar_momentum')
   const monthly = (solar.monthly ?? []).map((item) => ({
     ...item,
     new_mw_numero: nullableNumericValue(item.new_mw),
-    cumulative_mw_numero: nullableNumericValue(item.cumulative_mw),
+    ma3_numero: nullableNumericValue(item.new_mw_ma3),
   }))
-  const regionRows = (solar.top_regions ?? []).map((item) => [
-    item.uf,
-    marketValue(item.new_mw, 'MW'),
-    formatNumber(item.installations),
+  const radarRows = solar.radar_by_pole ?? []
+  const radarChart = radarRows.map((item) => ({
+    ...item,
+    new_mw_numero: numericValue(item.new_mw_12m),
+  }))
+  const scatter = (solar.scatter ?? []).map((item) => ({
+    ...item,
+    new_mw_numero: numericValue(item.new_mw_12m),
+    mw_yoy_numero: nullableNumericValue(item.mw_yoy),
+  }))
+  const signalComponents = solar.signal?.components ?? {}
+  const signalRows = [
+    ['MW novos 12M', percent(nullableNumericValue(signalComponents.mw_growth?.value)), signalComponents.mw_growth?.signal === 1 ? 'positivo' : signalComponents.mw_growth?.signal === -1 ? 'negativo' : 'neutro'],
+    ['Instalacoes 12M', percent(nullableNumericValue(signalComponents.installations_growth?.value)), signalComponents.installations_growth?.signal === 1 ? 'positivo' : signalComponents.installations_growth?.signal === -1 ? 'negativo' : 'neutro'],
+    ['Porte medio', percent(nullableNumericValue(signalComponents.average_size_growth?.value)), signalComponents.average_size_growth?.signal === 1 ? 'positivo' : signalComponents.average_size_growth?.signal === -1 ? 'negativo' : 'neutro'],
+  ]
+  const tableRows = radarRows.map((item) => [
+    item.polo,
+    marketValue(item.new_mw_12m, 'MW'),
+    percent(nullableNumericValue(item.mw_yoy)),
+    formatNumber(item.installations_12m),
+    percent(nullableNumericValue(item.installations_yoy)),
+    item.average_kw_per_installation ? `${marketNumber(item.average_kw_per_installation, 1)} kW` : 'Sem dados',
+    percent(nullableNumericValue(item.share)),
+    item.signal,
+    item.coverage,
+    item.latest_period ? monthLabel(item.latest_period.slice(0, 7)) : 'Sem dados',
   ])
+  const classRows = (solar.classes ?? []).map((item) => [
+    item.class,
+    marketValue(item.new_mw_12m, 'MW'),
+    formatNumber(item.installations_12m),
+    item.average_kw_per_installation ? `${marketNumber(item.average_kw_per_installation, 1)} kW` : 'Sem dados',
+  ])
+  const readingRows = (solar.readings ?? []).map((item) => [item.severity, item.text])
+  const qualityRows = [
+    ['Campo ANEEL', solar.unit_metadata?.field_name ?? 'MdaPotenciaInstaladaKW'],
+    ['Unidade original', solar.unit_metadata?.raw_unit ?? 'kW'],
+    ['Unidade normalizada', solar.unit_metadata?.normalized_unit ?? 'MW'],
+    ['Fator aplicado', solar.unit_metadata?.scale_factor ?? '0.001'],
+    ['Ultimo mes completo', solar.last_complete_month ? monthLabel(solar.last_complete_month.slice(0, 7)) : 'Sem dados'],
+    ['Meses parciais excluidos', (solar.partial_periods ?? []).map((item) => monthLabel(item.slice(0, 7))).join(', ') || 'Nenhum'],
+    ['Cobertura territorial', solar.quality?.coverage === 'uf_apenas' ? 'UF apenas; polo real exige carga municipal' : solar.quality?.coverage ?? 'Sem dados'],
+    ['Sanidade', solar.quality?.sanity_status ?? 'Sem dados'],
+  ]
+  const consolidatedUntil = solar.last_complete_month ? monthLabel(solar.last_complete_month.slice(0, 7)) : monthLabel(solar.latest_period.slice(0, 7))
 
   return (
     <>
       <section className="kpi-grid">
-        <Kpi title="MW novos 12 meses" displayValue={marketValue(solar.kpis.last_12_new_mw, 'MW')} detail={`Atualizado ate ${monthLabel(solar.latest_period.slice(0, 7))}`} icon={<LineChartIcon />} />
-        <Kpi title="Instalacoes 12 meses" displayValue={formatNumber(solar.kpis.last_12_installations)} detail="ANEEL dados abertos" icon={<CheckCircle2 />} />
-        <Kpi title="Potencia acumulada" displayValue={marketValue(solar.kpis.cumulative_mw, 'MW')} detail="Soma nacional por UF" icon={<Gauge />} />
-        <Kpi title="Sinal 12M" displayValue={solarSignal?.classification ?? 'Sem sinal'} detail={solarSignal?.period ? `ANEEL | ${monthLabel(solarSignal.period.slice(0, 7))}` : 'Top UFs por MW novo'} icon={<TableProperties />} />
+        <Kpi title="MW novos 12M" displayValue={marketValue(solar.kpis.last_12_new_mw, 'MW')} detail={`Consolidado ate ${consolidatedUntil}`} icon={<LineChartIcon />} />
+        <Kpi title="Instalacoes 12M" displayValue={formatNumber(solar.kpis.last_12_installations)} detail="Somente meses completos" icon={<CheckCircle2 />} />
+        <Kpi title="kW medio por instalacao" displayValue={solar.kpis.average_kw_per_installation ? `${marketNumber(solar.kpis.average_kw_per_installation, 1)} kW` : 'Sem dados'} detail="Porte medio das novas conexoes" icon={<Gauge />} />
+        <Kpi title="Crescimento MW 12M" displayValue={percent(nullableNumericValue(solar.kpis.mw_growth_yoy))} detail="12M atuais vs 12M anteriores" icon={<BarChart3 />} />
+        <Kpi title="Polo/regiao lider" displayValue={solar.kpis.leader_pole ?? 'Sem dados'} detail={`${marketValue(solar.kpis.leader_pole_mw, 'MW')} | ${percent(nullableNumericValue(solar.kpis.leader_pole_yoy))}`} icon={<TableProperties />} />
+        <Kpi title="Polos acelerando" displayValue={formatNumber(solar.kpis.accelerating_poles ?? 0)} detail="Growth 12M > 10% com base minima" icon={<Gauge />} />
       </section>
       <section className="dashboard-grid">
-        <Panel title="Geracao solar distribuida" icon={<LineChartIcon size={17} />} wide>
+        <Panel title="Sinal solar 12M" icon={<Gauge size={17} />} wide>
+          <section className="kpi-grid compact-grid">
+            <Kpi title="Solar 12M" displayValue={solar.signal?.label ?? 'Sem sinal'} detail={`Score ${solar.signal?.score ?? 'sem dados'}`} icon={<Gauge />} />
+            <Kpi title="Unidade validada" displayValue={`${solar.unit_metadata?.raw_unit ?? 'kW'} -> ${solar.unit_metadata?.normalized_unit ?? 'MW'}`} detail={`Fator ${solar.unit_metadata?.scale_factor ?? '0.001'}`} icon={<CheckCircle2 />} />
+          </section>
+          <DataTable columns={['Componente', 'Variacao', 'Sinal']} rows={signalRows} empty="Sem componentes de sinal" />
+          {solar.quality?.message && <p className="panel-note">{solar.quality.message}</p>}
+        </Panel>
+        <Panel title="Expansao solar - MW novos" icon={<LineChartIcon size={17} />}>
           <ChartFrame>
             <ResponsiveContainer>
               <ComposedChart data={monthly}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="period_label" />
-                <YAxis yAxisId="left" tickFormatter={(value) => marketValue(String(value), 'MW')} />
-                <YAxis yAxisId="right" orientation="right" tickFormatter={(value) => marketNumber(value, 0)} />
-                <Tooltip formatter={(value, name) => [name === 'Instalacoes' ? formatNumber(String(value)) : marketValue(String(value), 'MW'), name]} />
+                <YAxis tickFormatter={(value) => marketValue(String(value), 'MW')} />
+                <Tooltip formatter={(value, name) => [marketValue(String(value), 'MW'), name]} />
                 <Legend verticalAlign="bottom" height={24} />
-                <Bar yAxisId="left" dataKey="new_mw_numero" name="MW novos" fill="#F18800" radius={[5, 5, 0, 0]} />
-                <Line yAxisId="right" type="monotone" dataKey="installations" name="Instalacoes" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
+                <Bar dataKey="new_mw_numero" name="MW novos" fill="#F18800" radius={[5, 5, 0, 0]} />
+                <Line type="monotone" dataKey="ma3_numero" name="Media movel 3M" stroke="#253575" strokeWidth={3} dot={{ r: 2 }} />
               </ComposedChart>
             </ResponsiveContainer>
           </ChartFrame>
         </Panel>
-        <Panel title="Top UFs em solar" icon={<TableProperties size={17} />} wide>
-          <DataTable columns={['UF', 'MW novos 12 meses', 'Instalacoes']} rows={regionRows} empty="Sem ranking de UFs" />
+        <Panel title="Novas instalacoes solares" icon={<LineChartIcon size={17} />}>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <ReLineChart data={monthly}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="period_label" />
+                <YAxis tickFormatter={(value) => formatNumber(String(value))} />
+                <Tooltip formatter={(value) => [formatNumber(String(value)), 'Instalacoes']} />
+                <Line type="monotone" dataKey="installations" name="Instalacoes" stroke="#12805C" strokeWidth={3} dot={{ r: 2 }} />
+              </ReLineChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </Panel>
+        <Panel title="Expansao solar por polo/regiao" icon={<TableProperties size={17} />}>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <BarChart data={radarChart.slice(0, BAR_LIMIT)} layout="vertical" margin={{ left: 110 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" tickFormatter={(value) => marketValue(String(value), 'MW')} />
+                <YAxis type="category" dataKey="polo" width={150} interval={0} />
+                <Tooltip formatter={(value) => [marketValue(String(value), 'MW'), 'MW 12M']} />
+                <Bar dataKey="new_mw_numero" fill="#253575" radius={[0, 5, 5, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </Panel>
+        <Panel title="Crescimento x escala" icon={<CircleDollarSign size={17} />}>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <ScatterChart margin={{ top: 12, right: 18, bottom: 12, left: 6 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis type="number" dataKey="new_mw_numero" name="MW 12M" tickFormatter={(value) => marketValue(String(value), 'MW')} />
+                <YAxis type="number" dataKey="mw_yoy_numero" name="Growth YoY" tickFormatter={(value) => percent(Number(value))} />
+                <Tooltip
+                  cursor={{ strokeDasharray: '3 3' }}
+                  formatter={(value, name) => [name === 'Growth YoY' ? percent(Number(value)) : marketValue(String(value), 'MW'), name]}
+                  labelFormatter={(_, payload) => payload?.[0]?.payload?.polo ?? ''}
+                />
+                <Scatter data={scatter.slice(0, SCATTER_LIMIT)} fill="#12805C" />
+              </ScatterChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </Panel>
+        <Panel title="Radar solar por polo/regiao" icon={<Database size={17} />} wide>
+          <DataTable columns={['Polo', 'MW 12M', 'MW YoY', 'Instalacoes 12M', 'Inst. YoY', 'kW medio', 'Participacao', 'Sinal', 'Cobertura', 'Competencia']} rows={tableRows} empty="Sem radar solar no recorte" />
+        </Panel>
+        <Panel title="Classe da unidade" icon={<Boxes size={17} />} wide>
+          <DataTable columns={['Classe', 'MW 12M', 'Instalacoes', 'kW medio']} rows={classRows} empty="Sem classes carregadas" />
+        </Panel>
+        <Panel title="Leituras do radar solar" icon={<AlertTriangle size={17} />} wide>
+          <DataTable columns={['Sinal', 'Leitura']} rows={readingRows} empty="Sem leituras do radar solar" />
+        </Panel>
+        <Panel title="Qualidade e unidade ANEEL" icon={<CheckCircle2 size={17} />} wide>
+          <DataTable columns={['Item', 'Valor']} rows={qualityRows} empty="Sem metadados de qualidade" />
         </Panel>
       </section>
     </>

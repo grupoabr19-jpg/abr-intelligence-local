@@ -1786,6 +1786,13 @@ def market_decimal(value: Any) -> str | None:
     return str(value)
 
 
+def add_months(value: date, months: int) -> date:
+    zero_based = value.month - 1 + months
+    year = value.year + zero_based // 12
+    month = zero_based % 12 + 1
+    return date(year, month, 1)
+
+
 def market_timestamp(value: Any) -> str | None:
     return value.isoformat() if value else None
 
@@ -4454,7 +4461,51 @@ def market_prices_decision(
     }
 
 
-def market_solar_summary(cur: Any) -> dict[str, Any]:
+def solar_growth_signal(value: Decimal | None) -> int | None:
+    if value is None:
+        return None
+    if value > Decimal("10"):
+        return 1
+    if value < Decimal("-10"):
+        return -1
+    return 0
+
+
+def solar_signal_label(score: int | None) -> str:
+    if score is None:
+        return "DADOS INSUFICIENTES"
+    if score >= 2:
+        return "ACELERANDO"
+    if score <= -2:
+        return "DESACELERANDO"
+    return "ESTAVEL / MISTO"
+
+
+def solar_pct_change(current: Decimal | None, previous: Decimal | None) -> Decimal | None:
+    if current is None or previous is None or previous == 0:
+        return None
+    return ((current / previous) - Decimal("1")) * Decimal("100")
+
+
+def solar_polo_for_row(municipio: str | None, uf: str | None) -> tuple[str, str]:
+    if municipio:
+        classification = classify_sale(city=municipio, seller=None, segment="VAREJO")
+        if classification.canal == "varejo" and classification.regiao:
+            return classification.regiao, "municipio_polo_abr"
+        if (uf or "").upper() in {"MG", "SP"}:
+            return f"ENTORNO {uf.upper()}", "municipio_entorno"
+        return "FORA_AREA", "municipio_fora_area"
+    if (uf or "").upper() in {"MG", "SP"}:
+        return f"UF {uf.upper()} (sem municipio)", "uf_apenas_sem_polo"
+    return "FORA_AREA", "uf_fora_area"
+
+
+def market_solar_summary(
+    cur: Any,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
     cur.execute("select max(periodo_inicio) from public.fact_solar_monthly")
     latest_period = cur.fetchone()[0]
     if not latest_period:
@@ -4462,71 +4513,284 @@ def market_solar_summary(cur: Any) -> dict[str, Any]:
 
     cur.execute(
         """
-        select
-          coalesce(sum(new_mw), 0),
-          coalesce(sum(novas_instalacoes), 0)
-        from public.fact_solar_monthly
-        where periodo_inicio >= (%s::date - interval '11 months')
-        """,
-        (latest_period,),
-    )
-    last_12_new_mw, last_12_installations = cur.fetchone()
-
-    cur.execute(
-        """
-        select coalesce(sum(cumulative_mw), 0)
-        from public.fact_solar_monthly
-        where periodo_inicio = %s
-        """,
-        (latest_period,),
-    )
-    cumulative_mw = cur.fetchone()[0]
-
-    cur.execute(
-        """
-        select periodo_inicio, coalesce(sum(new_mw), 0), coalesce(sum(cumulative_mw), 0), coalesce(sum(novas_instalacoes), 0)
+        select periodo_inicio, sum(new_mw), sum(novas_instalacoes)
         from public.fact_solar_monthly
         group by periodo_inicio
         order by periodo_inicio desc
-        limit 24
-        """
+        limit 8
+        """,
     )
-    monthly = [
-        {
-            "period": row[0].isoformat(),
-            "period_label": row[0].strftime("%m/%y"),
-            "new_mw": market_decimal(row[1]),
-            "cumulative_mw": market_decimal(row[2]),
-            "installations": row[3] or 0,
-        }
-        for row in reversed(cur.fetchall())
-    ]
+    recent_months = cur.fetchall()
+    period_end = latest_period
+    partial_periods: list[str] = []
+    if recent_months:
+        latest_new = Decimal(str(recent_months[0][1] or 0))
+        previous_values = [Decimal(str(row[1] or 0)) for row in recent_months[1:4] if row[1] is not None and Decimal(str(row[1] or 0)) > 0]
+        previous_avg = sum(previous_values, Decimal("0")) / Decimal(len(previous_values)) if previous_values else None
+        if previous_avg and latest_new < previous_avg * Decimal("0.35"):
+            partial_periods.append(latest_period.isoformat())
+            cur.execute(
+                """
+                select max(periodo_inicio)
+                from public.fact_solar_monthly
+                where periodo_inicio < %s
+                """,
+                (latest_period,),
+            )
+            period_end = cur.fetchone()[0] or latest_period
+
+    if date_to:
+        requested_month = date(date_to.year, date_to.month, 1)
+        if requested_month < period_end:
+            period_end = requested_month
+    period_from = date(date_from.year, date_from.month, 1) if date_from else add_months(period_end, -23)
+    current_12_start = add_months(period_end, -11)
+    previous_12_start = add_months(current_12_start, -12)
+    previous_12_end = add_months(current_12_start, -1)
 
     cur.execute(
         """
-        select uf, coalesce(sum(new_mw), 0), coalesce(sum(novas_instalacoes), 0)
+        select
+          sum(new_mw),
+          sum(novas_instalacoes)
         from public.fact_solar_monthly
-        where periodo_inicio >= (%s::date - interval '11 months')
-        group by uf
-        order by sum(new_mw) desc nulls last
-        limit 10
+        where periodo_inicio between %s and %s
+          and upper(coalesce(uf, '')) in ('MG', 'SP')
         """,
-        (latest_period,),
+        (current_12_start, period_end),
     )
-    top_regions = [
-        {"uf": row[0], "new_mw": market_decimal(row[1]), "installations": row[2] or 0}
-        for row in cur.fetchall()
+    current_new_mw, current_installations = cur.fetchone()
+
+    cur.execute(
+        """
+        select
+          sum(new_mw),
+          sum(novas_instalacoes)
+        from public.fact_solar_monthly
+        where periodo_inicio between %s and %s
+          and upper(coalesce(uf, '')) in ('MG', 'SP')
+        """,
+        (previous_12_start, previous_12_end),
+    )
+    previous_new_mw, previous_installations = cur.fetchone()
+
+    current_new_mw = Decimal(str(current_new_mw or 0))
+    previous_new_mw = Decimal(str(previous_new_mw or 0))
+    current_installations = int(current_installations or 0)
+    previous_installations = int(previous_installations or 0)
+    current_avg_kw = (current_new_mw * Decimal("1000") / Decimal(current_installations)) if current_installations else None
+    previous_avg_kw = (previous_new_mw * Decimal("1000") / Decimal(previous_installations)) if previous_installations else None
+    mw_growth = solar_pct_change(current_new_mw, previous_new_mw)
+    installations_growth = solar_pct_change(Decimal(current_installations), Decimal(previous_installations) if previous_installations else None)
+    average_kw_growth = solar_pct_change(current_avg_kw, previous_avg_kw)
+    signal_components = {
+        "mw_growth": {"value": market_decimal(mw_growth), "signal": solar_growth_signal(mw_growth)},
+        "installations_growth": {"value": market_decimal(installations_growth), "signal": solar_growth_signal(installations_growth)},
+        "average_size_growth": {"value": market_decimal(average_kw_growth), "signal": solar_growth_signal(average_kw_growth)},
+    }
+    valid_signals = [item["signal"] for item in signal_components.values() if item["signal"] is not None]
+    signal_score = sum(valid_signals) if valid_signals else None
+
+    cur.execute(
+        """
+        select periodo_inicio, sum(new_mw), sum(novas_instalacoes)
+        from public.fact_solar_monthly
+        where periodo_inicio between %s and %s
+          and upper(coalesce(uf, '')) in ('MG', 'SP')
+        group by periodo_inicio
+        order by periodo_inicio
+        """,
+        (period_from, period_end),
+    )
+    raw_monthly = cur.fetchall()
+    monthly = []
+    for index, row in enumerate(raw_monthly):
+        values = [Decimal(str(item[1] or 0)) for item in raw_monthly[max(0, index - 2) : index + 1] if item[1] is not None]
+        ma3 = sum(values, Decimal("0")) / Decimal(len(values)) if values else None
+        monthly.append(
+            {
+                "period": row[0].isoformat(),
+                "period_label": row[0].strftime("%m/%y"),
+                "new_mw": market_decimal(row[1]),
+                "new_mw_ma3": market_decimal(ma3),
+                "installations": int(row[2] or 0),
+                "is_partial_period": row[0].isoformat() in partial_periods,
+            }
+        )
+
+    cur.execute(
+        """
+        select periodo_inicio, municipio, uf, classe, sum(new_mw), sum(novas_instalacoes)
+        from public.fact_solar_monthly
+        where periodo_inicio between %s and %s
+          and upper(coalesce(uf, '')) in ('MG', 'SP')
+        group by periodo_inicio, municipio, uf, classe
+        """,
+        (previous_12_start, period_end),
+    )
+    pole_metrics: dict[str, dict[str, Any]] = {}
+    class_metrics: dict[str, dict[str, Any]] = {}
+    current_total = Decimal("0")
+    for row in cur.fetchall():
+        period, municipio, uf, classe, new_mw, installations = row
+        new_mw_dec = Decimal(str(new_mw or 0))
+        installations_int = int(installations or 0)
+        pole, coverage = solar_polo_for_row(municipio, uf)
+        item = pole_metrics.setdefault(
+            pole,
+            {
+                "polo": pole,
+                "coverage": coverage,
+                "current_mw": Decimal("0"),
+                "previous_mw": Decimal("0"),
+                "current_installations": 0,
+                "previous_installations": 0,
+                "latest_period": None,
+            },
+        )
+        target_prefix = "current" if current_12_start <= period <= period_end else "previous"
+        item[f"{target_prefix}_mw"] += new_mw_dec
+        item[f"{target_prefix}_installations"] += installations_int
+        if current_12_start <= period <= period_end:
+            current_total += new_mw_dec
+            item["latest_period"] = max(item["latest_period"] or period, period)
+        class_item = class_metrics.setdefault(
+            classe or "Sem classe",
+            {"classe": classe or "Sem classe", "mw": Decimal("0"), "installations": 0},
+        )
+        if current_12_start <= period <= period_end:
+            class_item["mw"] += new_mw_dec
+            class_item["installations"] += installations_int
+
+    radar_rows = []
+    accelerating_poles = 0
+    for item in pole_metrics.values():
+        avg_kw = (item["current_mw"] * Decimal("1000") / Decimal(item["current_installations"])) if item["current_installations"] else None
+        growth = solar_pct_change(item["current_mw"], item["previous_mw"])
+        inst_growth = solar_pct_change(Decimal(item["current_installations"]), Decimal(item["previous_installations"]) if item["previous_installations"] else None)
+        signal = solar_signal_label(sum(signal for signal in (solar_growth_signal(growth), solar_growth_signal(inst_growth)) if signal is not None))
+        if growth is not None and growth > Decimal("10") and item["current_mw"] >= Decimal("1"):
+            accelerating_poles += 1
+        radar_rows.append(
+            {
+                "polo": item["polo"],
+                "new_mw_12m": market_decimal(item["current_mw"]),
+                "mw_yoy": market_decimal(growth),
+                "installations_12m": item["current_installations"],
+                "installations_yoy": market_decimal(inst_growth),
+                "average_kw_per_installation": market_decimal(avg_kw),
+                "share": market_decimal((item["current_mw"] / current_total * Decimal("100")) if current_total else None),
+                "signal": signal,
+                "coverage": item["coverage"],
+                "latest_period": item["latest_period"].isoformat() if item["latest_period"] else None,
+            }
+        )
+    radar_rows.sort(key=lambda item: Decimal(str(item["new_mw_12m"] or "0")), reverse=True)
+    leader = radar_rows[0] if radar_rows else None
+    scatter = [
+        {
+            "polo": item["polo"],
+            "new_mw_12m": item["new_mw_12m"],
+            "mw_yoy": item["mw_yoy"],
+            "installations_12m": item["installations_12m"],
+            "signal": item["signal"],
+        }
+        for item in radar_rows
     ]
+    classes = [
+        {
+            "class": item["classe"],
+            "new_mw_12m": market_decimal(item["mw"]),
+            "installations_12m": item["installations"],
+            "average_kw_per_installation": market_decimal((item["mw"] * Decimal("1000") / Decimal(item["installations"])) if item["installations"] else None),
+        }
+        for item in sorted(class_metrics.values(), key=lambda value: value["mw"], reverse=True)
+    ]
+    readings = solar_readings(radar_rows, classes, signal_components)
     return {
-        "latest_period": latest_period.isoformat(),
+        "latest_period": period_end.isoformat(),
+        "last_complete_month": period_end.isoformat(),
+        "partial_periods": partial_periods,
+        "unit_metadata": {
+            "field_name": "MdaPotenciaInstaladaKW",
+            "raw_unit": "kW",
+            "normalized_unit": "MW",
+            "scale_factor": "0.001",
+            "source_resource": "ANEEL relacao-de-empreendimentos-de-geracao-distribuida / empreendimento-geracao-distribuida.parquet",
+            "validated_at": date.today().isoformat(),
+        },
         "kpis": {
-            "last_12_new_mw": market_decimal(last_12_new_mw),
-            "last_12_installations": int(last_12_installations or 0),
-            "cumulative_mw": market_decimal(cumulative_mw),
+            "last_12_new_mw": market_decimal(current_new_mw),
+            "last_12_installations": current_installations,
+            "average_kw_per_installation": market_decimal(current_avg_kw),
+            "mw_growth_yoy": market_decimal(mw_growth),
+            "leader_pole": leader["polo"] if leader else None,
+            "leader_pole_mw": leader["new_mw_12m"] if leader else None,
+            "leader_pole_yoy": leader["mw_yoy"] if leader else None,
+            "accelerating_poles": accelerating_poles,
+        },
+        "signal": {
+            "label": solar_signal_label(signal_score),
+            "score": signal_score,
+            "components": signal_components,
         },
         "monthly": monthly,
-        "top_regions": top_regions,
+        "radar_by_pole": radar_rows,
+        "scatter": scatter,
+        "classes": classes,
+        "readings": readings,
+        "quality": {
+            "message": "Solar e radar setorial indireto; nao converte MW em demanda fisica de aco.",
+            "coverage": "municipio" if any(item["coverage"].startswith("municipio") for item in radar_rows) else "uf_apenas",
+            "sanity_status": "VALID" if current_new_mw < Decimal("100000") else "INVALID",
+        },
     }
+
+
+def solar_readings(
+    radar_rows: list[dict[str, Any]],
+    classes: list[dict[str, Any]],
+    signal_components: dict[str, dict[str, Any]],
+) -> list[dict[str, str]]:
+    readings: list[dict[str, str]] = []
+    if radar_rows:
+        leader = radar_rows[0]
+        readings.append(
+            {
+                "key": "leader",
+                "severity": "neutral",
+                "text": f"{leader['polo']} concentra {market_decimal(leader.get('share'))}% dos MW novos do recorte, com {market_decimal(leader.get('new_mw_12m'))} MW em 12M.",
+            }
+        )
+    growing = [row for row in radar_rows if row.get("mw_yoy") is not None and Decimal(str(row["mw_yoy"])) > Decimal("10")]
+    if growing:
+        readings.append(
+            {
+                "key": "growth",
+                "severity": "positive",
+                "text": f"{len(growing)} regioes/polos mostram crescimento de MW acima de 10% na janela 12M.",
+            }
+        )
+    if classes:
+        top_class = classes[0]
+        readings.append(
+            {
+                "key": "class",
+                "severity": "neutral",
+                "text": f"{top_class['class']} lidera o recorte solar por MW novos; use como sinal de perfil, nao como demanda garantida de aco.",
+            }
+        )
+    score_parts = [item.get("signal") for item in signal_components.values() if item.get("signal") is not None]
+    positives = len([item for item in score_parts if item == 1])
+    negatives = len([item for item in score_parts if item == -1])
+    readings.append(
+        {
+            "key": "signal",
+            "severity": "attention" if negatives > positives else "neutral",
+            "text": f"Sinal 12M calculado por MW, instalacoes e porte medio: {positives} positivos e {negatives} negativos.",
+        }
+    )
+    return readings[:4]
 
 
 def market_obrasgov_summary(cur: Any) -> dict[str, Any]:
@@ -4994,7 +5258,11 @@ def market_summary(
             comex = market_comex_summary(cur) if "comex_stat_ncm" in healthy else {}
             ptax = market_ptax_summary(cur) if "bcb_dolar_ptax" in healthy else {}
             prices_decision = market_prices_decision(cur, date_from=market_date_from, date_to=market_date_to)
-            solar = market_solar_summary(cur) if "aneel_dados_abertos" in healthy else {}
+            solar = (
+                market_solar_summary(cur, date_from=market_date_from, date_to=market_date_to)
+                if "aneel_dados_abertos" in healthy
+                else {}
+            )
             public_works = market_obrasgov_summary(cur) if "obrasgov_projetos" in healthy else {}
             opportunities = (
                 market_opportunities_summary(cur, date_from=market_date_from, date_to=market_date_to)
