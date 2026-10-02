@@ -149,6 +149,48 @@ export type DashboardSummary = {
     quote_funnel?: Array<{ etapa: string; kg_total: string }>
     cities?: Array<{ cidade: string; estado: string; clientes: number; valor_total: string; peso_total: string }>
   }
+  business_channels?: {
+    channels: Record<string, {
+      canal?: string
+      linhas: number
+      peso_total: string
+      toneladas: string
+      receita_liquida: string
+      margem_contribuicao: string
+      clientes: number
+      pedidos?: number
+      mcii_pct: number
+      preco_medio_kg: string
+      kg_cliente: string
+      ton_pedido: string
+      ton_cliente: string
+      concentracao_top10?: number
+    }>
+    monthly: Array<{
+      canal: string
+      mes: string
+      linhas: number
+      peso_total: string
+      toneladas: string
+      receita_liquida: string
+      margem_contribuicao: string
+      clientes: number
+      mcii_pct: number
+      preco_medio_kg: string
+    }>
+    retail: {
+      poles: Array<Record<string, string | number | null>>
+      team: Array<Record<string, string | number | null>>
+      family_mix: Array<Record<string, string | number | null>>
+    }
+    wholesale: {
+      sellers: Array<Record<string, string | number | null>>
+      clients: Array<Record<string, string | number | null>>
+      family_mix: Array<Record<string, string | number | null>>
+      ddd_coverage: Record<string, string[]>
+    }
+    unmapped: Array<{ vendedor: string; linhas: number; peso_total: string; toneladas: string; clientes: number }>
+  }
   attendance_summary?: {
     data_available: boolean
     source_grain: string

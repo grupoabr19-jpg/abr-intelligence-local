@@ -249,6 +249,253 @@ def write_sales_summary_cache(date_from: date | None = None, date_to: date | Non
     return payload
 
 
+def _money_text(value: Any) -> str:
+    return f"{Decimal(str(value or 0)):.2f}"
+
+
+def business_channel_summary(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any]:
+    date_filters = []
+    params: list[Any] = []
+    if date_from:
+        date_filters.append("f.sale_date >= %s")
+        params.append(date_from)
+    if date_to:
+        date_filters.append("f.sale_date <= %s")
+        params.append(date_to)
+    where_sql = f"where {' and '.join(date_filters)}" if date_filters else ""
+
+    env = load_env()
+    with connect_database(env) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                with classified as materialized (
+                  select
+                    f.*,
+                    dc.id_colaborador,
+                    dc.nome_canonico,
+                    dc.canal,
+                    dc.funcao,
+                    dc.territorio
+                  from public.dashboard_sales_fact f
+                  left join public.dim_colaborador dc
+                    on upper(trim(dc.nome_erp)) = upper(trim(f.vendedor))
+                   and coalesce(dc.ativo, true) = true
+                  {where_sql}
+                ),
+                mapped as (
+                  select * from classified where canal in ('VAREJO', 'ATACADO')
+                )
+                select
+                  coalesce(jsonb_object_agg(canal, to_jsonb(kpi_rows)), '{{}}'::jsonb) as channels,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(row) order by row.canal, row.mes), '[]'::jsonb)
+                    from (
+                      select
+                        canal,
+                        to_char(date_trunc('month', sale_date), 'YYYY-MM') as mes,
+                        count(1)::int as linhas,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
+                        count(distinct cliente)::int as clientes
+                      from mapped
+                      where sale_date is not null
+                      group by 1, 2
+                    ) row
+                  ) as monthly,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(row) order by row.peso_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        territorio,
+                        funcao,
+                        count(1)::int as linhas,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
+                        count(distinct cliente)::int as clientes
+                      from mapped
+                      where canal = 'VAREJO'
+                      group by 1, 2
+                    ) row
+                  ) as retail_poles,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(row) order by row.peso_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        nome_canonico,
+                        funcao,
+                        territorio,
+                        count(1)::int as linhas,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
+                        count(distinct cliente)::int as clientes
+                      from mapped
+                      where canal = 'VAREJO'
+                      group by 1, 2, 3
+                    ) row
+                  ) as retail_team,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(row) order by row.peso_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        familia,
+                        count(1)::int as linhas,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao
+                      from mapped
+                      where canal = 'VAREJO'
+                      group by 1
+                      limit 20
+                    ) row
+                  ) as retail_family_mix,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(row) order by row.peso_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        nome_canonico,
+                        territorio as cobertura,
+                        count(1)::int as linhas,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
+                        count(distinct cliente)::int as clientes,
+                        count(distinct nota_fiscal) filter (where nota_fiscal is not null)::int as pedidos
+                      from mapped
+                      where canal = 'ATACADO'
+                      group by 1, 2
+                    ) row
+                  ) as wholesale_sellers,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(row) order by row.peso_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        cliente,
+                        count(distinct nota_fiscal) filter (where nota_fiscal is not null)::int as pedidos,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao
+                      from mapped
+                      where canal = 'ATACADO'
+                      group by 1
+                      order by peso_total desc
+                      limit 20
+                    ) row
+                  ) as wholesale_clients,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(row) order by row.peso_total desc), '[]'::jsonb)
+                    from (
+                      select
+                        familia,
+                        count(1)::int as linhas,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao
+                      from mapped
+                      where canal = 'ATACADO'
+                      group by 1
+                      limit 20
+                    ) row
+                  ) as wholesale_family_mix,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(row) order by row.linhas desc), '[]'::jsonb)
+                    from (
+                      select
+                        vendedor,
+                        count(1)::int as linhas,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        count(distinct cliente)::int as clientes
+                      from classified
+                      where canal is null
+                      group by 1
+                      order by linhas desc
+                      limit 40
+                    ) row
+                  ) as unmapped
+                from (
+                  select
+                    canal,
+                    count(1)::int as linhas,
+                    coalesce(sum(peso_total), 0) as peso_total,
+                    coalesce(sum(receita_liquida), 0) as receita_liquida,
+                    coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
+                    count(distinct cliente)::int as clientes,
+                    count(distinct nota_fiscal) filter (where nota_fiscal is not null)::int as pedidos
+                  from mapped
+                  group by 1
+                ) kpi_rows
+                """,
+                params,
+            )
+            row = cur.fetchone() or ({}, [], [], [], [], [], [], [], [])
+
+    channels, monthly, retail_poles, retail_team, retail_family_mix, wholesale_sellers, wholesale_clients, wholesale_family_mix, unmapped = row
+
+    def row_metrics(item: dict[str, Any]) -> dict[str, Any]:
+        peso = Decimal(str(item.get("peso_total") or 0))
+        receita = Decimal(str(item.get("receita_liquida") or 0))
+        margem = Decimal(str(item.get("margem_contribuicao") or 0))
+        clientes = int(item.get("clientes") or 0)
+        pedidos = int(item.get("pedidos") or 0)
+        return {
+            **item,
+            "peso_total": _money_text(peso),
+            "toneladas": _money_text(peso / Decimal("1000")),
+            "receita_liquida": _money_text(receita),
+            "margem_contribuicao": _money_text(margem),
+            "mcii_pct": float((margem / receita * Decimal("100")) if receita else 0),
+            "preco_medio_kg": _money_text(receita / peso if peso else 0),
+            "kg_cliente": _money_text(peso / clientes if clientes else 0),
+            "ton_pedido": _money_text((peso / Decimal("1000")) / pedidos if pedidos else 0),
+            "ton_cliente": _money_text((peso / Decimal("1000")) / clientes if clientes else 0),
+        }
+
+    formatted_channels = {
+        key: row_metrics(value)
+        for key, value in dict(channels or {}).items()
+    }
+    for key in ("VAREJO", "ATACADO"):
+        formatted_channels.setdefault(key, row_metrics({"canal": key, "linhas": 0, "clientes": 0, "pedidos": 0}))
+
+    wholesale_client_metrics = [row_metrics(item) for item in (wholesale_clients or [])]
+    total_wholesale_weight = sum(Decimal(str(item.get("peso_total") or 0)) for item in wholesale_clients or [])
+    top10_weight = sum(Decimal(str(item.get("peso_total") or 0)) for item in (wholesale_clients or [])[:10])
+    formatted_channels["ATACADO"]["concentracao_top10"] = float((top10_weight / total_wholesale_weight * Decimal("100")) if total_wholesale_weight else 0)
+
+    return {
+        "channels": formatted_channels,
+        "monthly": [row_metrics(item) for item in (monthly or [])],
+        "retail": {
+            "poles": [row_metrics(item) for item in (retail_poles or [])],
+            "team": [row_metrics(item) for item in (retail_team or [])],
+            "family_mix": [row_metrics(item) for item in (retail_family_mix or [])],
+        },
+        "wholesale": {
+            "sellers": [row_metrics(item) for item in (wholesale_sellers or [])],
+            "clients": wholesale_client_metrics,
+            "family_mix": [row_metrics(item) for item in (wholesale_family_mix or [])],
+            "ddd_coverage": {
+                "LARISSA TERRA": ["11", "12", "13"],
+                "JULIO MELO": ["15", "19"],
+                "WILSON NETO": ["14", "16", "17", "18"],
+            },
+        },
+        "unmapped": [
+            {
+                "vendedor": item.get("vendedor"),
+                "linhas": item.get("linhas", 0),
+                "peso_total": _money_text(item.get("peso_total")),
+                "toneladas": _money_text(Decimal(str(item.get("peso_total") or 0)) / Decimal("1000")),
+                "clientes": item.get("clientes", 0),
+            }
+            for item in (unmapped or [])
+        ],
+    }
+
+
 @lru_cache(maxsize=32)
 def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict[str, Any]:
     date_from = date.fromisoformat(date_from_text) if date_from_text else None
@@ -5466,6 +5713,11 @@ def internal_dashboard_summary(
         sales_summary = sales_period_summary(date_from=date_from, date_to=date_to)
     except BaseException as exc:
         warnings.append(f"Resumo de vendas indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+    business_channels: dict[str, Any] = {}
+    try:
+        business_channels = business_channel_summary(date_from=date_from, date_to=date_to)
+    except BaseException as exc:
+        warnings.append(f"Resumo Varejo/Atacado indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
     attendance: dict[str, Any] = {}
     try:
         attendance = attendance_summary(date_from=date_from, date_to=date_to)
@@ -5509,6 +5761,7 @@ def internal_dashboard_summary(
         "drive_spreadsheets": drive_spreadsheets,
         "recent_history": history,
         "sales_summary": sales_summary,
+        "business_channels": business_channels,
         "attendance_summary": attendance,
         "market_summary": market,
         "sales_regions": regions,

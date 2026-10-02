@@ -46,6 +46,8 @@ const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeou
 
 type IntelligenceTab =
   | 'executive'
+  | 'retail'
+  | 'wholesale'
   | 'commercial'
   | 'clients'
   | 'segments'
@@ -129,6 +131,18 @@ function percent(value: number | null | undefined) {
   return `${Number(value).toFixed(1)}%`
 }
 
+function signedPercent(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Sem dados'
+  const number = Number(value)
+  return `${number >= 0 ? '+' : ''}${number.toFixed(1)}%`
+}
+
+function signedPp(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Sem dados'
+  const number = Number(value)
+  return `${number >= 0 ? '+' : ''}${number.toFixed(1)} pp`
+}
+
 function minutes(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Sem dados'
   return `${Number(value).toFixed(0)} min`
@@ -148,6 +162,11 @@ function nullableNumericValue(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === '') return null
   const number = numericValue(value)
   return Number.isFinite(number) ? number : null
+}
+
+function pctChange(current: number, previous: number) {
+  if (!previous) return null
+  return ((current - previous) / Math.abs(previous)) * 100
 }
 
 function isWholesale(row: { funcao?: string; regiao_polo?: string }) {
@@ -290,7 +309,8 @@ const MACRO_AREAS: Array<{ key: MacroArea; label: string; title: string }> = [
 const TABS_BY_MACRO: Record<MacroArea, Array<{ key: IntelligenceTab; label: string }>> = {
   business: [
     { key: 'executive', label: 'Executivo' },
-    { key: 'commercial', label: 'Comercial' },
+    { key: 'retail', label: 'Varejo' },
+    { key: 'wholesale', label: 'Atacado' },
     { key: 'clients', label: 'Clientes' },
     { key: 'segments', label: 'Segmentos' },
     { key: 'products', label: 'Produtos' },
@@ -454,6 +474,7 @@ function App() {
   const areas = useMemo(() => Array.from(new Set(reports.map((item) => item.area))).sort(), [reports])
   const activeMacro = MACRO_AREAS.find((item) => item.key === macroArea) ?? MACRO_AREAS[0]
   const market = summary?.market_summary
+  const businessChannels = summary?.business_channels
   const driveSpreadsheetCache = summary?.drive_spreadsheets?.latest_by_type ?? {}
   const stockSpreadsheetSummaries = ['ESTOQUE_DISPONIVEL', 'ENVELHECIMENTO_ESTOQUE', 'ESTOQUE']
     .map((type) => driveSpreadsheetCache[type])
@@ -749,6 +770,151 @@ function App() {
       forecast_toneladas: totalSalesWeight ? (forecastNextKg * item.peso_numero) / totalSalesWeight / 1000 : 0,
     }))
   const quotedKg = quoteMonthly.reduce((sum, item) => sum + item.kg_cotado_numero, 0)
+  const executiveMonthlyRows = sortedMonthlySales.map((item) => {
+    const mcii = item.mcii_numero || item.lucro_numero
+    return {
+      ...item,
+      mcii_percentual_numero: item.receita_numero ? (mcii / item.receita_numero) * 100 : 0,
+      preco_kg_numero: item.peso_numero ? item.receita_numero / item.peso_numero : 0,
+    }
+  })
+  const currentExecutiveMonth = executiveMonthlyRows.at(-1)
+  const previousExecutiveMonth = executiveMonthlyRows.at(-2)
+  const currentMcii = Number(summary?.sales_summary?.lucro_bruto ?? 0)
+  const currentMciiPct = Number(summary?.sales_summary?.receita_liquida ?? 0)
+    ? (currentMcii / Number(summary?.sales_summary?.receita_liquida ?? 0)) * 100
+    : 0
+  const executiveDeltaCards = [
+    {
+      label: 'Receita',
+      value: signedPercent(
+        currentExecutiveMonth && previousExecutiveMonth
+          ? pctChange(currentExecutiveMonth.receita_numero, previousExecutiveMonth.receita_numero)
+          : null,
+      ),
+      detail: 'vs mes anterior',
+      target: 'retail' as IntelligenceTab,
+    },
+    {
+      label: 'Ton',
+      value: signedPercent(
+        currentExecutiveMonth && previousExecutiveMonth
+          ? pctChange(currentExecutiveMonth.peso_numero, previousExecutiveMonth.peso_numero)
+          : null,
+      ),
+      detail: 'volume vendido',
+      target: 'retail' as IntelligenceTab,
+    },
+    {
+      label: 'MCII R$',
+      value: signedPercent(
+        currentExecutiveMonth && previousExecutiveMonth
+          ? pctChange(currentExecutiveMonth.mcii_numero || currentExecutiveMonth.lucro_numero, previousExecutiveMonth.mcii_numero || previousExecutiveMonth.lucro_numero)
+          : null,
+      ),
+      detail: money(currentMcii),
+      target: 'margin' as IntelligenceTab,
+    },
+    {
+      label: 'MCII %',
+      value: signedPp(
+        currentExecutiveMonth && previousExecutiveMonth
+          ? currentExecutiveMonth.mcii_percentual_numero - previousExecutiveMonth.mcii_percentual_numero
+          : null,
+      ),
+      detail: percent(currentMciiPct),
+      target: 'margin' as IntelligenceTab,
+    },
+    {
+      label: 'R$/KG',
+      value: signedPercent(
+        currentExecutiveMonth && previousExecutiveMonth
+          ? pctChange(currentExecutiveMonth.preco_kg_numero, previousExecutiveMonth.preco_kg_numero)
+          : null,
+      ),
+      detail: money(summary?.sales_summary?.preco_medio_kg),
+      target: 'prices' as IntelligenceTab,
+    },
+    {
+      label: 'Clientes',
+      value:
+        currentExecutiveMonth && previousExecutiveMonth
+          ? `${currentExecutiveMonth.clientes_numero - previousExecutiveMonth.clientes_numero >= 0 ? '+' : ''}${formatNumber(currentExecutiveMonth.clientes_numero - previousExecutiveMonth.clientes_numero)}`
+          : 'Sem dados',
+      detail: `${formatNumber(summary?.sales_summary?.clientes)} no periodo`,
+      target: 'clients' as IntelligenceTab,
+    },
+  ]
+  const averageRevenuePerKg = Number(summary?.sales_summary?.peso_total ?? 0)
+    ? Number(summary?.sales_summary?.receita_liquida ?? 0) / Number(summary?.sales_summary?.peso_total ?? 0)
+    : 0
+  const forecastNextValue = forecastNextKg * averageRevenuePerKg
+  const latestQuoteValue = quoteMonthly.at(-1)?.valor_cotado_numero ?? 0
+  const executiveStatusCards = [
+    { label: 'Carteira', value: latestQuoteValue ? money(latestQuoteValue) : 'Sem dados', detail: 'Cotacoes do ultimo mes', target: 'quotes' as IntelligenceTab },
+    { label: 'Forecast', value: forecastNextValue ? money(forecastNextValue) : 'Sem dados', detail: `${formatNumber(forecastNextKg / 1000)} t estimadas`, target: 'forecast' as IntelligenceTab },
+    { label: 'Meta', value: 'Nao configurada', detail: 'Aguardando meta oficial', target: 'forecast' as IntelligenceTab },
+    { label: 'Gap', value: 'Sem meta', detail: 'Depende da meta do periodo', target: 'forecast' as IntelligenceTab },
+  ]
+  const segmentGrowthMarginRows = segmentRows.slice(0, SCATTER_LIMIT).map((item) => ({
+    name: item.name,
+    crescimento_numero: totalSalesWeight ? (item.peso_numero / totalSalesWeight) * 100 : 0,
+    margem_numero: Number(item.receita_numero) ? (Number(item.mcii_numero || item.lucro_numero || 0) / Number(item.receita_numero)) * 100 : 0,
+    receita_numero: item.receita_numero ?? item.valor_numero,
+  }))
+  const productMixRows = familyRows.slice(0, BAR_LIMIT).map((item) => ({
+    name: item.name,
+    mix_numero: totalSalesWeight ? (item.peso_numero / totalSalesWeight) * 100 : 0,
+    toneladas_numero: item.peso_numero / 1000,
+  }))
+  const stockRowsCount = stockSpreadsheetSummaries.reduce((sum, item) => sum + Number(item.row_count || item.payload?.rows || 0), 0)
+  const executiveOpportunities = [
+    ...familyRows.slice(0, 2).map((item) => ({
+      title: `${item.name}: ${formatNumber(item.peso_numero / 1000)} t no periodo`,
+      detail: 'Investigar mix, preco medio e recompra por familia.',
+      target: 'products' as IntelligenceTab,
+    })),
+    ...segmentGrowthMarginRows
+      .filter((item) => item.margem_numero > currentMciiPct)
+      .slice(0, 2)
+      .map((item) => ({
+        title: `${item.name}: margem acima da media`,
+        detail: `${percent(item.margem_numero)} de MCII estimado no segmento.`,
+        target: 'segments' as IntelligenceTab,
+      })),
+    {
+      title: forecastNextKg ? `Forecast proximo mes: ${formatNumber(forecastNextKg / 1000)} t` : 'Forecast ainda sem base suficiente',
+      detail: 'Validar carteira e cotacoes abertas antes do fechamento.',
+      target: 'forecast' as IntelligenceTab,
+    },
+  ].slice(0, 5)
+  const executiveRisks = [
+    ...clientDeclineRows.slice(0, 2).map((item) => ({
+      title: `${item.name}: queda de ${formatNumber(item.queda_numero / 1000)} t`,
+      detail: 'Cliente com reducao relevante de volume.',
+      target: 'clients' as IntelligenceTab,
+    })),
+    ...priceOutlierRows
+      .filter((item) => item.desvio_numero < 0)
+      .slice(0, 2)
+      .map((item) => ({
+        title: `${item.shortName}: preco abaixo da familia`,
+        detail: `${percent(item.desvio_numero)} vs media da familia ${item.familia}.`,
+        target: 'prices' as IntelligenceTab,
+      })),
+    {
+      title: stockRowsCount ? `${formatNumber(stockRowsCount)} linhas de estoque para revisar` : 'Estoque sem planilha recente',
+      detail: 'Checar envelhecimento, disponibilidade e capital parado.',
+      target: 'stock' as IntelligenceTab,
+    },
+  ].slice(0, 5)
+  const executiveActions = [
+    { title: 'Priorizar rotas/familias com margem acima da media', detail: 'Abrir Segmentos para separar crescimento com margem de crescimento ruim.', target: 'segments' as IntelligenceTab },
+    { title: 'Revisar clientes em queda antes do fechamento', detail: 'Abrir Clientes e tratar queda de recorrencia.', target: 'clients' as IntelligenceTab },
+    { title: 'Conferir outliers de preco por familia', detail: 'Abrir Precos e validar excecoes comerciais.', target: 'prices' as IntelligenceTab },
+    { title: 'Cruzar forecast com carteira e cotacoes', detail: 'Abrir Forecast para validar demanda provavel.', target: 'forecast' as IntelligenceTab },
+    { title: 'Revisar estoque com giro baixo', detail: 'Abrir Estoque e priorizar capital parado.', target: 'stock' as IntelligenceTab },
+  ]
   const attendance = summary?.attendance_summary
   const attendanceKpis = attendance?.kpis
   const attendanceSummaryRows = attendance?.summary_rows ?? []
@@ -1020,14 +1186,159 @@ function App() {
 
       {intelligenceTab === 'executive' && (
         <>
-          <section className="kpi-grid">
-            <Kpi title="Valor total" displayValue={money(summary?.sales_summary?.valor_total)} detail={`${formatNumber(summary?.sales_summary?.linhas)} vendas por item`} icon={<CircleDollarSign />} />
-            <Kpi title="Receita liquida" displayValue={money(summary?.sales_summary?.receita_liquida)} detail="Periodo filtrado" icon={<BarChart3 />} />
-            <Kpi title="Lucro bruto" displayValue={money(summary?.sales_summary?.lucro_bruto)} detail={`${summary?.kpis.reports_validated ?? 0} relatorios validados`} icon={<LineChartIcon />} />
-            <Kpi title="Toneladas vendidas" displayValue={`${formatNumber(Number(summary?.sales_summary?.peso_total ?? 0) / 1000)} t`} detail={`${formatNumber(summary?.sales_summary?.clientes)} clientes distintos`} icon={<Boxes />} />
+          <section className="executive-delta-grid" aria-label="Comparacao executiva">
+            {executiveDeltaCards.map((item) => (
+              <ExecutiveMetricCard key={item.label} label={item.label} value={item.value} detail={item.detail} onClick={() => setIntelligenceTab(item.target)} />
+            ))}
+          </section>
+
+          <section className="executive-status-grid" aria-label="Carteira forecast meta e gap">
+            {executiveStatusCards.map((item) => (
+              <ExecutiveMetricCard key={item.label} label={item.label} value={item.value} detail={item.detail} onClick={() => setIntelligenceTab(item.target)} />
+            ))}
           </section>
 
           <section className="dashboard-grid">
+            <Panel title="Receita / Ton / Margem" icon={<LineChartIcon size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ComposedChart data={executiveMonthlyRows}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis yAxisId="money" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                    <YAxis yAxisId="ton" orientation="right" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <Tooltip formatter={(value, name) => [name === 'Toneladas' ? `${formatNumber(String(value))} t` : money(String(value)), name]} />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Bar yAxisId="money" dataKey="receita_numero" name="Receita" fill="#253575" radius={[5, 5, 0, 0]} />
+                    <Line yAxisId="money" type="monotone" dataKey="mcii_numero" name="MCII" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                    <Line yAxisId="ton" type="monotone" dataKey="toneladas_numero" name="Toneladas" stroke="#12805C" strokeWidth={3} dot={{ r: 3 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Realizado -> Forecast -> Meta" icon={<Gauge size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ComposedChart data={realVsForecastRows.slice(-15)}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name]} />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Bar dataKey="real_toneladas" name="Realizado" fill="#253575" radius={[5, 5, 0, 0]} />
+                    <Line type="monotone" dataKey="forecast_toneladas" name="Forecast" stroke="#F18800" strokeWidth={3} strokeDasharray="6 5" dot={{ r: 3 }} connectNulls={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+              <p className="panel-note">Meta ainda nao configurada. O forecast usa media ponderada recente e sazonalidade historica.</p>
+            </Panel>
+
+            <Panel title="Price / Volume / Mix" icon={<BarChart3 size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ComposedChart data={executiveMonthlyRows}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="mes_label" />
+                    <YAxis yAxisId="price" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                    <YAxis yAxisId="volume" orientation="right" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                    <Tooltip formatter={(value, name) => [name === 'Volume' ? `${formatNumber(String(value))} t` : money(String(value)), name]} />
+                    <Legend verticalAlign="bottom" height={24} />
+                    <Bar yAxisId="volume" dataKey="toneladas_numero" name="Volume" fill="#d8e0ee" radius={[5, 5, 0, 0]} />
+                    <Line yAxisId="price" type="monotone" dataKey="preco_kg_numero" name="R$/kg" stroke="#F18800" strokeWidth={3} dot={{ r: 3 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Crescimento x Margem" icon={<AreaIcon size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <ScatterChart margin={{ top: 12, right: 20, bottom: 12, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis type="number" dataKey="crescimento_numero" name="Mix do volume" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
+                    <YAxis type="number" dataKey="margem_numero" name="MCII %" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
+                    <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={(value, name) => [name === 'Receita' ? money(String(value)) : percent(Number(value)), name]} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
+                    <Scatter data={segmentGrowthMarginRows} dataKey="receita_numero" name="Receita" fill="#F18800" />
+                  </ScatterChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Clientes" icon={<CheckCircle2 size={17} />}>
+              <details className="list-dropdown" open>
+                <summary>
+                  Clientes em queda
+                  <strong>{formatNumber(clientDeclineRows.length)}</strong>
+                </summary>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Cliente</th>
+                        <th>Queda</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {clientDeclineRows.slice(0, 8).map((item) => (
+                        <tr key={item.name} onClick={() => setIntelligenceTab('clients')}>
+                          <td>{item.name}</td>
+                          <td>{formatNumber(item.queda_numero / 1000)} t</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </Panel>
+
+            <Panel title="Produtos / Mix" icon={<Boxes size={17} />}>
+              <ChartFrame>
+                <ResponsiveContainer>
+                  <BarChart data={productMixRows} layout="vertical" margin={{ left: 86 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
+                    <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
+                    <Tooltip formatter={(value, name) => [name === 'Mix' ? percent(Number(value)) : `${formatNumber(String(value))} t`, name]} />
+                    <Bar dataKey="mix_numero" name="Mix" fill="#253575" radius={[0, 5, 5, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            </Panel>
+
+            <Panel title="Estoque / Capital" icon={<Database size={17} />}>
+              <div className="empty-state compact">
+                <strong>{stockRowsCount ? formatNumber(stockRowsCount) : 'Sem planilha'}</strong>
+                <span>Linhas reconhecidas de estoque disponivel e envelhecimento para investigacao.</span>
+                <button className="ghost-button compact" type="button" onClick={() => setIntelligenceTab('stock')}>
+                  Abrir estoque
+                </button>
+              </div>
+            </Panel>
+
+            <Panel title="Carteira / Logistica" icon={<TableProperties size={17} />}>
+              <div className="empty-state compact">
+                <strong>{latestQuoteValue ? money(latestQuoteValue) : 'Sem carteira'}</strong>
+                <span>Cotacoes mais recentes como proxy ate existir fato de pedidos/carteira.</span>
+                <button className="ghost-button compact" type="button" onClick={() => setIntelligenceTab('quotes')}>
+                  Abrir cotacoes
+                </button>
+              </div>
+            </Panel>
+
+            <Panel title="Inteligencia do periodo" icon={<AlertTriangle size={17} />} wide>
+              <div className="executive-intelligence-summary">
+                <strong>{executiveOpportunities.length} oportunidades</strong>
+                <strong>{executiveRisks.length} riscos</strong>
+                <strong>{executiveActions.length} acoes sugeridas</strong>
+              </div>
+              <ExecutiveIntelligenceList title="Oportunidades" rows={executiveOpportunities} onNavigate={setIntelligenceTab} />
+              <ExecutiveIntelligenceList title="Riscos" rows={executiveRisks} onNavigate={setIntelligenceTab} />
+              <ExecutiveIntelligenceList title="Acoes sugeridas" rows={executiveActions} onNavigate={setIntelligenceTab} />
+            </Panel>
+          </section>
+
+          <section className="dashboard-grid" hidden>
             <Panel title="Toneladas vendidas mes a mes" icon={<LineChartIcon size={17} />}>
               <ChartFrame>
                 <ResponsiveContainer>
@@ -1091,6 +1402,34 @@ function App() {
             </Panel>
           </section>
         </>
+      )}
+
+      {intelligenceTab === 'retail' && (
+        <BusinessChannelTab
+          title="Varejo"
+          channel="VAREJO"
+          summary={businessChannels}
+          primaryRows={businessChannels?.retail?.poles ?? []}
+          secondaryRows={businessChannels?.retail?.team ?? []}
+          familyRows={businessChannels?.retail?.family_mix ?? []}
+          primaryTitle="Performance por polo"
+          secondaryTitle="Equipe por funcao"
+          unmapped={businessChannels?.unmapped ?? []}
+        />
+      )}
+
+      {intelligenceTab === 'wholesale' && (
+        <BusinessChannelTab
+          title="Atacado"
+          channel="ATACADO"
+          summary={businessChannels}
+          primaryRows={businessChannels?.wholesale?.sellers ?? []}
+          secondaryRows={businessChannels?.wholesale?.clients ?? []}
+          familyRows={businessChannels?.wholesale?.family_mix ?? []}
+          primaryTitle="Vendedor x cobertura DDD"
+          secondaryTitle="Concentracao da carteira"
+          unmapped={businessChannels?.unmapped ?? []}
+        />
       )}
 
       {intelligenceTab === 'commercial' && (
@@ -2169,6 +2508,53 @@ function Kpi({
   )
 }
 
+function ExecutiveMetricCard({
+  label,
+  value,
+  detail,
+  onClick,
+}: {
+  label: string
+  value: string
+  detail: string
+  onClick?: () => void
+}) {
+  return (
+    <button className="executive-metric-card" type="button" onClick={onClick}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </button>
+  )
+}
+
+function ExecutiveIntelligenceList({
+  title,
+  rows,
+  onNavigate,
+}: {
+  title: string
+  rows: Array<{ title: string; detail: string; target: IntelligenceTab }>
+  onNavigate: (tab: IntelligenceTab) => void
+}) {
+  return (
+    <details className="list-dropdown executive-intelligence-list">
+      <summary>
+        {title}
+        <strong>{formatNumber(rows.length)}</strong>
+      </summary>
+      <div className="executive-intelligence-items">
+        {rows.map((item) => (
+          <button key={`${title}:${item.title}`} type="button" onClick={() => onNavigate(item.target)}>
+            <strong>{item.title}</strong>
+            <span>{item.detail}</span>
+          </button>
+        ))}
+      </div>
+    </details>
+  )
+}
+
 function Panel({ title, icon, wide, children }: { title: string; icon: ReactNode; wide?: boolean; children: ReactNode }) {
   return (
     <section className={`panel ${wide ? 'wide' : ''}`}>
@@ -2205,6 +2591,158 @@ function UnavailableTab({ title }: { title: string }) {
         </div>
       </Panel>
     </section>
+  )
+}
+
+function BusinessChannelTab({
+  title,
+  channel,
+  summary,
+  primaryRows,
+  secondaryRows,
+  familyRows,
+  primaryTitle,
+  secondaryTitle,
+  unmapped,
+}: {
+  title: string
+  channel: 'VAREJO' | 'ATACADO'
+  summary: DashboardSummary['business_channels'] | undefined
+  primaryRows: Array<Record<string, string | number | null>>
+  secondaryRows: Array<Record<string, string | number | null>>
+  familyRows: Array<Record<string, string | number | null>>
+  primaryTitle: string
+  secondaryTitle: string
+  unmapped: Array<{ vendedor: string; linhas: number; peso_total: string; toneladas: string; clientes: number }>
+}) {
+  const channelSummary = summary?.channels?.[channel]
+  const monthly = (summary?.monthly ?? [])
+    .filter((item) => item.canal === channel)
+    .map((item) => ({
+      ...item,
+      mes_label: monthLabel(item.mes),
+      toneladas_numero: numericValue(item.toneladas),
+      receita_numero: numericValue(item.receita_liquida),
+      mcii_numero: numericValue(item.margem_contribuicao),
+      mcii_pct_numero: Number(item.mcii_pct ?? 0),
+    }))
+  const tableRows = (rows: Array<Record<string, string | number | null>>) =>
+    rows.map((item) => [
+      String(item.territorio ?? item.nome_canonico ?? item.cliente ?? item.familia ?? 'Sem descricao'),
+      String(item.funcao ?? item.cobertura ?? item.pedidos ?? ''),
+      `${formatNumber(numericValue(item.toneladas as string) || numericValue(item.peso_total as string) / 1000)} t`,
+      money(item.receita_liquida as string),
+      percent(Number(item.mcii_pct ?? 0)),
+      formatNumber(Number(item.clientes ?? 0)),
+      `${formatNumber(numericValue(item.kg_cliente as string))} kg`,
+    ])
+  const familyChartRows = familyRows.slice(0, BAR_LIMIT).map((item) => ({
+    name: String(item.familia ?? 'Sem familia'),
+    toneladas_numero: numericValue(item.toneladas as string) || numericValue(item.peso_total as string) / 1000,
+    receita_numero: numericValue(item.receita_liquida as string),
+    mcii_pct_numero: Number(item.mcii_pct ?? 0),
+  }))
+  const scatterRows = familyRows.slice(0, SCATTER_LIMIT).map((item) => ({
+    name: String(item.familia ?? item.cliente ?? 'Sem descricao'),
+    preco_numero: numericValue(item.preco_medio_kg as string),
+    mcii_pct_numero: Number(item.mcii_pct ?? 0),
+    toneladas_numero: numericValue(item.toneladas as string) || numericValue(item.peso_total as string) / 1000,
+  }))
+
+  if (!channelSummary) return <UnavailableTab title={title} />
+
+  return (
+    <>
+      <section className="kpi-grid sales-kpis">
+        <Kpi title="Toneladas" displayValue={`${formatNumber(channelSummary.toneladas)} t`} detail={`${formatNumber(channelSummary.linhas)} registros`} icon={<Boxes />} />
+        <Kpi title="Receita liquida" displayValue={money(channelSummary.receita_liquida)} detail="ERP, nao valor Kommo" icon={<CircleDollarSign />} />
+        <Kpi title="MCII %" displayValue={percent(channelSummary.mcii_pct)} detail={money(channelSummary.margem_contribuicao)} icon={<LineChartIcon />} />
+        <Kpi title="Preco medio R$/kg" displayValue={money(channelSummary.preco_medio_kg)} detail="SUM receita / SUM kg" icon={<BarChart3 />} />
+        <Kpi title="Clientes ativos" value={channelSummary.clientes} detail="Clientes distintos no periodo" icon={<CheckCircle2 />} />
+        <Kpi
+          title={channel === 'ATACADO' ? 'Ton / pedido' : 'Kg / cliente'}
+          displayValue={channel === 'ATACADO' ? `${formatNumber(channelSummary.ton_pedido)} t` : `${formatNumber(channelSummary.kg_cliente)} kg`}
+          detail={channel === 'ATACADO' ? `${formatNumber(channelSummary.pedidos)} pedidos` : 'SUM kg / clientes'}
+          icon={<Gauge />}
+        />
+      </section>
+
+      <section className="dashboard-grid">
+        <Panel title="Volume mensal - real x meta x LY" icon={<LineChartIcon size={17} />}>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <ComposedChart data={monthly}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="mes_label" />
+                <YAxis tickFormatter={(value) => `${formatNumber(value)} t`} />
+                <Tooltip formatter={(value, name) => [`${formatNumber(String(value))} t`, name]} />
+                <Legend verticalAlign="bottom" height={24} />
+                <Bar dataKey="toneladas_numero" name="Realizado" fill="#253575" radius={[5, 5, 0, 0]} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+          <p className="panel-note">Meta e LY entram quando a base oficial de metas e historico comparavel estiver carregada.</p>
+        </Panel>
+
+        <Panel title={primaryTitle} icon={<TableProperties size={17} />}>
+          <SupportDetails title="Ver indicadores">
+            <DataTable
+              columns={['Grupo', 'Funcao/DDDs', 'Ton', 'Receita', 'MCII %', 'Clientes', 'Kg/cliente']}
+              rows={tableRows(primaryRows)}
+              empty="Sem registros mapeados para este canal."
+            />
+          </SupportDetails>
+        </Panel>
+
+        <Panel title={secondaryTitle} icon={<CheckCircle2 size={17} />}>
+          <SupportDetails title="Ver detalhes">
+            <DataTable
+              columns={['Pessoa/Cliente', 'Funcao/Pedidos', 'Ton', 'Receita', 'MCII %', 'Clientes', 'Kg/cliente']}
+              rows={tableRows(secondaryRows)}
+              empty="Sem abertura secundaria para este canal."
+            />
+          </SupportDetails>
+        </Panel>
+
+        <Panel title="Mix por familia" icon={<Boxes size={17} />}>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <BarChart data={familyChartRows} layout="vertical" margin={{ left: 86 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" tickFormatter={(value) => `${formatNumber(value)} t`} />
+                <YAxis type="category" dataKey="name" width={120} interval={0} tickMargin={6} />
+                <Tooltip formatter={(value, name) => [name === 'toneladas_numero' ? `${formatNumber(String(value))} t` : money(String(value)), name]} />
+                <Bar dataKey="toneladas_numero" name="Toneladas" fill="#253575" radius={[0, 5, 5, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </Panel>
+
+        <Panel title={channel === 'ATACADO' ? 'Tamanho do pedido x margem' : 'Preco x margem'} icon={<AreaIcon size={17} />}>
+          <ChartFrame>
+            <ResponsiveContainer>
+              <ScatterChart margin={{ top: 12, right: 20, bottom: 12, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis type="number" dataKey="preco_numero" name="R$/kg" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                <YAxis type="number" dataKey="mcii_pct_numero" name="MCII %" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
+                <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={(value, name) => [name === 'R$/kg' ? money(String(value)) : percent(Number(value)), name]} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
+                <Scatter data={scatterRows} dataKey="toneladas_numero" name="Toneladas" fill="#F18800" />
+              </ScatterChart>
+            </ResponsiveContainer>
+          </ChartFrame>
+        </Panel>
+
+        <Panel title="Sem mapeamento de canal" icon={<AlertTriangle size={17} />} wide>
+          <SupportDetails title="Ver sales_channel_unmapped">
+            <DataTable
+              columns={['Vendedor ERP', 'Registros', 'Ton', 'Clientes']}
+              rows={unmapped.map((item) => [item.vendedor, formatNumber(item.linhas), `${formatNumber(item.toneladas)} t`, formatNumber(item.clientes)])}
+              empty="Todos os registros do periodo possuem canal."
+            />
+          </SupportDetails>
+        </Panel>
+      </section>
+    </>
   )
 }
 

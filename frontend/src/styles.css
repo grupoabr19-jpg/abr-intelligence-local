@@ -497,6 +497,119 @@ h1 {
   word-break: break-word;
 }
 
+.executive-delta-grid,
+.executive-status-grid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.executive-delta-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.executive-status-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.executive-metric-card {
+  min-width: 0;
+  min-height: 94px;
+  padding: 13px;
+  border: 1px solid var(--abr-border);
+  border-radius: 8px;
+  color: #141d40;
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgba(20, 29, 64, 0.06);
+  text-align: left;
+  cursor: pointer;
+}
+
+.executive-metric-card:focus-visible {
+  outline: 3px solid rgba(241, 136, 0, 0.35);
+  outline-offset: 2px;
+}
+
+.executive-metric-card span,
+.executive-metric-card strong,
+.executive-metric-card small {
+  display: block;
+}
+
+.executive-metric-card span {
+  color: #526079;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.executive-metric-card strong {
+  overflow-wrap: anywhere;
+  margin: 8px 0 4px;
+  color: var(--abr-blue);
+  font-size: 22px;
+  line-height: 1.05;
+}
+
+.executive-metric-card small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.executive-intelligence-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.executive-intelligence-summary strong {
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  color: var(--abr-blue);
+  background: #fbfcff;
+  font-size: 13px;
+}
+
+.executive-intelligence-list {
+  margin-top: 8px;
+}
+
+.executive-intelligence-items {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.executive-intelligence-items button {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px;
+  color: #141d40;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.executive-intelligence-items button strong,
+.executive-intelligence-items button span {
+  display: block;
+}
+
+.executive-intelligence-items button strong {
+  color: var(--abr-blue);
+  font-size: 13px;
+}
+
+.executive-intelligence-items button span {
+  margin-top: 4px;
+  color: #526079;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .balance-callout {
   display: flex;
   align-items: baseline;
@@ -906,6 +1019,12 @@ tbody tr:hover {
     grid-template-columns: 1fr 1fr;
   }
 
+  .executive-delta-grid,
+  .executive-status-grid,
+  .executive-intelligence-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .sales-kpis {
     grid-template-columns: 1fr 1fr;
   }
@@ -960,6 +1079,12 @@ tbody tr:hover {
   .kpi-grid,
   .sales-kpis,
   .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .executive-delta-grid,
+  .executive-status-grid,
+  .executive-intelligence-summary {
     grid-template-columns: 1fr;
   }
 
