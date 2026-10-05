@@ -212,6 +212,8 @@ def read_sales_summary_cache(date_from: date | None = None, date_to: date | None
         return None
     payload, refreshed_at = row
     payload = dict(payload)
+    if "daily" not in payload:
+        return None
     payload["cache_refreshed_at"] = refreshed_at.isoformat() if refreshed_at else None
     if served_date_to and served_date_to != date_to:
         payload["cache_served_date_to"] = served_date_to.isoformat()
@@ -567,6 +569,25 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                       group by 1
                     ) month_rows
                   ) as monthly,
+                  (
+                    select coalesce(jsonb_agg(to_jsonb(day_rows) order by day_rows.dia), '[]'::jsonb)
+                    from (
+                      select
+                        sale_date::date as dia,
+                        count(*)::int as linhas,
+                        coalesce(sum(valor_total), 0) as valor_total,
+                        coalesce(sum(receita_liquida), 0) as receita_liquida,
+                        coalesce(sum(lucro_bruto), 0) as lucro_bruto,
+                        coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
+                        coalesce(sum(peso_total), 0) as peso_total,
+                        count(distinct nota_fiscal) filter (where nota_fiscal is not null)::int as notas_fiscais,
+                        count(distinct cliente)::int as clientes,
+                        coalesce(sum(valor_perdido), 0) as valor_perdido
+                      from sales
+                      where sale_date is not null
+                      group by 1
+                    ) day_rows
+                  ) as daily,
                   (
                     select coalesce(jsonb_agg(to_jsonb(family_rows) order by family_rows.peso_total desc), '[]'::jsonb)
                     from (
@@ -964,7 +985,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                 """,
                 params,
             )
-            row = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0, None, None, [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [])
+            row = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0, None, None, [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [])
 
     (
         linhas,
@@ -977,6 +998,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
         min_date,
         max_date,
         monthly_rows,
+        daily_rows,
         family_rows,
         client_rows,
         decline_rows,
@@ -1018,6 +1040,21 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
             "valor_perdido": f"{Decimal(str(item.get('valor_perdido', 0))):.2f}",
         }
         for item in monthly_rows
+    ]
+    daily = [
+        {
+            "dia": item["dia"].isoformat() if hasattr(item["dia"], "isoformat") else str(item["dia"]),
+            "linhas": item["linhas"],
+            "valor_total": f"{Decimal(str(item['valor_total'])):.2f}",
+            "peso_total": f"{Decimal(str(item['peso_total'])):.2f}",
+            "receita_liquida": f"{Decimal(str(item.get('receita_liquida', 0))):.2f}",
+            "lucro_bruto": f"{Decimal(str(item.get('lucro_bruto', 0))):.2f}",
+            "margem_contribuicao": f"{Decimal(str(item.get('margem_contribuicao', 0))):.2f}",
+            "notas_fiscais": item.get("notas_fiscais", 0),
+            "clientes": item.get("clientes", 0),
+            "valor_perdido": f"{Decimal(str(item.get('valor_perdido', 0))):.2f}",
+        }
+        for item in daily_rows
     ]
     families = [
         {
@@ -1221,6 +1258,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
         "data_min": min_date.isoformat() if min_date else None,
         "data_max": max_date.isoformat() if max_date else None,
         "monthly": monthly,
+        "daily": daily,
         "families": families,
         "clients_abc": clients_abc,
         "clients_decline": clients_decline,

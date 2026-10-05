@@ -85,6 +85,7 @@ type MacroArea = 'business' | 'market' | 'service'
 type RefreshStepStatus = { label: string; status: string; error?: string | null }
 type RankingView = 'retail' | 'retail-region' | 'wholesale' | 'representatives'
 type RankingMetric = 'ganhas' | 'win_rate' | 'follow_up' | 'sla_5' | 'pipeline_value' | 'leads'
+type CardTone = 'positive' | 'negative' | 'neutral'
 
 type AttendanceSummary = NonNullable<DashboardSummary['attendance_summary']>
 type CollaboratorRankingRow = NonNullable<AttendanceSummary['ranking_colaboradores']>[number]
@@ -169,6 +170,86 @@ function pctChange(current: number, previous: number) {
   return ((current - previous) / Math.abs(previous)) * 100
 }
 
+function deltaTone(value: number | null | undefined): CardTone {
+  if (value === null || value === undefined || Number.isNaN(Number(value)) || Number(value) === 0) return 'neutral'
+  return Number(value) > 0 ? 'positive' : 'negative'
+}
+
+function metricExplanation(title: string, detail?: string) {
+  const normalized = `${title} ${detail ?? ''}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  if (normalized.includes('receita liquida')) return 'Soma da receita liquida dos registros filtrados. Formula: SUM(receita_liquida).'
+  if (normalized.includes('valor total')) return 'Soma do valor bruto/total dos registros filtrados. Formula: SUM(valor_total).'
+  if (normalized.includes('lucro bruto')) return 'Soma do lucro bruto informado na base de vendas antes de rateios adicionais.'
+  if (normalized.includes('mcii %')) return 'Margem de contribuicao II percentual. Formula: SUM(MCII) / SUM(receita_liquida) x 100.'
+  if (normalized.includes('mcii') || normalized.includes('margem')) return 'Indicador de margem calculado a partir da margem de contribuicao quando disponivel; caso a fonte nao traga MCII, usa o melhor campo financeiro de margem disponivel.'
+  if (normalized.includes('tonelada') || normalized.includes('volume')) return 'Volume vendido no recorte atual. Formula padrao: SUM(peso_total em kg) / 1000.'
+  if (normalized.includes('preco medio') || normalized.includes('r$/kg')) return 'Preco medio ponderado pelo volume. Formula: SUM(receita_liquida) / SUM(peso_total em kg).'
+  if (normalized.includes('clientes')) return 'Quantidade de clientes distintos encontrados no periodo filtrado.'
+  if (normalized.includes('itens')) return 'Quantidade de itens/produtos distintos encontrados no periodo filtrado.'
+  if (normalized.includes('forecast')) return 'Projecao simples baseada na media ponderada dos meses recentes, ajustada por sazonalidade quando ha historico suficiente.'
+  if (normalized.includes('variacao')) return 'Comparacao contra a base indicada no detalhe do card. Valor negativo representa queda, nao erro de calculo.'
+  if (normalized.includes('cotacoes') || normalized.includes('carteira')) return 'Indicador derivado das cotacoes no periodo. Deve ser lido como radar operacional quando a carteira oficial ainda nao esta modelada.'
+  if (normalized.includes('lead') || normalized.includes('sla') || normalized.includes('primeira acao')) return 'Indicador de atendimento calculado a partir dos fatos do Kommo depois das exclusoes operacionais configuradas.'
+  if (normalized.includes('oportunidade') || normalized.includes('prioridade')) return 'Indicador de mercado apos filtros de territorio, aderencia comercial e score de relevancia; nao representa potencial automatico de venda.'
+  if (normalized.includes('mw') || normalized.includes('solar') || normalized.includes('instalac')) return 'Indicador de mercado solar normalizado para a unidade exibida e calculado apenas com meses consolidados quando a base informa essa granularidade.'
+  if (normalized.includes('fob') || normalized.includes('cif') || normalized.includes('import')) return 'Indicador de comercio exterior calculado a partir do recorte 12M ou do periodo exibido, com media ponderada quando a unidade e por tonelada.'
+  return `${title}: ${detail ?? 'Indicador calculado a partir do recorte e filtros atuais.'}`
+}
+
+function columnExplanation(column: string) {
+  const normalized = column.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  if (normalized.includes('receita')) return 'Receita somada para a linha no periodo filtrado.'
+  if (normalized.includes('valor')) return 'Valor monetario associado a linha no periodo filtrado.'
+  if (normalized.includes('ton') || normalized.includes('peso') || normalized.includes('kg')) return 'Volume ou peso somado para a linha, conforme unidade exibida.'
+  if (normalized.includes('mcii') || normalized.includes('margem')) return 'Margem calculada de forma ponderada: soma da margem dividida pela soma da receita quando percentual.'
+  if (normalized.includes('win rate')) return 'Conversao do atendimento. Formula: ganhas / oportunidades elegiveis x 100, conforme regra da fonte.'
+  if (normalized.includes('sla')) return 'Percentual de casos dentro do prazo operacional configurado.'
+  if (normalized.includes('follow')) return 'Cobertura de follow-up calculada pelos registros/tarefas disponiveis na base de atendimento.'
+  if (normalized.includes('score')) return 'Pontuacao composta por aderencia, territorio, timing e sinais de relevancia comercial.'
+  if (normalized.includes('data') || normalized.includes('periodo')) return 'Competencia/data usada para posicionar o registro no periodo filtrado.'
+  return column
+}
+
+function temporalContext(
+  macroArea: MacroArea,
+  tab: IntelligenceTab,
+  dateFrom: string,
+  dateTo: string,
+  executiveUsesDailyComparison: boolean,
+) {
+  if (macroArea === 'market') return null
+  if (['stock', 'purchases', 'logistics'].includes(tab)) {
+    return {
+      label: 'Leitura snapshot',
+      detail: 'Esta aba usa a planilha mais recente reconhecida no Drive. O calendario global nao deve ser lido como filtro principal destes cards.',
+    }
+  }
+  if (tab === 'executive') {
+    return {
+      label: executiveUsesDailyComparison ? 'Comparativo diario' : 'Comparativo mensal',
+      detail: executiveUsesDailyComparison
+        ? `Filtro dentro de ${dateFrom.slice(5, 7)}/${dateFrom.slice(0, 4)}: cards executivos comparam ultimo dia com dados contra dia anterior disponivel.`
+        : 'Filtro cruza meses ou nao tem dias suficientes: cards executivos comparam ultimo mes com dados contra mes anterior disponivel.',
+    }
+  }
+  if (tab === 'forecast') {
+    return {
+      label: 'Historico e forecast',
+      detail: 'O calendario define a base historica; o forecast usa media ponderada recente e sazonalidade, nao soma simples do periodo.',
+    }
+  }
+  if (macroArea === 'service') {
+    return {
+      label: 'Periodo de atendimento',
+      detail: 'O calendario filtra leads/eventos do Kommo no periodo. Rankings e SLA devem ser comparados dentro do mesmo recorte.',
+    }
+  }
+  return {
+    label: 'Periodo acumulado',
+    detail: 'O calendario filtra vendas do ERP no periodo selecionado. Cards de total somam o periodo; cards de variacao comparam com a base indicada no tooltip.',
+  }
+}
+
 function isWholesale(row: { funcao?: string; regiao_polo?: string }) {
   const funcao = String(row.funcao ?? '').toUpperCase()
   const regiao = String(row.regiao_polo ?? '').toUpperCase()
@@ -187,6 +268,16 @@ function monthLabel(value: string) {
   const [year, month] = value.split('-')
   if (!year || !month) return value
   return `${month}/${year.slice(2)}`
+}
+
+function dayLabel(value: string) {
+  const [, month, day] = value.split('-')
+  if (!month || !day) return value
+  return `${day}/${month}`
+}
+
+function sameCalendarMonth(start: string, end: string) {
+  return Boolean(start && end && start.slice(0, 7) === end.slice(0, 7))
 }
 
 function addMonths(value: string, amount: number) {
@@ -361,6 +452,40 @@ type ChartRow = {
   lucro_numero?: number
   mcii_numero?: number
   linhas?: number
+}
+
+type BusinessTrendRow = {
+  period_label: string
+  valor_numero: number
+  receita_numero: number
+  lucro_numero: number
+  mcii_numero: number
+  peso_numero: number
+  toneladas_numero: number
+  perdido_numero: number
+  notas_numero: number
+  clientes_numero: number
+  ticket_medio_numero: number
+}
+
+type ExecutiveTrendRow = BusinessTrendRow & {
+  mcii_percentual_numero: number
+  preco_kg_numero: number
+}
+
+type PriceTrendRow = {
+  period_label: string
+  min_numero: number
+  avg_numero: number
+  max_numero: number
+  valor_numero: number
+  peso_numero: number
+}
+
+type MarginTrendRow = BusinessTrendRow & {
+  preco_venda_kg_numero: number
+  mcii_kg_numero: number
+  margem_numero: number
 }
 
 function App() {
@@ -541,7 +666,22 @@ function App() {
     valor_numero: Number(item.valor_total),
     receita_numero: Number(item.receita_liquida ?? 0),
     lucro_numero: Number(item.lucro_bruto ?? 0),
-    mcii_numero: Number(item.margem_contribuicao ?? 0),
+    mcii_numero: Number(item.margem_contribuicao ?? item.lucro_bruto ?? 0),
+    peso_numero: Number(item.peso_total),
+    toneladas_numero: Number(item.peso_total) / 1000,
+    perdido_numero: Number(item.valor_perdido ?? 0),
+    notas_numero: Number(item.notas_fiscais ?? 0),
+    clientes_numero: Number(item.clientes ?? 0),
+    ticket_medio_numero: Number(item.notas_fiscais ?? 0) ? Number(item.receita_liquida ?? 0) / Number(item.notas_fiscais ?? 0) : 0,
+  }))
+  const dailySales = (summary?.sales_summary?.daily ?? []).map((item) => ({
+    ...item,
+    dia_label: dayLabel(item.dia),
+    period_label: dayLabel(item.dia),
+    valor_numero: Number(item.valor_total),
+    receita_numero: Number(item.receita_liquida ?? 0),
+    lucro_numero: Number(item.lucro_bruto ?? 0),
+    mcii_numero: Number(item.margem_contribuicao ?? item.lucro_bruto ?? 0),
     peso_numero: Number(item.peso_total),
     toneladas_numero: Number(item.peso_total) / 1000,
     perdido_numero: Number(item.valor_perdido ?? 0),
@@ -697,6 +837,65 @@ function App() {
   }))
   const totalSalesWeight = Number(summary?.sales_summary?.peso_total ?? 0)
   const sortedMonthlySales = [...monthlySales].sort((a, b) => String(a.mes).localeCompare(String(b.mes)))
+  const useDailyBusinessCharts = sameCalendarMonth(dateFrom, dateTo) && dailySales.length >= 2
+  const businessTimeGrainLabel = useDailyBusinessCharts ? 'dia a dia' : 'mes a mes'
+  const toBusinessTrendRow = (item: {
+    period_label?: string
+    mes_label?: string
+    dia_label?: string
+    valor_numero: number
+    receita_numero: number
+    lucro_numero: number
+    mcii_numero: number
+    peso_numero: number
+    toneladas_numero: number
+    perdido_numero: number
+    notas_numero: number
+    clientes_numero: number
+    ticket_medio_numero: number
+  }): BusinessTrendRow => ({
+    period_label: item.period_label ?? item.dia_label ?? item.mes_label ?? '',
+    valor_numero: item.valor_numero,
+    receita_numero: item.receita_numero,
+    lucro_numero: item.lucro_numero,
+    mcii_numero: item.mcii_numero,
+    peso_numero: item.peso_numero,
+    toneladas_numero: item.toneladas_numero,
+    perdido_numero: item.perdido_numero,
+    notas_numero: item.notas_numero,
+    clientes_numero: item.clientes_numero,
+    ticket_medio_numero: item.ticket_medio_numero,
+  })
+  const businessTimeSeriesRows: BusinessTrendRow[] = (useDailyBusinessCharts
+    ? [...dailySales].sort((a, b) => String(a.dia).localeCompare(String(b.dia)))
+    : sortedMonthlySales
+  ).map(toBusinessTrendRow)
+  const businessPriceTrendRows: PriceTrendRow[] = businessTimeSeriesRows.map((item) => {
+    const avg = item.peso_numero ? item.receita_numero / item.peso_numero : 0
+    return {
+      period_label: item.period_label,
+      valor_numero: item.valor_numero,
+      peso_numero: item.peso_numero,
+      avg_numero: avg,
+      min_numero: avg,
+      max_numero: avg,
+    }
+  })
+  const priceMonthlyTrendRows: PriceTrendRow[] = priceMonthly.map((item) => ({
+    period_label: item.mes_label,
+    min_numero: item.min_numero,
+    avg_numero: item.avg_numero,
+    max_numero: item.max_numero,
+    valor_numero: item.valor_numero,
+    peso_numero: item.peso_numero,
+  }))
+  const activePriceRangeRows = useDailyBusinessCharts ? businessPriceTrendRows : priceMonthlyTrendRows
+  const businessMarginTrendRows: MarginTrendRow[] = businessTimeSeriesRows.map((item) => ({
+    ...item,
+    preco_venda_kg_numero: item.peso_numero ? item.receita_numero / item.peso_numero : 0,
+    mcii_kg_numero: item.peso_numero ? item.mcii_numero / item.peso_numero : 0,
+    margem_numero: item.receita_numero ? (item.mcii_numero / item.receita_numero) * 100 : 0,
+  }))
   const recentForecastBase = sortedMonthlySales.slice(-3)
   const activeForecastWeights = FORECAST_WEIGHTS.slice(0, recentForecastBase.length)
   const activeForecastWeightTotal = activeForecastWeights.reduce((sum, weight) => sum + weight, 0) || 1
@@ -770,17 +969,34 @@ function App() {
       forecast_toneladas: totalSalesWeight ? (forecastNextKg * item.peso_numero) / totalSalesWeight / 1000 : 0,
     }))
   const quotedKg = quoteMonthly.reduce((sum, item) => sum + item.kg_cotado_numero, 0)
-  const executiveMonthlyRows = sortedMonthlySales.map((item) => {
-    const mcii = item.mcii_numero || item.lucro_numero
+  const executiveMonthlyRows: ExecutiveTrendRow[] = sortedMonthlySales.map((item) => {
+    const mcii = item.mcii_numero
     return {
-      ...item,
+      ...toBusinessTrendRow(item),
       mcii_percentual_numero: item.receita_numero ? (mcii / item.receita_numero) * 100 : 0,
       preco_kg_numero: item.peso_numero ? item.receita_numero / item.peso_numero : 0,
     }
   })
-  const currentExecutiveMonth = executiveMonthlyRows.at(-1)
-  const previousExecutiveMonth = executiveMonthlyRows.at(-2)
-  const currentMcii = Number(summary?.sales_summary?.lucro_bruto ?? 0)
+  const executiveDailyRows: ExecutiveTrendRow[] = [...dailySales].sort((a, b) => String(a.dia).localeCompare(String(b.dia))).map((item) => {
+    const mcii = item.mcii_numero
+    return {
+      ...toBusinessTrendRow(item),
+      mcii_percentual_numero: item.receita_numero ? (mcii / item.receita_numero) * 100 : 0,
+      preco_kg_numero: item.peso_numero ? item.receita_numero / item.peso_numero : 0,
+    }
+  })
+  const useDailyExecutiveComparison = sameCalendarMonth(dateFrom, dateTo) && executiveDailyRows.length >= 2
+  const executiveComparisonRows = useDailyExecutiveComparison ? executiveDailyRows : executiveMonthlyRows
+  const executiveTrendRows = useDailyBusinessCharts ? executiveDailyRows : executiveMonthlyRows
+  const currentExecutivePeriod = executiveComparisonRows.at(-1)
+  const previousExecutivePeriod = executiveComparisonRows.at(-2)
+  const executiveComparisonLabel = useDailyExecutiveComparison ? 'vs dia anterior' : 'vs mes anterior'
+  const executiveComparisonTooltipSuffix = useDailyExecutiveComparison
+    ? 'Quando o filtro esta dentro de um unico mes, a comparacao executiva usa o ultimo dia com dados contra o dia anterior disponivel.'
+    : 'Quando o filtro cobre mais de um mes, a comparacao executiva usa o ultimo mes com dados contra o mes anterior disponivel.'
+  const currentMcii = marginMonthly.length
+    ? marginMonthly.reduce((sum, item) => sum + item.mcii_numero, 0)
+    : Number(summary?.sales_summary?.lucro_bruto ?? 0)
   const currentMciiPct = Number(summary?.sales_summary?.receita_liquida ?? 0)
     ? (currentMcii / Number(summary?.sales_summary?.receita_liquida ?? 0)) * 100
     : 0
@@ -788,60 +1004,90 @@ function App() {
     {
       label: 'Receita',
       value: signedPercent(
-        currentExecutiveMonth && previousExecutiveMonth
-          ? pctChange(currentExecutiveMonth.receita_numero, previousExecutiveMonth.receita_numero)
+        currentExecutivePeriod && previousExecutivePeriod
+          ? pctChange(currentExecutivePeriod.receita_numero, previousExecutivePeriod.receita_numero)
           : null,
       ),
-      detail: 'vs mes anterior',
+      detail: executiveComparisonLabel,
+      tone:
+        currentExecutivePeriod && previousExecutivePeriod
+          ? deltaTone(pctChange(currentExecutivePeriod.receita_numero, previousExecutivePeriod.receita_numero))
+          : 'neutral',
+      tooltip: `Variação percentual da receita liquida do periodo comparado: (receita atual - receita anterior) / receita anterior x 100. Valor negativo significa queda. ${executiveComparisonTooltipSuffix}`,
       target: 'retail' as IntelligenceTab,
     },
     {
       label: 'Ton',
       value: signedPercent(
-        currentExecutiveMonth && previousExecutiveMonth
-          ? pctChange(currentExecutiveMonth.peso_numero, previousExecutiveMonth.peso_numero)
+        currentExecutivePeriod && previousExecutivePeriod
+          ? pctChange(currentExecutivePeriod.peso_numero, previousExecutivePeriod.peso_numero)
           : null,
       ),
       detail: 'volume vendido',
+      tone:
+        currentExecutivePeriod && previousExecutivePeriod
+          ? deltaTone(pctChange(currentExecutivePeriod.peso_numero, previousExecutivePeriod.peso_numero))
+          : 'neutral',
+      tooltip: `Variação percentual do volume vendido em kg entre o periodo atual e o periodo anterior comparavel. ${executiveComparisonTooltipSuffix}`,
       target: 'retail' as IntelligenceTab,
     },
     {
       label: 'MCII R$',
       value: signedPercent(
-        currentExecutiveMonth && previousExecutiveMonth
-          ? pctChange(currentExecutiveMonth.mcii_numero || currentExecutiveMonth.lucro_numero, previousExecutiveMonth.mcii_numero || previousExecutiveMonth.lucro_numero)
+        currentExecutivePeriod && previousExecutivePeriod
+          ? pctChange(currentExecutivePeriod.mcii_numero, previousExecutivePeriod.mcii_numero)
           : null,
       ),
       detail: money(currentMcii),
+      tone:
+        currentExecutivePeriod && previousExecutivePeriod
+          ? deltaTone(pctChange(currentExecutivePeriod.mcii_numero, previousExecutivePeriod.mcii_numero))
+          : 'neutral',
+      tooltip: `Variação percentual da margem de contribuição II em reais. Formula: SUM(MCII atual) contra SUM(MCII anterior). O detalhe abaixo mostra o MCII total do periodo filtrado. ${executiveComparisonTooltipSuffix}`,
       target: 'margin' as IntelligenceTab,
     },
     {
       label: 'MCII %',
       value: signedPp(
-        currentExecutiveMonth && previousExecutiveMonth
-          ? currentExecutiveMonth.mcii_percentual_numero - previousExecutiveMonth.mcii_percentual_numero
+        currentExecutivePeriod && previousExecutivePeriod
+          ? currentExecutivePeriod.mcii_percentual_numero - previousExecutivePeriod.mcii_percentual_numero
           : null,
       ),
       detail: percent(currentMciiPct),
+      tone:
+        currentExecutivePeriod && previousExecutivePeriod
+          ? deltaTone(currentExecutivePeriod.mcii_percentual_numero - previousExecutivePeriod.mcii_percentual_numero)
+          : 'neutral',
+      tooltip: `Diferença em pontos percentuais entre MCII% atual e MCII% anterior. Formula: MCII / receita liquida x 100; depois atual - anterior. ${executiveComparisonTooltipSuffix}`,
       target: 'margin' as IntelligenceTab,
     },
     {
       label: 'R$/KG',
       value: signedPercent(
-        currentExecutiveMonth && previousExecutiveMonth
-          ? pctChange(currentExecutiveMonth.preco_kg_numero, previousExecutiveMonth.preco_kg_numero)
+        currentExecutivePeriod && previousExecutivePeriod
+          ? pctChange(currentExecutivePeriod.preco_kg_numero, previousExecutivePeriod.preco_kg_numero)
           : null,
       ),
       detail: money(summary?.sales_summary?.preco_medio_kg),
+      tone:
+        currentExecutivePeriod && previousExecutivePeriod
+          ? deltaTone(pctChange(currentExecutivePeriod.preco_kg_numero, previousExecutivePeriod.preco_kg_numero))
+          : 'neutral',
+      tooltip: `Variação percentual do preço medio por kg. Formula: receita liquida / peso vendido em kg; depois compara periodo atual contra periodo anterior. ${executiveComparisonTooltipSuffix}`,
       target: 'prices' as IntelligenceTab,
     },
     {
       label: 'Clientes',
       value:
-        currentExecutiveMonth && previousExecutiveMonth
-          ? `${currentExecutiveMonth.clientes_numero - previousExecutiveMonth.clientes_numero >= 0 ? '+' : ''}${formatNumber(currentExecutiveMonth.clientes_numero - previousExecutiveMonth.clientes_numero)}`
+        currentExecutivePeriod && previousExecutivePeriod
+          ? `${currentExecutivePeriod.clientes_numero - previousExecutivePeriod.clientes_numero >= 0 ? '+' : ''}${formatNumber(currentExecutivePeriod.clientes_numero - previousExecutivePeriod.clientes_numero)}`
           : 'Sem dados',
       detail: `${formatNumber(summary?.sales_summary?.clientes)} no periodo`,
+      tone:
+        currentExecutivePeriod && previousExecutivePeriod
+          ? deltaTone(currentExecutivePeriod.clientes_numero - previousExecutivePeriod.clientes_numero)
+          : 'neutral',
+      tooltip: `Diferença absoluta de clientes distintos entre o periodo atual e o periodo anterior comparavel. Exemplo: +34 significa 34 clientes a mais. ${executiveComparisonTooltipSuffix}`,
       target: 'clients' as IntelligenceTab,
     },
   ]
@@ -851,15 +1097,39 @@ function App() {
   const forecastNextValue = forecastNextKg * averageRevenuePerKg
   const latestQuoteValue = quoteMonthly.at(-1)?.valor_cotado_numero ?? 0
   const executiveStatusCards = [
-    { label: 'Carteira', value: latestQuoteValue ? money(latestQuoteValue) : 'Sem dados', detail: 'Cotacoes do ultimo mes', target: 'quotes' as IntelligenceTab },
-    { label: 'Forecast', value: forecastNextValue ? money(forecastNextValue) : 'Sem dados', detail: `${formatNumber(forecastNextKg / 1000)} t estimadas`, target: 'forecast' as IntelligenceTab },
-    { label: 'Meta', value: 'Nao configurada', detail: 'Aguardando meta oficial', target: 'forecast' as IntelligenceTab },
-    { label: 'Gap', value: 'Sem meta', detail: 'Depende da meta do periodo', target: 'forecast' as IntelligenceTab },
+    {
+      label: 'Carteira',
+      value: latestQuoteValue ? money(latestQuoteValue) : 'Sem dados',
+      detail: 'Cotacoes do ultimo mes',
+      tooltip: 'Proxy operacional enquanto a carteira oficial nao esta modelada: usa o valor cotado no ultimo mes disponivel da base de cotacoes.',
+      target: 'quotes' as IntelligenceTab,
+    },
+    {
+      label: 'Forecast',
+      value: forecastNextValue ? money(forecastNextValue) : 'Sem dados',
+      detail: `${formatNumber(forecastNextKg / 1000)} t estimadas`,
+      tooltip: 'Estimativa simples: media ponderada dos ultimos 3 meses de volume, ajustada pela sazonalidade historica do proximo mes e convertida para reais pelo R$/kg medio do periodo.',
+      target: 'forecast' as IntelligenceTab,
+    },
+    {
+      label: 'Meta',
+      value: 'Nao configurada',
+      detail: 'Aguardando meta oficial',
+      tooltip: 'Este card ainda nao calcula meta porque a base oficial de metas por periodo, canal e rota ainda nao foi carregada.',
+      target: 'forecast' as IntelligenceTab,
+    },
+    {
+      label: 'Gap',
+      value: 'Sem meta',
+      detail: 'Depende da meta do periodo',
+      tooltip: 'Gap sera calculado como Forecast - Meta quando a meta oficial estiver disponivel. Sem meta, o sistema nao deve inventar desvio.',
+      target: 'forecast' as IntelligenceTab,
+    },
   ]
   const segmentGrowthMarginRows = segmentRows.slice(0, SCATTER_LIMIT).map((item) => ({
     name: item.name,
     crescimento_numero: totalSalesWeight ? (item.peso_numero / totalSalesWeight) * 100 : 0,
-    margem_numero: Number(item.receita_numero) ? (Number(item.mcii_numero || item.lucro_numero || 0) / Number(item.receita_numero)) * 100 : 0,
+    margem_numero: Number(item.receita_numero) ? (Number(item.mcii_numero ?? item.lucro_numero ?? 0) / Number(item.receita_numero)) * 100 : 0,
     receita_numero: item.receita_numero ?? item.valor_numero,
   }))
   const productMixRows = familyRows.slice(0, BAR_LIMIT).map((item) => ({
@@ -1044,6 +1314,7 @@ function App() {
       value: bestSlaWin && bestSlaWin.win_rate !== null ? percent(bestSlaWin.win_rate) : 'Sem conversao',
     },
   ]
+  const activeTemporalContext = temporalContext(macroArea, intelligenceTab, dateFrom, dateTo, useDailyExecutiveComparison)
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -1139,6 +1410,13 @@ function App() {
         </form>
       )}
 
+      {macroArea !== 'market' && activeTemporalContext && (
+        <section className="temporal-context" aria-label="Logica temporal da aba">
+          <strong>{activeTemporalContext.label}</strong>
+          <span>{activeTemporalContext.detail}</span>
+        </section>
+      )}
+
       {error && (
         <section className="notice error">
           <AlertTriangle size={18} />
@@ -1188,23 +1466,23 @@ function App() {
         <>
           <section className="executive-delta-grid" aria-label="Comparacao executiva">
             {executiveDeltaCards.map((item) => (
-              <ExecutiveMetricCard key={item.label} label={item.label} value={item.value} detail={item.detail} onClick={() => setIntelligenceTab(item.target)} />
+              <ExecutiveMetricCard key={item.label} label={item.label} value={item.value} detail={item.detail} tone={item.tone} tooltip={item.tooltip} onClick={() => setIntelligenceTab(item.target)} />
             ))}
           </section>
 
           <section className="executive-status-grid" aria-label="Carteira forecast meta e gap">
             {executiveStatusCards.map((item) => (
-              <ExecutiveMetricCard key={item.label} label={item.label} value={item.value} detail={item.detail} onClick={() => setIntelligenceTab(item.target)} />
+              <ExecutiveMetricCard key={item.label} label={item.label} value={item.value} detail={item.detail} tooltip={item.tooltip} onClick={() => setIntelligenceTab(item.target)} />
             ))}
           </section>
 
           <section className="dashboard-grid">
-            <Panel title="Receita / Ton / Margem" icon={<LineChartIcon size={17} />}>
+            <Panel title={`Receita / Ton / Margem ${businessTimeGrainLabel}`} icon={<LineChartIcon size={17} />}>
               <ChartFrame>
                 <ResponsiveContainer>
-                  <ComposedChart data={executiveMonthlyRows}>
+                  <ComposedChart data={executiveTrendRows}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="mes_label" />
+                    <XAxis dataKey="period_label" />
                     <YAxis yAxisId="money" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                     <YAxis yAxisId="ton" orientation="right" tickFormatter={(value) => `${formatNumber(value)} t`} />
                     <Tooltip formatter={(value, name) => [name === 'Toneladas' ? `${formatNumber(String(value))} t` : money(String(value)), name]} />
@@ -1234,12 +1512,12 @@ function App() {
               <p className="panel-note">Meta ainda nao configurada. O forecast usa media ponderada recente e sazonalidade historica.</p>
             </Panel>
 
-            <Panel title="Price / Volume / Mix" icon={<BarChart3 size={17} />}>
+            <Panel title={`Price / Volume / Mix ${businessTimeGrainLabel}`} icon={<BarChart3 size={17} />}>
               <ChartFrame>
                 <ResponsiveContainer>
-                  <ComposedChart data={executiveMonthlyRows}>
+                  <ComposedChart data={executiveTrendRows}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="mes_label" />
+                    <XAxis dataKey="period_label" />
                     <YAxis yAxisId="price" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                     <YAxis yAxisId="volume" orientation="right" tickFormatter={(value) => `${formatNumber(value)} t`} />
                     <Tooltip formatter={(value, name) => [name === 'Volume' ? `${formatNumber(String(value))} t` : money(String(value)), name]} />
@@ -1444,12 +1722,12 @@ function App() {
           </section>
 
           <section className="dashboard-grid">
-            <Panel title="Notas, ticket medio e clientes por mes" icon={<BarChart3 size={17} />} wide>
+            <Panel title={`Notas, ticket medio e clientes ${businessTimeGrainLabel}`} icon={<BarChart3 size={17} />} wide>
               <ChartFrame>
                 <ResponsiveContainer>
-                  <BarChart data={monthlySales}>
+                  <BarChart data={businessTimeSeriesRows}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="mes_label" />
+                    <XAxis dataKey="period_label" />
                     <YAxis yAxisId="count" allowDecimals={false} tickFormatter={(value) => formatNumber(value)} />
                     <YAxis yAxisId="ticket" orientation="right" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                     <Tooltip
@@ -1708,12 +1986,12 @@ function App() {
 
       {intelligenceTab === 'prices' && (
         <section className="dashboard-grid">
-          <Panel title="Preco medio R$/kg" icon={<LineChartIcon size={17} />}>
+          <Panel title={`Preco medio R$/kg ${businessTimeGrainLabel}`} icon={<LineChartIcon size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <ReLineChart data={priceMonthly}>
+                <ReLineChart data={businessPriceTrendRows}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes_label" />
+                  <XAxis dataKey="period_label" />
                   <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                   <Tooltip formatter={(value, name) => [money(String(value)), name]} />
                   <Legend verticalAlign="bottom" height={24} />
@@ -1722,12 +2000,12 @@ function App() {
               </ResponsiveContainer>
             </ChartFrame>
           </Panel>
-          <Panel title="Minimo x medio x maximo" icon={<BarChart3 size={17} />}>
+          <Panel title={`Minimo x medio x maximo ${businessTimeGrainLabel}`} icon={<BarChart3 size={17} />}>
             <ChartFrame>
               <ResponsiveContainer>
-                <ReLineChart data={priceMonthly}>
+                <ReLineChart data={activePriceRangeRows}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes_label" />
+                  <XAxis dataKey="period_label" />
                   <YAxis tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                   <Tooltip formatter={(value, name) => [money(String(value)), name]} />
                   <Legend verticalAlign="bottom" height={24} />
@@ -1776,12 +2054,12 @@ function App() {
 
       {intelligenceTab === 'margin' && (
         <section className="dashboard-grid">
-          <Panel title="Preço de venda e margem por mês" icon={<AreaIcon size={17} />} wide>
+          <Panel title={`Preco de venda e margem ${businessTimeGrainLabel}`} icon={<AreaIcon size={17} />} wide>
             <ChartFrame>
               <ResponsiveContainer>
-                <ComposedChart data={marginMonthly}>
+                <ComposedChart data={businessMarginTrendRows}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes_label" />
+                  <XAxis dataKey="period_label" />
                   <YAxis yAxisId="mc" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
                   <YAxis yAxisId="percent" orientation="right" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
                   <YAxis yAxisId="kg" hide />
@@ -2483,10 +2761,12 @@ function Kpi({
   tooltip?: string
   onClick?: () => void
 }) {
+  const resolvedTooltip = tooltip ?? metricExplanation(title, detail)
   return (
     <article
       className={`kpi-card ${onClick ? 'clickable' : ''}`}
-      title={tooltip ?? `${title}: ${detail}`}
+      data-tooltip={resolvedTooltip}
+      aria-label={resolvedTooltip}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
@@ -2512,15 +2792,19 @@ function ExecutiveMetricCard({
   label,
   value,
   detail,
+  tone = 'neutral',
+  tooltip,
   onClick,
 }: {
   label: string
   value: string
   detail: string
+  tone?: CardTone
+  tooltip?: string
   onClick?: () => void
 }) {
   return (
-    <button className="executive-metric-card" type="button" onClick={onClick}>
+    <button className={`executive-metric-card ${tone}`} type="button" data-tooltip={tooltip} aria-label={tooltip ? `${label}: ${tooltip}` : label} onClick={onClick}>
       <span>{label}</span>
       <strong>{value}</strong>
       <small>{detail}</small>
@@ -2642,9 +2926,10 @@ function BusinessChannelTab({
     receita_numero: numericValue(item.receita_liquida as string),
     mcii_pct_numero: Number(item.mcii_pct ?? 0),
   }))
-  const scatterRows = familyRows.slice(0, SCATTER_LIMIT).map((item) => ({
-    name: String(item.familia ?? item.cliente ?? 'Sem descricao'),
-    preco_numero: numericValue(item.preco_medio_kg as string),
+  const scatterSourceRows = channel === 'ATACADO' ? secondaryRows : familyRows
+  const scatterRows = scatterSourceRows.slice(0, SCATTER_LIMIT).map((item) => ({
+    name: String(channel === 'ATACADO' ? item.cliente ?? 'Sem cliente' : item.familia ?? 'Sem familia'),
+    eixo_x_numero: channel === 'ATACADO' ? numericValue(item.ton_pedido as string) : numericValue(item.preco_medio_kg as string),
     mcii_pct_numero: Number(item.mcii_pct ?? 0),
     toneladas_numero: numericValue(item.toneladas as string) || numericValue(item.peso_total as string) / 1000,
   }))
@@ -2654,16 +2939,17 @@ function BusinessChannelTab({
   return (
     <>
       <section className="kpi-grid sales-kpis">
-        <Kpi title="Toneladas" displayValue={`${formatNumber(channelSummary.toneladas)} t`} detail={`${formatNumber(channelSummary.linhas)} registros`} icon={<Boxes />} />
-        <Kpi title="Receita liquida" displayValue={money(channelSummary.receita_liquida)} detail="ERP, nao valor Kommo" icon={<CircleDollarSign />} />
-        <Kpi title="MCII %" displayValue={percent(channelSummary.mcii_pct)} detail={money(channelSummary.margem_contribuicao)} icon={<LineChartIcon />} />
-        <Kpi title="Preco medio R$/kg" displayValue={money(channelSummary.preco_medio_kg)} detail="SUM receita / SUM kg" icon={<BarChart3 />} />
-        <Kpi title="Clientes ativos" value={channelSummary.clientes} detail="Clientes distintos no periodo" icon={<CheckCircle2 />} />
+        <Kpi title="Toneladas" displayValue={`${formatNumber(channelSummary.toneladas)} t`} detail={`${formatNumber(channelSummary.linhas)} registros`} icon={<Boxes />} tooltip="Volume vendido do canal no periodo filtrado. Formula: SUM(peso_total) / 1000." />
+        <Kpi title="Receita liquida" displayValue={money(channelSummary.receita_liquida)} detail="ERP, nao valor Kommo" icon={<CircleDollarSign />} tooltip="Receita liquida somada dos registros ERP classificados neste canal. Formula: SUM(receita_liquida)." />
+        <Kpi title="MCII %" displayValue={percent(channelSummary.mcii_pct)} detail={money(channelSummary.margem_contribuicao)} icon={<LineChartIcon />} tooltip="Margem de contribuição II percentual do canal. Formula: SUM(margem_contribuicao) / SUM(receita_liquida) x 100; nao e media simples das linhas." />
+        <Kpi title="Preco medio R$/kg" displayValue={money(channelSummary.preco_medio_kg)} detail="SUM receita / SUM kg" icon={<BarChart3 />} tooltip="Preço medio ponderado pelo volume. Formula: SUM(receita_liquida) / SUM(peso_total em kg)." />
+        <Kpi title="Clientes ativos" value={channelSummary.clientes} detail="Clientes distintos no periodo" icon={<CheckCircle2 />} tooltip="Quantidade de clientes distintos com venda no periodo filtrado dentro deste canal." />
         <Kpi
           title={channel === 'ATACADO' ? 'Ton / pedido' : 'Kg / cliente'}
           displayValue={channel === 'ATACADO' ? `${formatNumber(channelSummary.ton_pedido)} t` : `${formatNumber(channelSummary.kg_cliente)} kg`}
           detail={channel === 'ATACADO' ? `${formatNumber(channelSummary.pedidos)} pedidos` : 'SUM kg / clientes'}
           icon={<Gauge />}
+          tooltip={channel === 'ATACADO' ? 'Tamanho medio do pedido atacado. Formula: toneladas vendidas / pedidos distintos.' : 'Volume medio por cliente no varejo. Formula: SUM(peso_total em kg) / clientes distintos.'}
         />
       </section>
 
@@ -2723,9 +3009,21 @@ function BusinessChannelTab({
             <ResponsiveContainer>
               <ScatterChart margin={{ top: 12, right: 20, bottom: 12, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis type="number" dataKey="preco_numero" name="R$/kg" tickFormatter={(value) => money(value).replace('R$', 'R$ ')} />
+                <XAxis
+                  type="number"
+                  dataKey="eixo_x_numero"
+                  name={channel === 'ATACADO' ? 'Ton/pedido' : 'R$/kg'}
+                  tickFormatter={(value) => (channel === 'ATACADO' ? `${formatNumber(value)} t` : money(value).replace('R$', 'R$ '))}
+                />
                 <YAxis type="number" dataKey="mcii_pct_numero" name="MCII %" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
-                <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={(value, name) => [name === 'R$/kg' ? money(String(value)) : percent(Number(value)), name]} labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''} />
+                <Tooltip
+                  cursor={{ strokeDasharray: '3 3' }}
+                  formatter={(value, name) => [
+                    name === 'Ton/pedido' ? `${formatNumber(String(value))} t` : name === 'R$/kg' ? money(String(value)) : percent(Number(value)),
+                    name,
+                  ]}
+                  labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ''}
+                />
                 <Scatter data={scatterRows} dataKey="toneladas_numero" name="Toneladas" fill="#F18800" />
               </ScatterChart>
             </ResponsiveContainer>
@@ -4312,7 +4610,7 @@ function DataTable({ columns, rows, empty }: { columns: string[]; rows: string[]
     <div className="table-wrap">
       <table>
         <thead>
-          <tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr>
+          <tr>{columns.map((column) => <th key={column} data-tooltip={columnExplanation(column)}>{column}</th>)}</tr>
         </thead>
         <tbody>
           {rows.length === 0 ? (
@@ -4321,7 +4619,7 @@ function DataTable({ columns, rows, empty }: { columns: string[]; rows: string[]
             </tr>
           ) : (
             rows.map((row, index) => (
-              <tr key={index}>{row.map((cell, cellIndex) => <td key={`${index}-${cellIndex}`}>{cell}</td>)}</tr>
+              <tr key={index}>{row.map((cell, cellIndex) => <td key={`${index}-${cellIndex}`} title={`${columns[cellIndex] ?? 'Campo'}: ${cell}`}>{cell}</td>)}</tr>
             ))
           )}
         </tbody>

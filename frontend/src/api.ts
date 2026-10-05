@@ -96,6 +96,18 @@ export type DashboardSummary = {
       peso_total: string
       valor_perdido?: string
     }>
+    daily?: Array<{
+      dia: string
+      linhas: number
+      valor_total: string
+      receita_liquida?: string
+      lucro_bruto?: string
+      margem_contribuicao?: string
+      notas_fiscais?: number
+      clientes?: number
+      peso_total: string
+      valor_perdido?: string
+    }>
     families: Array<{ familia: string; linhas: number; valor_total: string; peso_total: string }>
     clients_abc?: Array<{ cliente: string; linhas: number; valor_total: string; peso_total: string; ultima_compra: string | null }>
     clients_decline?: Array<{ cliente: string; peso_anterior: string; peso_atual: string; queda_peso: string }>
