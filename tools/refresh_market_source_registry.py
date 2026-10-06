@@ -92,11 +92,11 @@ SOURCES: tuple[SourceDefinition, ...] = (
     SourceDefinition(
         "comex_stat_ncm",
         "Comex Stat NCM",
-        "csv",
+        "api",
         "comercio_exterior",
         "mensal",
-        ("COMEX_STAT_CSV_BASE_URL", "COMEX_STAT_API_TOKEN"),
-        "https://balanca.mdic.gov.br/balanca/bd/comexstat-bd/ncm",
+        ("COMEX_STAT_API_BASE_URL", "COMEX_STAT_CSV_BASE_URL", "COMEX_STAT_API_TOKEN"),
+        "https://api-comexstat.mdic.gov.br",
         None,
         "comex",
     ),
@@ -253,8 +253,12 @@ def check_aneel(client: httpx.Client, base_url: str) -> tuple[bool, dict[str, An
 
 
 def check_comex(client: httpx.Client, base_url: str) -> tuple[bool, dict[str, Any], str | None]:
+    base = base_url.rstrip("/")
+    if "api-comexstat" in base:
+        url = f"{base}/general/dates/updated"
+        return http_ok(client, url)
     year = date.today().year
-    url = f"{base_url.rstrip('/')}/IMP_{year}.csv"
+    url = f"{base}/IMP_{year}.csv"
     try:
         response = client.head(url)
     except httpx.ConnectError as exc:
