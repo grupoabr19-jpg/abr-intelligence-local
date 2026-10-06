@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -37,13 +38,16 @@ def to_br_date(value: str) -> str:
 
 
 def load_env() -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line in (ROOT / ".env").read_text(encoding="utf-8", errors="replace").splitlines():
+    values: dict[str, str] = dict(os.environ)
+    env_path = ROOT / ".env"
+    if not env_path.exists():
+        return values
+    for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
+        values.setdefault(key.strip(), value.strip())
     return values
 
 
