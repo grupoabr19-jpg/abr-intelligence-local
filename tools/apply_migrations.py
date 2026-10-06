@@ -61,6 +61,26 @@ def connect_database(
     database_url_key: str = "DATABASE_URL",
     database_url_pooler_key: str = "DATABASE_URL_POOLER",
 ) -> psycopg.Connection:
+    if (
+        database_url_key == "DATABASE_URL"
+        and database_url_pooler_key == "DATABASE_URL_POOLER"
+        and (
+            env.get("DATABASE_CORE_URL_POOLER")
+            or env.get("DATABASE_CORE_URL")
+            or env.get("DATABASE_NEON_URL_POOLER")
+            or env.get("DATABASE_NEON_URL")
+        )
+    ):
+        if env.get("DATABASE_CORE_URL_POOLER") or env.get("DATABASE_CORE_URL"):
+            database_url_key = "DATABASE_CORE_URL"
+            database_url_pooler_key = "DATABASE_CORE_URL_POOLER"
+        elif env.get("DATABASE_NEON_URL"):
+            database_url_key = "DATABASE_NEON_URL"
+            database_url_pooler_key = "__DATABASE_NEON_URL_POOLER_IGNORED_FOR_CORE__"
+        else:
+            database_url_key = "DATABASE_NEON_URL"
+            database_url_pooler_key = "DATABASE_NEON_URL_POOLER"
+
     database_url = env.get(database_url_key, "")
     database_url_pooler = env.get(database_url_pooler_key, "")
 
@@ -102,6 +122,28 @@ def connect_database(
     raise SystemExit("Nao foi possivel conectar ao Postgres configurado. Verifique host, usuario, senha e rede.")
 
 
+def connect_core_database(env: dict[str, str]) -> psycopg.Connection:
+    if env.get("DATABASE_CORE_URL_POOLER") or env.get("DATABASE_CORE_URL"):
+        return connect_database(
+            env,
+            database_url_key="DATABASE_CORE_URL",
+            database_url_pooler_key="DATABASE_CORE_URL_POOLER",
+        )
+    if env.get("DATABASE_NEON_URL"):
+        return connect_database(
+            env,
+            database_url_key="DATABASE_NEON_URL",
+            database_url_pooler_key="__DATABASE_NEON_URL_POOLER_IGNORED_FOR_CORE__",
+        )
+    if env.get("DATABASE_NEON_URL_POOLER"):
+        return connect_database(
+            env,
+            database_url_key="DATABASE_NEON_URL",
+            database_url_pooler_key="DATABASE_NEON_URL_POOLER",
+        )
+    return connect_database(env)
+
+
 def connect_crm_database(env: dict[str, str]) -> psycopg.Connection:
     if env.get("DATABASE_CRM_URL_POOLER") or env.get("DATABASE_CRM_URL"):
         return connect_database(
@@ -113,25 +155,39 @@ def connect_crm_database(env: dict[str, str]) -> psycopg.Connection:
 
 
 def connect_market_database(env: dict[str, str]) -> psycopg.Connection:
-    if env.get("DATABASE_NEON_URL_POOLER") or env.get("DATABASE_NEON_URL"):
-        return connect_database(
-            env,
-            database_url_key="DATABASE_NEON_URL",
-            database_url_pooler_key="DATABASE_NEON_URL_POOLER",
-        )
     if env.get("DATABASE_MARKET_URL_POOLER") or env.get("DATABASE_MARKET_URL"):
         return connect_database(
             env,
             database_url_key="DATABASE_MARKET_URL",
             database_url_pooler_key="DATABASE_MARKET_URL_POOLER",
         )
-    raise SystemExit("Configure DATABASE_NEON_URL_POOLER ou DATABASE_NEON_URL para o banco de Mercado.")
+    if env.get("DATABASE_NEON_URL_POOLER"):
+        return connect_database(
+            env,
+            database_url_key="__DATABASE_NEON_URL_IGNORED_FOR_MARKET__",
+            database_url_pooler_key="DATABASE_NEON_URL_POOLER",
+        )
+    if not (env.get("DATABASE_CORE_URL_POOLER") or env.get("DATABASE_CORE_URL") or env.get("DATABASE_NEON_URL")):
+        if env.get("DATABASE_NEON_URL"):
+            return connect_database(
+                env,
+                database_url_key="DATABASE_NEON_URL",
+                database_url_pooler_key="__DATABASE_NEON_URL_POOLER_IGNORED_FOR_MARKET__",
+            )
+    raise SystemExit("Configure DATABASE_MARKET_URL_POOLER ou DATABASE_MARKET_URL para o banco de Mercado.")
 
 
 def main() -> None:
     env = load_env()
-    if not env.get("DATABASE_URL") and not env.get("DATABASE_URL_POOLER"):
-        raise SystemExit("DATABASE_URL ou DATABASE_URL_POOLER nao encontrado no .env.")
+    if not (
+        env.get("DATABASE_CORE_URL")
+        or env.get("DATABASE_CORE_URL_POOLER")
+        or env.get("DATABASE_NEON_URL")
+        or env.get("DATABASE_NEON_URL_POOLER")
+        or env.get("DATABASE_URL")
+        or env.get("DATABASE_URL_POOLER")
+    ):
+        raise SystemExit("DATABASE_NEON_URL ou DATABASE_CORE_URL nao encontrado no .env.")
 
     migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
     if not migration_files:

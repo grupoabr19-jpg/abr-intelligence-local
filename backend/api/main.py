@@ -4,12 +4,13 @@ import asyncio
 from datetime import date
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.config import get_api_settings
+from backend.api.collector_ingest import ingest_collector_payload
 from backend.api.data import (
     internal_dashboard_summary,
     list_domains,
@@ -81,6 +82,17 @@ async def get_aster_reports() -> list[dict]:
 )
 async def get_aster_requirements() -> dict:
     return list_requirements()
+
+
+@app.post("/v1/collector/ingest", response_model=dict, tags=["collector"])
+async def ingest_collector_rows(request: Request, x_collector_key: str | None = Header(default=None)) -> dict:
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Payload JSON invalido.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload deve ser um objeto JSON.")
+    return await asyncio.to_thread(ingest_collector_payload, payload, x_collector_key)
 
 
 @app.get(

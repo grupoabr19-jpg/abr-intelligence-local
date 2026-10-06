@@ -4,11 +4,11 @@ Este checklist configura a entrada de dados do robo Python/extensao Aster para a
 
 ## Estado Atual Validado
 
-- Banco Supabase acessivel pelo pooler IPv4 `us-west-2:6543`.
-- Scripts locais priorizam `DATABASE_URL_POOLER` e nao tentam o host direto IPv6.
+- Banco Core atual em Neon, configurado por `DATABASE_NEON_URL`.
+- Scripts locais priorizam o Neon Core e mantem `DATABASE_URL` apenas como legado do Supabase1.
 - Migrations aplicadas com sucesso em 2026-09-22.
-- Edge Function `abr-collector-ingest` publicada e validada em 2026-09-22.
-- Edge Function atualizada para acumular `registros_lidos`/`registros_inseridos` quando o mesmo `sync_id` chega em varios lotes.
+- Endpoint FastAPI `/v1/collector/ingest` substitui a Edge Function antiga do Supabase1.
+- Ingestao atualizada para acumular `registros_lidos`/`registros_inseridos` quando o mesmo `sync_id` chega em varios lotes.
 - Smoke test de ingestao retornou `sucesso=true` e gravou em `staging_dados`/`historico_importacoes`.
 - Captura viva do Aster validada: 13 relatorios no menu e ReportQuery `D0A4D301` mapeada.
 - Execucao automatica do Aster validada para `D0A4D301`: o robo fez login, preencheu datas, clicou `Confirmar`, capturou `/execute` e ingeriu 154 linhas sem intervencao humana.
@@ -27,7 +27,7 @@ No `.env`, o `ABR_ASTER_FONTE_ID` ja pode ficar assim:
 ABR_ASTER_FONTE_ID=a0000000-0000-4000-8000-000000000001
 ```
 
-Confira se esta preenchido localmente e tambem nos secrets da Edge Function:
+Confira se esta preenchido localmente e tambem no Render:
 
 ```env
 ABR_COLLECTOR_KEY=
@@ -47,37 +47,16 @@ Copie o valor gerado para:
 ABR_COLLECTOR_KEY=<chave-gerada>
 ```
 
-Use exatamente a mesma chave como secret da Edge Function no Supabase.
+Use exatamente a mesma chave como variavel do Web Service no Render.
 
-## 2. Configurar Secrets da Edge Function
+## 2. Configurar Variaveis no Render
 
-No Dashboard do Supabase:
-
-1. Abra o projeto `abr-intelligence`.
-2. Va em **Edge Functions**.
-3. Abra **Secrets**.
-4. Cadastre:
+No Dashboard do Render, configure:
 
 ```env
-SUPABASE_URL=<url-do-projeto>
-SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+DATABASE_NEON_URL=<url-do-neon-core>
+ABR_INGEST_URL=https://<render-service>.onrender.com/v1/collector/ingest
 ABR_COLLECTOR_KEY=<mesma-chave-do-env-local>
-```
-
-A funcao tambem aceita `SUPABASE_SECRET_KEY` como fallback, mas o nome padrao recomendado no Supabase e `SUPABASE_SERVICE_ROLE_KEY`.
-
-## 3. Publicar ou Atualizar a Edge Function
-
-Publique a pasta:
-
-```text
-supabase/functions/abr-collector-ingest
-```
-
-URL esperada:
-
-```env
-ABR_INGEST_URL=https://<project-ref>.supabase.co/functions/v1/abr-collector-ingest
 ```
 
 Depois de publicar, valide:
@@ -106,10 +85,10 @@ ABR_ASTER_ENTIDADE=aster_relatorio
 No `.env`, prefira:
 
 ```env
-DATABASE_URL_POOLER=postgresql://postgres.<project-ref>:<senha>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
+DATABASE_NEON_URL=postgresql://...
 ```
 
-Se voce mantiver apenas `DATABASE_URL` com `db.<project-ref>.supabase.co`, os scripts usam essa URL apenas para extrair `project-ref` e senha, e entao tentam o pooler IPv4.
+Se voce mantiver `DATABASE_URL`, ela sera tratada como legado do Supabase1 e so sera usada quando `DATABASE_NEON_URL` nao estiver configurada.
 
 ```powershell
 .\.venv\Scripts\python.exe tools\supabase_probe.py

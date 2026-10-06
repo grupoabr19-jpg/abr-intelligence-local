@@ -10,9 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-import psycopg
-
-from tools.apply_migrations import connect_crm_database, connect_database, connect_market_database, load_env
+from tools.apply_migrations import connect_crm_database, connect_core_database, connect_database, connect_market_database, load_env
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -604,11 +602,18 @@ class DashboardRefreshManager:
     @staticmethod
     def _core_database_available(env: dict[str, str] | None = None) -> tuple[bool, str | None]:
         values = env or load_env()
-        database_url = values.get("DATABASE_URL_POOLER") or values.get("DATABASE_URL")
+        database_url = (
+            values.get("DATABASE_CORE_URL_POOLER")
+            or values.get("DATABASE_CORE_URL")
+            or values.get("DATABASE_NEON_URL_POOLER")
+            or values.get("DATABASE_NEON_URL")
+            or values.get("DATABASE_URL_POOLER")
+            or values.get("DATABASE_URL")
+        )
         if not database_url:
-            return False, "Banco core indisponivel: DATABASE_URL_POOLER ou DATABASE_URL nao configurada."
+            return False, "Banco core indisponivel: DATABASE_NEON_URL ou DATABASE_CORE_URL nao configurada."
         try:
-            with psycopg.connect(database_url, connect_timeout=CORE_PROBE_TIMEOUT_SECONDS) as conn:
+            with connect_core_database(values) as conn:
                 with conn.cursor() as cur:
                     cur.execute("select 1")
                     cur.fetchone()
