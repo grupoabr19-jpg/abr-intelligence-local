@@ -16,7 +16,7 @@ from backend.aster_collector.data_requirements import EXTRACTION_RULES, REQUIREM
 from backend.aster_collector.external_sources import EXTERNAL_SPREADSHEET_SOURCES
 from backend.aster_collector.report_registry import REPORTS
 from backend.intelligence_domains import list_intelligence_domains
-from tools.apply_migrations import connect_crm_database, connect_database, load_env
+from tools.apply_migrations import connect_crm_database, connect_database, connect_market_database, load_env
 from tools.summarize_aster_sales_regions import parse_decimal
 
 
@@ -5496,7 +5496,7 @@ def market_summary(
     market_date_to: date | None = None,
 ) -> dict[str, Any]:
     env = load_env()
-    with connect_database(env) as conn:
+    with connect_market_database(env) as conn:
         with conn.cursor() as cur:
             sources = market_registry_rows(cur)
             filter_defaults = market_filter_defaults(cur)

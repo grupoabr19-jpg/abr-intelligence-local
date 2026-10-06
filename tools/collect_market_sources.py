@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from backend.archive_storage import archive_records, require_drive_archive
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_market_database, load_env
 from tools.market_indicator_quality import normalize_and_validate_indicators
 
 
@@ -876,7 +876,7 @@ def extract_market_indicators(source_keys: list[str], dry_run: bool = False) -> 
     headers = {"user-agent": env.get("EXTERNAL_DATA_USER_AGENT") or DEFAULT_USER_AGENT}
     result: dict[str, Any] = {"documents": []}
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
-        with connect_database(env) as conn:
+        with connect_market_database(env) as conn:
             with conn.cursor() as cur:
                 documents = latest_planilha_documents(cur, source_keys)
                 for document in documents:
@@ -977,7 +977,7 @@ def collect_sources(source_keys: list[str], dry_run: bool = False) -> dict[str, 
                 )
             return result
 
-        with connect_database(env) as conn:
+        with connect_market_database(env) as conn:
             with conn.cursor() as cur:
                 for source in selected:
                     page_url = env.get(source.env_url) or source.default_url

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from backend.archive_storage import archive_records, require_drive_archive
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_market_database, load_env
 from tools.market_indicator_quality import normalize_and_validate_indicators
 
 
@@ -167,7 +167,7 @@ def collect_bcb_ptax(env: dict[str, str], client: httpx.Client, date_from: date,
             )
     if dry_run:
         return {"source_key": source_key, "records_found": len(rows), "indicators_found": len(indicators), "sample": rows[:3]}
-    with connect_database(env) as conn:
+    with connect_market_database(env) as conn:
         with conn.cursor() as cur:
             run_id = start_run(cur, source_key, {"url": url, "date_from": date_from.isoformat(), "date_to": date_to.isoformat()})
             try:
@@ -337,7 +337,7 @@ def collect_ibge_sidra_source(
     ]
     if dry_run:
         return {"source_key": source_key, "records_found": len(rows), "indicators_found": len(indicators), "sample": rows[:3]}
-    with connect_database(env) as conn:
+    with connect_market_database(env) as conn:
         with conn.cursor() as cur:
             run_id = start_run(cur, source_key, {"url": url, "table_id": table_id, "path": path})
             try:

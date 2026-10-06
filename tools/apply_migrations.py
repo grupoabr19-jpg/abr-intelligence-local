@@ -74,13 +74,17 @@ def connect_database(
             candidates.append((database_url_pooler_key, database_url_pooler))
 
     parsed = urlparse(database_url)
-    if parsed.hostname and ".pooler.supabase.com" in parsed.hostname:
-        candidates.append((database_url_key, database_url))
-    else:
-        candidates.extend(pooler_candidates_from_direct_url(database_url))
+    host = parsed.hostname or ""
+    if host:
+        if ".pooler.supabase.com" in host:
+            candidates.append((database_url_key, database_url))
+        elif host.startswith("db.") and host.endswith(".supabase.co"):
+            candidates.extend(pooler_candidates_from_direct_url(database_url))
+        else:
+            candidates.append((database_url_key, database_url))
 
     if not candidates:
-        raise SystemExit("Configure DATABASE_URL_POOLER ou use DATABASE_URL do Supabase com senha para montar o pooler IPv4.")
+        raise SystemExit(f"Configure {database_url_pooler_key} ou {database_url_key}.")
 
     for label, url in candidates:
         print(f"trying {label}")
@@ -95,7 +99,7 @@ def connect_database(
         except Exception as exc:
             print(f"failed {label}: {type(exc).__name__}: {str(exc)[:180]}")
 
-    raise SystemExit("Nao foi possivel conectar pelo pooler IPv4. Verifique senha, project-ref e regiao do pooler.")
+    raise SystemExit("Nao foi possivel conectar ao Postgres configurado. Verifique host, usuario, senha e rede.")
 
 
 def connect_crm_database(env: dict[str, str]) -> psycopg.Connection:
@@ -106,6 +110,22 @@ def connect_crm_database(env: dict[str, str]) -> psycopg.Connection:
             database_url_pooler_key="DATABASE_CRM_URL_POOLER",
         )
     return connect_database(env)
+
+
+def connect_market_database(env: dict[str, str]) -> psycopg.Connection:
+    if env.get("DATABASE_NEON_URL_POOLER") or env.get("DATABASE_NEON_URL"):
+        return connect_database(
+            env,
+            database_url_key="DATABASE_NEON_URL",
+            database_url_pooler_key="DATABASE_NEON_URL_POOLER",
+        )
+    if env.get("DATABASE_MARKET_URL_POOLER") or env.get("DATABASE_MARKET_URL"):
+        return connect_database(
+            env,
+            database_url_key="DATABASE_MARKET_URL",
+            database_url_pooler_key="DATABASE_MARKET_URL_POOLER",
+        )
+    raise SystemExit("Configure DATABASE_NEON_URL_POOLER ou DATABASE_NEON_URL para o banco de Mercado.")
 
 
 def main() -> None:

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from backend.archive_storage import archive_records, require_drive_archive
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_market_database, load_env
 from tools.market_indicator_quality import normalize_and_validate_indicators
 
 
@@ -375,7 +375,7 @@ def persist_rows(
     archive_enabled: bool = True,
 ) -> dict[str, Any]:
     db_rows = rollup_for_database(rows, grain=db_grain)
-    with connect_database(env) as conn:
+    with connect_market_database(env) as conn:
         with conn.cursor() as cur:
             run_id = start_run(
                 cur,

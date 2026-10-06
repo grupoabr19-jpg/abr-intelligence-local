@@ -372,6 +372,10 @@ def require_drive_archive(result: dict[str, Any], *, env: dict[str, str] | None 
     config = archive_config(env)
     if config.provider != "google_drive":
         return
+    values = env or load_env()
+    fail_on_error = values.get("ARCHIVE_FAIL_ON_DRIVE_ERROR", "false").strip().lower() in {"1", "true", "yes"}
+    if not fail_on_error:
+        return
     if not config.drive_folder_id:
         raise RuntimeError("ARCHIVE_GOOGLE_DRIVE_FOLDER_ID nao configurado para archive no Google Drive.")
     if result.get("drive_error"):
@@ -427,5 +431,5 @@ def register_archive_catalog(result: dict[str, Any], *, metadata: dict[str, Any]
                         ),
                     )
                 conn.commit()
-    except Exception:
+    except BaseException:
         return

@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from tools.apply_migrations import connect_crm_database, connect_database, load_env
+from tools.apply_migrations import connect_crm_database, connect_database, connect_market_database, load_env
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -402,56 +402,56 @@ class DashboardRefreshManager:
                 "key": "market_api",
                 "label": "Mercado API - BCB e IBGE",
                 "required_for_daily": False,
-                "database": "core",
+                "database": "market",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key in ('bcb_dolar_ptax', 'ibge_pim_sidra', 'ibge_construcao_sidra')",
             },
             {
                 "key": "market_aneel",
                 "label": "Mercado ANEEL - geracao fotovoltaica",
                 "required_for_daily": False,
-                "database": "core",
+                "database": "market",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key = 'aneel_dados_abertos'",
             },
             {
                 "key": "market_comex",
                 "label": "Mercado Comex - importacoes por NCM aprovado",
                 "required_for_daily": False,
-                "database": "core",
+                "database": "market",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key = 'comex_stat_ncm'",
             },
             {
                 "key": "market_world_bank",
                 "label": "Mercado World Bank - contexto macro",
                 "required_for_daily": False,
-                "database": "core",
+                "database": "market",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key = 'world_bank_wdi'",
             },
             {
                 "key": "market_obrasgov",
                 "label": "Mercado ObrasGov - projetos publicos",
                 "required_for_daily": False,
-                "database": "core",
+                "database": "market",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key = 'obrasgov_projetos'",
             },
             {
                 "key": "market_gov",
                 "label": "Mercado governo - CAGED e PNCP",
                 "required_for_daily": False,
-                "database": "core",
+                "database": "market",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso' and source_key in ('caged_microdados', 'pncp_consulta')",
             },
             {
                 "key": "market_public",
                 "label": "Mercado publico - Aco Brasil, CNI e INDA",
                 "required_for_daily": False,
-                "database": "core",
+                "database": "market",
                 "sql": "select max(finalizado_em) from public.mercado_coletas where status = 'sucesso'",
             },
             {
                 "key": "market_decision_aggs",
                 "label": "Mercado - sinais decisorios",
                 "required_for_daily": False,
-                "database": "core",
+                "database": "market",
                 "sql": "select max(refreshed_at) from public.agg_market_cockpit",
             },
         ]
@@ -460,9 +460,16 @@ class DashboardRefreshManager:
             grouped = {
                 "core": [item for item in checks if item["database"] == "core"],
                 "crm": [item for item in checks if item["database"] == "crm"],
+                "market": [item for item in checks if item["database"] == "market"],
             }
             for database, items in grouped.items():
-                connector = connect_crm_database if database == "crm" else connect_database
+                if not items:
+                    continue
+                connector = {
+                    "core": connect_database,
+                    "crm": connect_crm_database,
+                    "market": connect_market_database,
+                }[database]
                 with connector(env) as conn:
                     with conn.cursor() as cur:
                         for item in items:

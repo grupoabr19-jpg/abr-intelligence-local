@@ -16,7 +16,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_market_database, load_env
 
 
 DEFAULT_TIMEOUT = 30
@@ -438,7 +438,7 @@ def refresh_registry(dry_run: bool = False) -> dict[str, Any]:
     headers = {"user-agent": env.get("EXTERNAL_DATA_USER_AGENT") or DEFAULT_USER_AGENT}
     result: dict[str, Any] = {"sources": []}
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
-        with connect_database(env) as conn:
+        with connect_market_database(env) as conn:
             with conn.cursor() as cur:
                 for source in SOURCES:
                     configured, reachable, probe_status, metadata, error = source_health(env, client, source)

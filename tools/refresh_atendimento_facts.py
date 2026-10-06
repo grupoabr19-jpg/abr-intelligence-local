@@ -22,6 +22,7 @@ from backend.api.data import (
     parse_attendance_number,
 )
 from tools.apply_migrations import connect_crm_database, load_env
+from tools.collect_kommo_attendance import normalize_lead
 
 
 def key_text(value: Any, fallback: str = "sem_valor") -> str:
@@ -70,29 +71,97 @@ def utc_datetime(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-def load_active_staging(cur: Any) -> list[dict[str, Any]]:
+def load_active_kommo_rows(cur: Any, env: dict[str, str]) -> list[dict[str, Any]]:
     cur.execute(
         """
-        select source_id, payload_original, hash_registro, sync_id, imported_at
-        from public.staging_dados
-        where entidade = 'atendimento_kommo'
-          and source_system = 'KOMMO_API'
-          and ativo = true
-        order by imported_at desc
+        select kommo_user_id, name, email
+        from public.raw_kommo_users
+        where ativo = true
+        """
+    )
+    users = {
+        int(row[0]): str(row[1] or row[2] or row[0])
+        for row in cur.fetchall()
+        if row[0] is not None
+    }
+
+    cur.execute(
+        """
+        select kommo_pipeline_id, name
+        from public.raw_kommo_pipelines
+        where ativo = true
+        """
+    )
+    pipeline_names = {
+        int(row[0]): str(row[1] or row[0])
+        for row in cur.fetchall()
+        if row[0] is not None
+    }
+
+    cur.execute(
+        """
+        select kommo_status_id, name
+        from public.raw_kommo_statuses
+        where ativo = true
+        """
+    )
+    status_names = {
+        int(row[0]): str(row[1] or row[0])
+        for row in cur.fetchall()
+        if row[0] is not None
+    }
+
+    cur.execute(
+        """
+        select raw_payload
+        from public.raw_kommo_tasks
+        where ativo = true
+        """
+    )
+    tasks_by_lead: dict[int, dict[str, Any]] = {}
+    for (task,) in cur.fetchall():
+        if not isinstance(task, dict):
+            continue
+        entity_type = normalize_attendance_text(task.get("entity_type"))
+        if entity_type not in {"LEAD", "LEADS"}:
+            continue
+        if task.get("is_completed") is True:
+            continue
+        entity_id = task.get("entity_id")
+        if entity_id is None:
+            continue
+        try:
+            lead_id = int(entity_id)
+        except (TypeError, ValueError):
+            continue
+        current = tasks_by_lead.get(lead_id)
+        if current is None or int(task.get("complete_till") or 0) < int(current.get("complete_till") or 0):
+            tasks_by_lead[lead_id] = task
+
+    cur.execute(
+        """
+        select kommo_lead_id, raw_payload, raw_hash, sync_id, fetched_at
+        from public.raw_kommo_leads
+        where ativo = true
+        order by created_at_kommo desc nulls last, fetched_at desc
         limit 100000
         """
     )
-    return [
-        {
-            "source_id": row[0],
-            "payload": row[1],
-            "hash_registro": row[2],
-            "sync_id": row[3],
-            "imported_at": row[4],
-        }
-        for row in cur.fetchall()
-        if isinstance(row[1], dict)
-    ]
+    rows: list[dict[str, Any]] = []
+    for lead_id, raw_payload, raw_hash, sync_id, fetched_at in cur.fetchall():
+        if not isinstance(raw_payload, dict):
+            continue
+        payload = normalize_lead(raw_payload, env, users, pipeline_names, status_names, tasks_by_lead)
+        rows.append(
+            {
+                "source_id": f"kommo_lead:{lead_id}",
+                "payload": payload,
+                "hash_registro": raw_hash,
+                "sync_id": sync_id,
+                "imported_at": fetched_at,
+            }
+        )
+    return rows
 
 
 def load_first_human_event_by_lead(cur: Any) -> dict[str, datetime]:
@@ -572,7 +641,7 @@ def refresh() -> dict[str, Any]:
                 "insert into public.atendimento_refresh_runs(sync_id, status) values (%s, 'processando')",
                 (sync_id,),
             )
-            staging_rows = load_active_staging(cur)
+            staging_rows = load_active_kommo_rows(cur, env)
             dimensions = refresh_dimensions(cur, staging_rows)
             facts = refresh_facts(cur, staging_rows)
             events = refresh_events(cur)

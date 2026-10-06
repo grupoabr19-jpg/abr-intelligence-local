@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_market_database, load_env
 
 
 FAMILIES = ("CHAPAS", "TUBOS / METALONS", "PERFIS", "TELHAS")
@@ -742,7 +742,7 @@ def upsert_cockpit(cur: Any) -> int:
 
 def refresh() -> dict[str, Any]:
     env = load_env()
-    with connect_database(env) as conn:
+    with connect_market_database(env) as conn:
         with conn.cursor() as cur:
             price_rows = upsert_price_pressure(cur)
             demand_rows = upsert_demand_family(cur)

@@ -14,7 +14,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_market_database, load_env
 
 
 PNCP_TERMS = {
@@ -100,7 +100,7 @@ def active_count(cur: Any, table: str) -> int:
 
 def collect_caged(dry_run: bool = False) -> dict[str, Any]:
     env = load_env()
-    with connect_database(env) as conn:
+    with connect_market_database(env) as conn:
         with conn.cursor() as cur:
             total_cnae = active_count(cur, "dim_cnae_abr")
             if total_cnae == 0:
@@ -139,7 +139,7 @@ def pncp_rows(payload: Any) -> list[dict[str, Any]]:
 
 def collect_pncp(date_from: date, date_to: date, dry_run: bool = False) -> dict[str, Any]:
     env = load_env()
-    with connect_database(env) as conn:
+    with connect_market_database(env) as conn:
         with conn.cursor() as cur:
             cur.execute("select codigo from public.pncp_modality_codes where ativo = true")
             modalities = [str(row[0]) for row in cur.fetchall()]
@@ -215,7 +215,7 @@ def collect_pncp(date_from: date, date_to: date, dry_run: bool = False) -> dict[
             "opportunities_found": len(opportunities),
         }
 
-    with connect_database(env) as conn:
+    with connect_market_database(env) as conn:
         with conn.cursor() as cur:
             run_id = start_run(
                 cur,
