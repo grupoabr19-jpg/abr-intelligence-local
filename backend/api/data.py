@@ -11,6 +11,9 @@ from functools import lru_cache
 from statistics import median
 from typing import Any
 
+import os
+import psycopg
+
 from backend.aster_collector.commercial_regions import classify_sale
 from backend.aster_collector.data_requirements import EXTRACTION_RULES, REQUIREMENTS, requirements_by_source
 from backend.aster_collector.external_sources import EXTERNAL_SPREADSHEET_SOURCES
@@ -18,6 +21,23 @@ from backend.aster_collector.report_registry import REPORTS
 from backend.intelligence_domains import list_intelligence_domains
 from tools.apply_migrations import connect_crm_database, connect_database, connect_market_database, load_env
 from tools.summarize_aster_sales_regions import parse_decimal
+
+CORE_PROBE_TIMEOUT_SECONDS = int(os.environ.get("ABR_CORE_PROBE_TIMEOUT_SECONDS", "3") or "3")
+
+
+def core_database_error(env: dict[str, str] | None = None) -> str | None:
+    values = env or load_env()
+    database_url = values.get("DATABASE_URL_POOLER") or values.get("DATABASE_URL")
+    if not database_url:
+        return "DATABASE_URL_POOLER ou DATABASE_URL nao configurada."
+    try:
+        with psycopg.connect(database_url, connect_timeout=CORE_PROBE_TIMEOUT_SECONDS) as conn:
+            with conn.cursor() as cur:
+                cur.execute("select 1")
+                cur.fetchone()
+        return None
+    except BaseException as exc:
+        return f"{type(exc).__name__}: {str(exc)[:180]}"
 
 
 def list_reports() -> list[dict[str, Any]]:
@@ -5688,74 +5708,83 @@ def internal_dashboard_summary(
     history: list[dict[str, Any]] = []
     staging_by_entity: list[dict[str, Any]] = []
     drive_spreadsheets: dict[str, Any] = {"available": False, "latest_by_type": {}, "history": []}
-    try:
-        env = load_env()
-        with connect_database(env) as conn:
-            with conn.cursor() as cur:
-                history_query = """
-                    select entidade, sync_id, status, registros_lidos, registros_inseridos, iniciado_em
-                    from public.historico_importacoes
-                """
-                history_params: list[Any] = []
-                clauses = []
-                if date_from:
-                    clauses.append("iniciado_em::date >= %s")
-                    history_params.append(date_from)
-                if date_to:
-                    clauses.append("iniciado_em::date <= %s")
-                    history_params.append(date_to)
-                if clauses:
-                    history_query += " where " + " and ".join(clauses)
-                history_query += " order by iniciado_em desc limit 12"
-                cur.execute(history_query, history_params)
-                history = [
-                    {
-                        "entidade": row[0],
-                        "sync_id": row[1],
-                        "status": row[2],
-                        "registros_lidos": row[3],
-                        "registros_inseridos": row[4],
-                        "iniciado_em": row[5].isoformat() if row[5] else None,
-                    }
-                    for row in cur.fetchall()
-                ]
+    env = load_env()
+    core_error = core_database_error(env)
+    if core_error:
+        warnings.append(
+            "Base de Negocio indisponivel no momento. "
+            "Executivo, Varejo/Atacado, vendas e planilhas dependem do Supabase1/Core. "
+            f"Detalhe tecnico: {core_error}"
+        )
+    else:
+        try:
+            with connect_database(env) as conn:
+                with conn.cursor() as cur:
+                    history_query = """
+                        select entidade, sync_id, status, registros_lidos, registros_inseridos, iniciado_em
+                        from public.historico_importacoes
+                    """
+                    history_params: list[Any] = []
+                    clauses = []
+                    if date_from:
+                        clauses.append("iniciado_em::date >= %s")
+                        history_params.append(date_from)
+                    if date_to:
+                        clauses.append("iniciado_em::date <= %s")
+                        history_params.append(date_to)
+                    if clauses:
+                        history_query += " where " + " and ".join(clauses)
+                    history_query += " order by iniciado_em desc limit 12"
+                    cur.execute(history_query, history_params)
+                    history = [
+                        {
+                            "entidade": row[0],
+                            "sync_id": row[1],
+                            "status": row[2],
+                            "registros_lidos": row[3],
+                            "registros_inseridos": row[4],
+                            "iniciado_em": row[5].isoformat() if row[5] else None,
+                        }
+                        for row in cur.fetchall()
+                    ]
 
-                cur.execute(
-                    """
-                    select entidade, count(*)::int
-                    from public.staging_dados
-                    group by entidade
-                    order by count(*) desc
-                    limit 12
-                    """
-                )
-                staging_by_entity = [
-                    {"entidade": row[0], "linhas": row[1]}
-                    for row in cur.fetchall()
-                ]
-    except BaseException as exc:
-        warnings.append(f"Banco indisponivel para resumo ao vivo: {type(exc).__name__}: {str(exc)[:160]}")
-    try:
-        drive_spreadsheets = drive_spreadsheet_dashboard_cache()
-    except BaseException as exc:
-        warnings.append(f"Resumo de planilhas do Drive indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+                    cur.execute(
+                        """
+                        select entidade, count(*)::int
+                        from public.staging_dados
+                        group by entidade
+                        order by count(*) desc
+                        limit 12
+                        """
+                    )
+                    staging_by_entity = [
+                        {"entidade": row[0], "linhas": row[1]}
+                        for row in cur.fetchall()
+                    ]
+        except BaseException as exc:
+            warnings.append(f"Base de Negocio indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+        try:
+            drive_spreadsheets = drive_spreadsheet_dashboard_cache()
+        except BaseException as exc:
+            warnings.append(f"Resumo de planilhas do Drive indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
 
     regions: list[dict[str, Any]] = []
     sales_summary: dict[str, Any] = {}
-    if include_sales_regions:
-        try:
-            regions = sales_regions_summary(date_from=date_from, date_to=date_to)
-        except BaseException as exc:
-            warnings.append(f"Resumo de regioes indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
-    try:
-        sales_summary = sales_period_summary(date_from=date_from, date_to=date_to)
-    except BaseException as exc:
-        warnings.append(f"Resumo de vendas indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
     business_channels: dict[str, Any] = {}
-    try:
-        business_channels = business_channel_summary(date_from=date_from, date_to=date_to)
-    except BaseException as exc:
-        warnings.append(f"Resumo Varejo/Atacado indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+    if not core_error:
+        if include_sales_regions:
+            try:
+                regions = sales_regions_summary(date_from=date_from, date_to=date_to)
+            except BaseException as exc:
+                warnings.append(f"Resumo de regioes indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+        try:
+            sales_summary = sales_period_summary(date_from=date_from, date_to=date_to)
+        except BaseException as exc:
+            warnings.append(f"Resumo de vendas indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+        try:
+            business_channels = business_channel_summary(date_from=date_from, date_to=date_to)
+        except BaseException as exc:
+            warnings.append(f"Resumo Varejo/Atacado indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
     attendance: dict[str, Any] = {}
     try:
         attendance = attendance_summary(date_from=date_from, date_to=date_to)
