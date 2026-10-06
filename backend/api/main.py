@@ -64,7 +64,7 @@ async def health() -> dict[str, str]:
 
 @app.on_event("startup")
 async def start_dashboard_auto_refresh() -> None:
-    if settings.abr_enable_web_auto_refresh:
+    if settings.abr_enable_web_auto_refresh and settings.abr_enable_web_refresh_jobs:
         asyncio.create_task(dashboard_refresh_manager.run_auto_refresh_loop())
 
 
@@ -112,7 +112,7 @@ async def get_internal_dashboard(
     if market_date_from and market_date_to and market_date_from > market_date_to:
         raise HTTPException(status_code=422, detail="market_date_from must be before or equal to market_date_to.")
     set_dashboard_session_cookie(response)
-    if settings.abr_enable_web_auto_refresh:
+    if settings.abr_enable_web_auto_refresh and settings.abr_enable_web_refresh_jobs:
         asyncio.create_task(dashboard_refresh_manager.ensure_daily_refresh(date_from=None, date_to=None))
     return await asyncio.to_thread(
         internal_dashboard_summary,

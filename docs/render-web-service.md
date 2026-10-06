@@ -25,8 +25,8 @@ HEADLESS=true
 ABR_API_KEY=
 ABR_DASHBOARD_PASSWORD=
 ABR_SESSION_SECRET=
-ABR_ENABLE_WEB_AUTO_REFRESH=false
-ABR_ENABLE_WEB_REFRESH_JOBS=false
+ABR_ENABLE_WEB_AUTO_REFRESH=true
+ABR_ENABLE_WEB_REFRESH_JOBS=true
 DATABASE_URL_POOLER=
 DATABASE_URL=
 SUPABASE_URL=
@@ -42,15 +42,15 @@ ASTER_LOGIN_PASSWORD=
 
 Nao precisa configurar `VITE_ABR_API_BASE_URL` nesse modo: o frontend usa a mesma origem do Web Service. Tambem nao configure chaves `VITE_*` para autenticar o dashboard; o login usa cookie HttpOnly emitido pelo backend.
 
-## Memoria do Web Service
+## Atualizacao diaria sem Render Cron
 
-O Web Service deve servir somente API e frontend. Nao execute coleta Aster/Kommo/Drive/Mercado dentro dele em instancia pequena do Render.
+Em conta free, o Web Service pode disparar a atualizacao automaticamente no primeiro acesso do dia. O backend verifica se as fontes obrigatorias ja foram atualizadas hoje; se nao foram, inicia uma carga D-1 em segundo plano. Depois dessa primeira tentativa, novas aberturas no mesmo dia nao repetem a coleta; o botao do cabecalho continua disponivel para comando manual.
 
 Mantenha no Web Service:
 
 ```env
-ABR_ENABLE_WEB_AUTO_REFRESH=false
-ABR_ENABLE_WEB_REFRESH_JOBS=false
+ABR_ENABLE_WEB_AUTO_REFRESH=true
+ABR_ENABLE_WEB_REFRESH_JOBS=true
 ```
 
 Para execucoes longas fora do Web Service, o orquestrador usa heartbeat por etapa e considera um job stale somente depois de:
@@ -63,10 +63,10 @@ No modo automatico, a extracao operacional busca somente o dia anterior para evi
 
 Com isso:
 
-- o dashboard nao inicia coleta pesada no startup;
-- abrir o dashboard nao dispara robo em segundo plano;
-- o botao de atualizar nao executa subprocessos pesados no Web Service;
-- a coleta deve rodar em Worker/Cron separado usando o mesmo Dockerfile.
+- o startup aguarda alguns segundos antes de checar a carga;
+- a primeira abertura do dia dispara a rotina apenas uma vez;
+- cada grupo de fontes so roda se o banco correspondente estiver acessivel;
+- o botao de atualizar executa a mesma rotina por comando manual.
 
 Comando recomendado para Cron/Worker:
 
@@ -80,7 +80,7 @@ Para execucao manual com periodo especifico:
 python tools/run_dashboard_refresh.py --mode manual --force --date-from 2026-01-01 --date-to 2026-09-30
 ```
 
-## Cron
+## Cron opcional
 
 Se a conta nao aceitar Blueprint, o cron tambem precisa ser substituido por uma alternativa externa, por exemplo:
 
@@ -88,7 +88,7 @@ Se a conta nao aceitar Blueprint, o cron tambem precisa ser substituido por uma 
 - GitHub Actions agendado executando o mesmo comando com as variaveis de ambiente.
 - Cron externo chamando uma rotina propria fora do Web Service.
 
-## Alternativa sem Render Cron
+## Alternativa externa sem Render Cron
 
 Para conta Render free, mantenha o Web Service apenas servindo o dashboard e use o GitHub Actions para rodar o robo de dados diariamente. O workflow fica em:
 
@@ -134,7 +134,7 @@ KOMMO_FIELD_SEGMENT
 KOMMO_FIELD_TEMPERATURE
 ```
 
-No Render, deixe estes dois valores desabilitados para evitar estouro de memoria no Web Service:
+Se optar por GitHub Actions ou outro worker externo, desabilite o disparo no Web Service para evitar duas cargas simultaneas:
 
 ```env
 ABR_ENABLE_WEB_AUTO_REFRESH=false

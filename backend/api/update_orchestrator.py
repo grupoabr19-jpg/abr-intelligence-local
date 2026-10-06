@@ -92,6 +92,10 @@ class DashboardRefreshManager:
         today = date.today()
         today_key = today.isoformat()
         async with self._lock:
+            if self._daily_checked_for == today_key:
+                if self._current_job and self._current_job.status in {"queued", "running"}:
+                    return self._current_job
+                return None
             self._daily_checked_for = today_key
             if self._current_job and self._current_job.status in {"queued", "running"}:
                 return self._current_job
@@ -160,10 +164,23 @@ class DashboardRefreshManager:
         await self._update_job(job_id, status="running", started_at=self._now(), message="Atualizando fontes de dados.")
 
         failures = 0
+        unavailable_databases = await asyncio.to_thread(self._unavailable_databases)
         for index, step in enumerate(job.steps):
             if step.status == "skipped":
                 continue
             await self._update_step(job_id, index, status="running", started_at=self._now())
+            database = self._database_for_step(step.key)
+            if database and database in unavailable_databases:
+                failures += 1
+                await self._update_step(
+                    job_id,
+                    index,
+                    status="failed",
+                    finished_at=self._now(),
+                    return_code=-1,
+                    error=unavailable_databases[database],
+                )
+                continue
             command = self._command_for_step(step.key, job)
             if not command:
                 await self._update_step(job_id, index, status="skipped", finished_at=self._now())
@@ -299,6 +316,16 @@ class DashboardRefreshManager:
                 "--date-to",
                 job.date_to,
             ]
+        return None
+
+    @staticmethod
+    def _database_for_step(key: str) -> str | None:
+        if key in {"kommo_collect", "atendimento_facts", "atendimento_contract"}:
+            return "crm"
+        if key.startswith("market_"):
+            return "market"
+        if key.startswith("aster_") or key in {"sales_cache", "drive_spreadsheets"}:
+            return "core"
         return None
 
     @staticmethod
@@ -455,21 +482,21 @@ class DashboardRefreshManager:
                 "sql": "select max(refreshed_at) from public.agg_market_cockpit",
             },
         ]
-        try:
-            rows = []
-            grouped = {
-                "core": [item for item in checks if item["database"] == "core"],
-                "crm": [item for item in checks if item["database"] == "crm"],
-                "market": [item for item in checks if item["database"] == "market"],
-            }
-            for database, items in grouped.items():
-                if not items:
-                    continue
-                connector = {
-                    "core": connect_database,
-                    "crm": connect_crm_database,
-                    "market": connect_market_database,
-                }[database]
+        rows = []
+        grouped = {
+            "core": [item for item in checks if item["database"] == "core"],
+            "crm": [item for item in checks if item["database"] == "crm"],
+            "market": [item for item in checks if item["database"] == "market"],
+        }
+        for database, items in grouped.items():
+            if not items:
+                continue
+            connector = {
+                "core": connect_database,
+                "crm": connect_crm_database,
+                "market": connect_market_database,
+            }[database]
+            try:
                 with connector(env) as conn:
                     with conn.cursor() as cur:
                         for item in items:
@@ -481,24 +508,45 @@ class DashboardRefreshManager:
                                     "key": item["key"],
                                     "label": item["label"],
                                     "required_for_daily": item["required_for_daily"],
+                                    "database": database,
                                     "last_success_at": value.isoformat() if value else None,
                                     "days_without_update": (today - value_date).days if value_date else None,
                                     "updated_today": value_date == today,
                                 }
                             )
-            return rows
-        except Exception as exc:
-            return [
-                {
-                    "key": "freshness_check",
-                    "label": "Verificacao de atualizacao",
-                    "required_for_daily": True,
-                    "last_success_at": None,
-                    "days_without_update": None,
-                    "updated_today": False,
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-            ]
+            except BaseException as exc:
+                for item in items:
+                    rows.append(
+                        {
+                            "key": item["key"],
+                            "label": item["label"],
+                            "required_for_daily": item["required_for_daily"],
+                            "database": database,
+                            "last_success_at": None,
+                            "days_without_update": None,
+                            "updated_today": False,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+        return rows
+
+    def _unavailable_databases(self) -> dict[str, str]:
+        env = load_env()
+        unavailable: dict[str, str] = {}
+        connectors = {
+            "core": connect_database,
+            "crm": connect_crm_database,
+            "market": connect_market_database,
+        }
+        for database, connector in connectors.items():
+            try:
+                with connector(env) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("select 1")
+                        cur.fetchone()
+            except BaseException as exc:
+                unavailable[database] = f"Banco {database} indisponivel: {type(exc).__name__}: {exc}"
+        return unavailable
 
     async def _get_job(self, job_id: str) -> DashboardRefreshJob | None:
         async with self._lock:
