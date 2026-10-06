@@ -59,7 +59,16 @@ Para execucoes longas fora do Web Service, o orquestrador usa heartbeat por etap
 ABR_REFRESH_STALE_MINUTES=240
 ```
 
-No modo automatico, a extracao operacional busca somente o dia anterior para evitar recarregar o ano inteiro no Aster todos os dias. Depois da ingestao, o cache comercial do dashboard e recalculado no acumulado do ano ate a data final da carga.
+No modo automatico, a extracao operacional busca somente o dia anterior para evitar recarregar o ano inteiro no Aster todos os dias. A ordem da esteira e:
+
+1. extrair os relatorios do Aster;
+2. gerar o compilado da staging Aster e subir no Drive;
+3. recalcular fatos/cache do dashboard;
+4. ler planilhas brutas do Drive;
+5. atualizar Kommo/CRM;
+6. atualizar Mercado/Neon.
+
+Se algum relatorio Aster falhar ou se o compilado nao subir no Drive, as etapas de fatos/cache/planilhas sao puladas para evitar dashboard com base incompleta.
 
 Com isso:
 

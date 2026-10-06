@@ -164,14 +164,26 @@ class DashboardRefreshManager:
         await self._update_job(job_id, status="running", started_at=self._now(), message="Atualizando fontes de dados.")
 
         failures = 0
+        failed_step_keys: set[str] = set()
         unavailable_databases = await asyncio.to_thread(self._unavailable_databases)
         for index, step in enumerate(job.steps):
             if step.status == "skipped":
                 continue
             await self._update_step(job_id, index, status="running", started_at=self._now())
+            dependency_error = self._dependency_error(step.key, failed_step_keys)
+            if dependency_error:
+                await self._update_step(
+                    job_id,
+                    index,
+                    status="skipped",
+                    finished_at=self._now(),
+                    error=dependency_error,
+                )
+                continue
             database = self._database_for_step(step.key)
             if database and database in unavailable_databases:
                 failures += 1
+                failed_step_keys.add(step.key)
                 await self._update_step(
                     job_id,
                     index,
@@ -190,6 +202,7 @@ class DashboardRefreshManager:
             status: RefreshStatus = "succeeded" if result["return_code"] == 0 else "failed"
             if status == "failed":
                 failures += 1
+                failed_step_keys.add(step.key)
             await self._update_step(
                 job_id,
                 index,
@@ -218,6 +231,7 @@ class DashboardRefreshManager:
             steps.append(RefreshStep(f"aster_{query_id}", f"Aster ERP: relatorio {query_id}"))
         steps.extend(
             [
+                RefreshStep("aster_archive_compiled", "Aster ERP: subir compilado no Drive"),
                 RefreshStep("aster_sales_fact", "Aster ERP: compactar vendas para dashboard"),
                 RefreshStep("sales_cache", "Dashboard comercial: recalcular cache"),
                 RefreshStep("drive_spreadsheets", "Google Drive: planilhas brutas novas"),
@@ -287,6 +301,8 @@ class DashboardRefreshManager:
             return [sys.executable, str(ROOT / "tools" / "refresh_atendimento_official_contract.py")]
         if key == "drive_spreadsheets":
             return [sys.executable, str(ROOT / "tools" / "collect_drive_spreadsheets.py")]
+        if key == "aster_archive_compiled":
+            return [sys.executable, str(ROOT / "tools" / "archive_aster_staging_copy.py")]
         if key.startswith("aster_"):
             query_id = key.removeprefix("aster_")
             if key == "aster_sales_fact":
@@ -329,8 +345,23 @@ class DashboardRefreshManager:
         return None
 
     @staticmethod
+    def _dependency_error(key: str, failed_step_keys: set[str]) -> str | None:
+        failed_aster_extract = sorted(
+            item for item in failed_step_keys if item.startswith("aster_") and item not in {"aster_archive_compiled", "aster_sales_fact"}
+        )
+        if key == "aster_archive_compiled" and failed_aster_extract:
+            return "Compilado Aster pulado porque um ou mais relatorios falharam: " + ", ".join(failed_aster_extract)
+        if key in {"aster_sales_fact", "sales_cache", "drive_spreadsheets"}:
+            blockers = [item for item in (*failed_aster_extract, "aster_archive_compiled") if item in failed_step_keys]
+            if blockers:
+                return "Etapa pulada porque o Aster ainda nao gerou e arquivou a base completa: " + ", ".join(blockers)
+        return None
+
+    @staticmethod
     def _timeout_for_step(key: str) -> int:
         if key == "market_aneel":
+            return 1_200
+        if key == "aster_archive_compiled":
             return 1_200
         if key == "aster_sales_fact":
             return 600
