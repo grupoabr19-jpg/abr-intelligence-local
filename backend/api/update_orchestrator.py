@@ -10,6 +10,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+import psycopg
+
 from tools.apply_migrations import connect_crm_database, connect_database, connect_market_database, load_env
 
 
@@ -35,6 +37,7 @@ PENDING_MARKET_SOURCES = (
 STALE_REFRESH_MINUTES = int(os.environ.get("ABR_REFRESH_STALE_MINUTES", "240") or "240")
 AUTO_REFRESH_CHECK_SECONDS = int(os.environ.get("ABR_AUTO_REFRESH_CHECK_SECONDS", "1800") or "1800")
 AUTO_REFRESH_START_DELAY_SECONDS = int(os.environ.get("ABR_AUTO_REFRESH_START_DELAY_SECONDS", "20") or "20")
+CORE_PROBE_TIMEOUT_SECONDS = int(os.environ.get("ABR_CORE_PROBE_TIMEOUT_SECONDS", "3") or "3")
 
 
 RefreshStatus = Literal["queued", "running", "succeeded", "partial", "failed", "skipped"]
@@ -116,7 +119,7 @@ class DashboardRefreshManager:
         while True:
             try:
                 await self.ensure_daily_refresh(date_from=None, date_to=None)
-            except Exception:
+            except BaseException:
                 pass
             await asyncio.sleep(max(AUTO_REFRESH_CHECK_SECONDS, 300))
 
@@ -522,6 +525,23 @@ class DashboardRefreshManager:
         for database, items in grouped.items():
             if not items:
                 continue
+            if database == "core":
+                core_ok, core_error = self._core_database_available(env)
+                if not core_ok:
+                    for item in items:
+                        rows.append(
+                            {
+                                "key": item["key"],
+                                "label": item["label"],
+                                "required_for_daily": item["required_for_daily"],
+                                "database": database,
+                                "last_success_at": None,
+                                "days_without_update": None,
+                                "updated_today": False,
+                                "error": core_error or "Banco core indisponivel.",
+                            }
+                        )
+                    continue
             connector = {
                 "core": connect_database,
                 "crm": connect_crm_database,
@@ -564,8 +584,10 @@ class DashboardRefreshManager:
     def _unavailable_databases(self) -> dict[str, str]:
         env = load_env()
         unavailable: dict[str, str] = {}
+        core_ok, core_error = self._core_database_available(env)
+        if not core_ok:
+            unavailable["core"] = core_error or "Banco core indisponivel."
         connectors = {
-            "core": connect_database,
             "crm": connect_crm_database,
             "market": connect_market_database,
         }
@@ -578,6 +600,21 @@ class DashboardRefreshManager:
             except BaseException as exc:
                 unavailable[database] = f"Banco {database} indisponivel: {type(exc).__name__}: {exc}"
         return unavailable
+
+    @staticmethod
+    def _core_database_available(env: dict[str, str] | None = None) -> tuple[bool, str | None]:
+        values = env or load_env()
+        database_url = values.get("DATABASE_URL_POOLER") or values.get("DATABASE_URL")
+        if not database_url:
+            return False, "Banco core indisponivel: DATABASE_URL_POOLER ou DATABASE_URL nao configurada."
+        try:
+            with psycopg.connect(database_url, connect_timeout=CORE_PROBE_TIMEOUT_SECONDS) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("select 1")
+                    cur.fetchone()
+            return True, None
+        except BaseException as exc:
+            return False, f"Banco core indisponivel: {type(exc).__name__}: {str(exc)[:180]}"
 
     async def _get_job(self, job_id: str) -> DashboardRefreshJob | None:
         async with self._lock:
@@ -690,6 +727,8 @@ class DashboardRefreshManager:
 
     def _persist_job(self, job: DashboardRefreshJob) -> None:
         env = load_env()
+        if not self._core_database_available(env)[0]:
+            return
         try:
             with connect_database(env) as conn:
                 with conn.cursor() as cur:
@@ -726,17 +765,19 @@ class DashboardRefreshManager:
                     for index, step in enumerate(job.steps):
                         self._persist_step_with_cursor(cur, job.job_id, index, step)
                     conn.commit()
-        except Exception:
+        except BaseException:
             return
 
     def _persist_step(self, job_id: str, index: int, step: RefreshStep) -> None:
         env = load_env()
+        if not self._core_database_available(env)[0]:
+            return
         try:
             with connect_database(env) as conn:
                 with conn.cursor() as cur:
                     self._persist_step_with_cursor(cur, job_id, index, step)
                     conn.commit()
-        except Exception:
+        except BaseException:
             return
 
     @staticmethod
@@ -789,6 +830,8 @@ class DashboardRefreshManager:
 
     def _stored_jobs(self) -> dict[str, Any]:
         env = load_env()
+        if not self._core_database_available(env)[0]:
+            return {"current": None, "history": []}
         try:
             self._mark_stale_jobs()
             with connect_database(env) as conn:
@@ -846,11 +889,13 @@ class DashboardRefreshManager:
                     ]
                     current = next((job for job in jobs if job["status"] in {"queued", "running"}), None)
                     return {"current": current, "history": jobs}
-        except Exception:
+        except BaseException:
             return {"current": None, "history": []}
 
     def _mark_stale_jobs(self) -> None:
         env = load_env()
+        if not self._core_database_available(env)[0]:
+            return
         try:
             with connect_database(env) as conn:
                 with conn.cursor() as cur:
@@ -882,7 +927,7 @@ class DashboardRefreshManager:
                         (STALE_REFRESH_MINUTES,),
                     )
                     conn.commit()
-        except Exception:
+        except BaseException:
             return
 
 
