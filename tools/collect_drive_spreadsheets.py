@@ -28,7 +28,7 @@ from backend.archive_storage import (  # noqa: E402
     slug,
 )
 from backend.aster_collector.local_spreadsheets import HEADER_ROWS  # noqa: E402
-from tools.apply_migrations import connect_database, load_env  # noqa: E402
+from tools.apply_migrations import connect_core_database, load_env  # noqa: E402
 
 
 GOOGLE_SHEETS_MIME = "application/vnd.google-apps.spreadsheet"
@@ -654,7 +654,7 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
     skipped: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
 
-    with connect_database(env) as conn:
+    with connect_core_database(env) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """

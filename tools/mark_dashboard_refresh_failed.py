@@ -8,12 +8,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_core_database, load_env
 
 
 def mark_failed(job_id: str, message: str) -> None:
     env = load_env()
-    with connect_database(env) as conn:
+    with connect_core_database(env) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """

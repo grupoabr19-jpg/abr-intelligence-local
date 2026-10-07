@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from backend.api.data import SALE_DATE_SQL, money_sql
-from tools.apply_migrations import connect_database, load_env
+from tools.apply_migrations import connect_core_database, load_env
 
 
 ENTITY = "aster_report_d0a4d301"
@@ -16,7 +16,7 @@ ENTITY = "aster_report_d0a4d301"
 
 def refresh() -> dict[str, object]:
     env = load_env()
-    with connect_database(env) as conn:
+    with connect_core_database(env) as conn:
         with conn.cursor() as cur:
             cur.execute("truncate table public.dashboard_sales_fact")
             cur.execute(

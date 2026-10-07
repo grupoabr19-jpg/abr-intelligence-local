@@ -154,7 +154,11 @@ def access_token_from_oauth(config: ArchiveConfig) -> str | None:
 
 
 def drive_access_token(config: ArchiveConfig) -> str | None:
-    return access_token_from_oauth(config) or access_token_from_service_account(config)
+    try:
+        token = access_token_from_oauth(config)
+    except Exception:
+        token = None
+    return token or access_token_from_service_account(config)
 
 
 def drive_headers(token: str) -> dict[str, str]:
@@ -175,7 +179,13 @@ def ensure_drive_folder(token: str, parent_id: str, name: str) -> str:
         response = client.get(
             "https://www.googleapis.com/drive/v3/files",
             headers=drive_headers(token),
-            params={"q": query, "fields": "files(id,name)", "pageSize": "1"},
+            params={
+                "q": query,
+                "fields": "files(id,name)",
+                "pageSize": "1",
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+            },
         )
         response.raise_for_status()
         files = response.json().get("files") or []
@@ -185,7 +195,7 @@ def ensure_drive_folder(token: str, parent_id: str, name: str) -> str:
             "https://www.googleapis.com/drive/v3/files",
             headers={**drive_headers(token), "content-type": "application/json"},
             json={"name": name, "mimeType": DRIVE_FOLDER_MIME, "parents": [parent_id]},
-            params={"fields": "id"},
+            params={"fields": "id", "supportsAllDrives": "true"},
         )
         response.raise_for_status()
         return str(response.json()["id"])
@@ -203,7 +213,11 @@ def upload_drive_file(token: str, parent_id: str, path: Path) -> dict[str, Any]:
             response = client.post(
                 "https://www.googleapis.com/upload/drive/v3/files",
                 headers=drive_headers(token),
-                params={"uploadType": "multipart", "fields": "id,name,webViewLink,size,mimeType"},
+                params={
+                    "uploadType": "multipart",
+                    "fields": "id,name,webViewLink,size,mimeType",
+                    "supportsAllDrives": "true",
+                },
                 files=files,
             )
             response.raise_for_status()

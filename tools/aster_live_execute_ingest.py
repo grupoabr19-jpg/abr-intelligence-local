@@ -85,6 +85,7 @@ def should_force_query_field_value(binding: StaticFieldBinding) -> bool:
 
 
 def post_ingest(env: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
+    timeout_seconds = int(env.get("ABR_INGEST_TIMEOUT_SECONDS") or "300")
     request = urllib.request.Request(
         env["ABR_INGEST_URL"],
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -95,7 +96,7 @@ def post_ingest(env: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=90) as response:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             body = response.read().decode("utf-8", errors="replace")
             return {"status": response.status, "body": json.loads(body)}
     except urllib.error.HTTPError as exc:
@@ -822,7 +823,8 @@ async def main_async(
     require_drive_archive(archive, env=env)
 
     responses = []
-    for index, batch in enumerate(chunks(rows, 1000), start=1):
+    batch_size = int(env.get("ABR_INGEST_BATCH_SIZE") or "250")
+    for index, batch in enumerate(chunks(rows, batch_size), start=1):
         payload = {
             "fonte_id": env["ABR_ASTER_FONTE_ID"],
             "sync_id": sync_id,
