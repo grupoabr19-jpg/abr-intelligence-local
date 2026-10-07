@@ -49,6 +49,7 @@ type IntelligenceTab =
   | 'retail'
   | 'wholesale'
   | 'commercial'
+  | 'demand'
   | 'clients'
   | 'segments'
   | 'products'
@@ -57,10 +58,13 @@ type IntelligenceTab =
   | 'quotes'
   | 'competition'
   | 'stock'
+  | 'stock-demand'
   | 'purchases'
   | 'forecast'
   | 'logistics'
   | 'map'
+  | 'sellers'
+  | 'data-update'
   | 'market-overview'
   | 'steel-market'
   | 'market-prices'
@@ -165,6 +169,55 @@ function nullableNumericValue(value: number | string | null | undefined) {
   return Number.isFinite(number) ? number : null
 }
 
+function normalizeMetricText(value: string | null | undefined) {
+  return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
+
+function compactNumericTotal(
+  sheets: DriveSpreadsheetSummary[],
+  includeTerms: string[],
+  excludeTerms: string[] = [],
+) {
+  const includes = includeTerms.map(normalizeMetricText)
+  const excludes = excludeTerms.map(normalizeMetricText)
+  const candidates = sheets.flatMap((sheet) =>
+    ((sheet.payload?.numeric_totals ?? []) as Array<{ campo?: string; soma?: number | string; preenchidos?: number | string }>).map((item) => ({
+      ...item,
+      origem: sheet.detected_type,
+      arquivo: sheet.drive_file_name,
+      normalizedCampo: normalizeMetricText(item.campo),
+    })),
+  )
+  const matched = candidates.filter((item) => (
+    includes.every((term) => item.normalizedCampo.includes(term))
+    && !excludes.some((term) => item.normalizedCampo.includes(term))
+  ))
+  if (!matched.length) return { value: 0, count: 0, field: null as string | null, source: null as string | null }
+  const best = [...matched].sort((a, b) => Math.abs(numericValue(b.soma)) - Math.abs(numericValue(a.soma)))[0]
+  return {
+    value: matched.reduce((sum, item) => sum + numericValue(item.soma), 0),
+    count: matched.reduce((sum, item) => sum + numericValue(item.preenchidos), 0),
+    field: best.campo ?? null,
+    source: best.origem ?? null,
+  }
+}
+
+function compactCategoryRows(sheets: DriveSpreadsheetSummary[], includeTerms: string[]) {
+  const includes = includeTerms.map(normalizeMetricText)
+  return sheets.flatMap((sheet) =>
+    ((sheet.payload?.top_categories ?? []) as Array<{ campo?: string; valores?: Array<{ valor?: string; linhas?: number | string }> }>).flatMap((category) => {
+      const normalizedCampo = normalizeMetricText(category.campo)
+      if (!includes.every((term) => normalizedCampo.includes(term))) return []
+      return (category.valores ?? []).map((item) => ({
+        origem: sheet.detected_type,
+        campo: category.campo ?? 'Categoria',
+        valor: item.valor ?? 'Sem valor',
+        linhas: numericValue(item.linhas),
+      }))
+    }),
+  ).sort((a, b) => b.linhas - a.linhas)
+}
+
 function pctChange(current: number, previous: number) {
   if (!previous) return null
   return ((current - previous) / Math.abs(previous)) * 100
@@ -220,8 +273,20 @@ function temporalContext(
   if (macroArea === 'market') return null
   if (['stock', 'purchases', 'logistics'].includes(tab)) {
     return {
-      label: 'Leitura snapshot',
-      detail: 'Esta aba usa a planilha mais recente reconhecida no Drive. O calendario global nao deve ser lido como filtro principal destes cards.',
+      label: 'Snapshot de arquivo',
+      detail: 'Esta aba usa a planilha mais recente reconhecida no Drive. O calendario global nao se aplica aos cards; a data correta e a posicao do arquivo carregado.',
+    }
+  }
+  if (tab === 'stock-demand') {
+    return {
+      label: 'Cruzamento operacional',
+      detail: 'Esta aba cruza snapshots de estoque com sinais de cotacao. O calendario so deve afetar demanda quando a cotacao oficial estiver modelada por data.',
+    }
+  }
+  if (tab === 'data-update') {
+    return {
+      label: 'Qualidade e atualizacao',
+      detail: 'Esta aba mostra fontes, arquivos e cobertura tecnica. Ela nao e leitura gerencial de desempenho.',
     }
   }
   if (tab === 'executive') {
@@ -234,20 +299,44 @@ function temporalContext(
   }
   if (tab === 'forecast') {
     return {
-      label: 'Historico e forecast',
-      detail: 'O calendario define a base historica; o forecast usa media ponderada recente e sazonalidade, nao soma simples do periodo.',
+      label: 'Mes de referencia',
+      detail: 'O forecast ainda usa a base historica carregada para projetar o proximo mes. Ele nao deve ser lido como soma do periodo filtrado.',
+    }
+  }
+  if (tab === 'clients') {
+    return {
+      label: 'Periodo + data-base',
+      detail: 'Cards de vendas usam o periodo filtrado. Recencia e risco de cliente devem usar historico completo com data-base; esta correcao entra na proxima camada.',
+    }
+  }
+  if (tab === 'quotes') {
+    return {
+      label: 'Periodo de cotacao',
+      detail: 'A visao atual ainda usa o proxy ERP de vendido/perdido. A fonte correta sera a planilha oficial de cotacoes do Drive, com data de emissao/validade/status.',
+    }
+  }
+  if (tab === 'demand') {
+    return {
+      label: 'Periodo de demanda',
+      detail: 'A visao usa cotacoes reconhecidas no Drive e proxy ERP enquanto a cotacao unica com status final nao estiver materializada no backend.',
     }
   }
   if (macroArea === 'service') {
     return {
       label: 'Periodo de atendimento',
-      detail: 'O calendario filtra leads/eventos do Kommo no periodo. Rankings e SLA devem ser comparados dentro do mesmo recorte.',
+      detail: 'O calendario filtra leads criados no Kommo. Indicadores de SLA e conversao precisam deixar claro se usam data de criacao, primeira acao ou fechamento.',
     }
   }
   return {
     label: 'Periodo acumulado',
     detail: 'O calendario filtra vendas do ERP no periodo selecionado. Cards de total somam o periodo; cards de variacao comparam com a base indicada no tooltip.',
   }
+}
+
+function usesGlobalDateRange(macroArea: MacroArea, tab: IntelligenceTab) {
+  if (macroArea === 'market') return false
+  if (macroArea === 'business' && ['stock', 'stock-demand', 'purchases', 'logistics', 'data-update'].includes(tab)) return false
+  return true
 }
 
 function isWholesale(row: { funcao?: string; regiao_polo?: string }) {
@@ -406,19 +495,15 @@ const MACRO_AREAS: Array<{ key: MacroArea; label: string; title: string }> = [
 const TABS_BY_MACRO: Record<MacroArea, Array<{ key: IntelligenceTab; label: string }>> = {
   business: [
     { key: 'executive', label: 'Executivo' },
-    { key: 'retail', label: 'Varejo' },
-    { key: 'wholesale', label: 'Atacado' },
-    { key: 'clients', label: 'Clientes' },
-    { key: 'segments', label: 'Segmentos' },
-    { key: 'products', label: 'Produtos' },
-    { key: 'prices', label: 'Precos' },
-    { key: 'margin', label: 'Margem' },
-    { key: 'quotes', label: 'Cotacoes' },
+    { key: 'demand', label: 'Demanda' },
     { key: 'stock', label: 'Estoque' },
+    { key: 'stock-demand', label: 'Estoque x Demanda' },
     { key: 'purchases', label: 'Compras' },
-    { key: 'forecast', label: 'Forecast' },
-    { key: 'logistics', label: 'Logistica' },
-    { key: 'map', label: 'Mapa Comercial' },
+    { key: 'quotes', label: 'Cotacoes' },
+    { key: 'products', label: 'Produtos' },
+    { key: 'sellers', label: 'Vendedores' },
+    { key: 'clients', label: 'Clientes' },
+    { key: 'data-update', label: 'Dados e atualizacao' },
   ],
   market: [
     { key: 'market-overview', label: 'Visao Geral' },
@@ -610,10 +695,65 @@ function App() {
   const stockSpreadsheetSummaries = ['ESTOQUE_DISPONIVEL', 'ENVELHECIMENTO_ESTOQUE', 'ESTOQUE']
     .map((type) => driveSpreadsheetCache[type])
     .filter(Boolean) as DriveSpreadsheetSummary[]
-  const purchaseSpreadsheetSummaries = ['COTACAO']
+  const stockAvailableSpreadsheetSummaries = ['ESTOQUE_DISPONIVEL', 'ESTOQUE']
+    .map((type) => driveSpreadsheetCache[type])
+    .filter(Boolean) as DriveSpreadsheetSummary[]
+  const stockAgingSpreadsheetSummaries = ['ENVELHECIMENTO_ESTOQUE']
+    .map((type) => driveSpreadsheetCache[type])
+    .filter(Boolean) as DriveSpreadsheetSummary[]
+  const demandSpreadsheetSummaries = ['COTACAO']
+    .map((type) => driveSpreadsheetCache[type])
+    .filter(Boolean) as DriveSpreadsheetSummary[]
+  const purchaseSpreadsheetSummaries = ['GESTAO_PRODUCAO', 'MARGEM', 'COTACAO']
     .map((type) => driveSpreadsheetCache[type])
     .filter(Boolean) as DriveSpreadsheetSummary[]
   const logisticsSpreadsheetSummaries: DriveSpreadsheetSummary[] = []
+  const driveBusinessFacts = summary?.drive_business_facts
+  const compactStockTon = compactNumericTotal(stockAvailableSpreadsheetSummaries, ['estoque'], ['valor', 'custo', 'preco'])
+  const compactStockValue = compactNumericTotal(stockAgingSpreadsheetSummaries, ['valor'])
+  const compactAgingValue = compactNumericTotal(stockAgingSpreadsheetSummaries, ['valor'])
+  const compactAgingTon = compactNumericTotal(stockAgingSpreadsheetSummaries, ['quantidade'], ['valor', 'custo', 'preco'])
+  const compactQuoteValue = compactNumericTotal(demandSpreadsheetSummaries, ['valor'])
+  const compactQuoteWeight = compactNumericTotal(demandSpreadsheetSummaries, ['peso'])
+  const compactQuoteCount = compactNumericTotal(demandSpreadsheetSummaries, ['cotac'])
+  const stockTon = driveBusinessFacts?.stock_available
+    ? { value: Number(driveBusinessFacts.stock_available.estoque_ton || 0), count: driveBusinessFacts.stock_available.rows, field: 'Toneladas oficiais', source: 'fato_estoque_disponivel' }
+    : compactStockTon
+  const stockValue = driveBusinessFacts?.stock_aging
+    ? { value: Number(driveBusinessFacts.stock_aging.valor || 0), count: driveBusinessFacts.stock_aging.rows, field: 'Valor oficial do aging', source: 'fato_estoque_envelhecimento' }
+    : compactStockValue
+  const agingValue = driveBusinessFacts?.stock_aging
+    ? { value: Number(driveBusinessFacts.stock_aging.aging_60_valor || 0), count: driveBusinessFacts.stock_aging.rows, field: 'Valor 60+ dias', source: 'fato_estoque_envelhecimento' }
+    : compactAgingValue
+  const agingTon = driveBusinessFacts?.stock_aging
+    ? { value: Number(driveBusinessFacts.stock_aging.aging_60_kg || 0) / 1000, count: driveBusinessFacts.stock_aging.rows, field: 'Toneladas 60+ dias', source: 'fato_estoque_envelhecimento' }
+    : compactAgingTon
+  const quoteValue = driveBusinessFacts?.quotes
+    ? { value: Number(driveBusinessFacts.quotes.valor_total || 0), count: driveBusinessFacts.quotes.rows, field: 'Valor oficial cotado', source: 'fato_cotacao_item' }
+    : compactQuoteValue
+  const quoteWeight = driveBusinessFacts?.quotes
+    ? { value: Number(driveBusinessFacts.quotes.peso_kg || 0) / 1000, count: driveBusinessFacts.quotes.rows, field: 'Toneladas cotadas', source: 'fato_cotacao_item' }
+    : compactQuoteWeight
+  const quoteCount = driveBusinessFacts?.quotes
+    ? { value: driveBusinessFacts.quotes.cotacoes, count: driveBusinessFacts.quotes.cotacoes, field: 'Cotacoes unicas oficiais', source: 'fato_cotacao_item' }
+    : compactQuoteCount
+  const quoteStatusRows = driveBusinessFacts?.quotes?.by_status?.length
+    ? driveBusinessFacts.quotes.by_status.slice(0, 8).map((item) => ({ valor: item.status, linhas: item.cotacoes || item.linhas, campo: `${money(item.valor_total)} / ${formatNumber(Number(item.peso_kg || 0) / 1000)} t`, origem: 'fato_cotacao_item' }))
+    : compactCategoryRows(demandSpreadsheetSummaries, ['status']).slice(0, 8)
+  const quoteProductRows = driveBusinessFacts?.quotes?.products?.length
+    ? driveBusinessFacts.quotes.products.slice(0, 8).map((item) => ({ valor: item.produto, linhas: item.cotacoes || item.linhas, campo: `${money(item.valor_total)} / ${formatNumber(Number(item.peso_kg || 0) / 1000)} t`, origem: item.codigo || 'fato_cotacao_item' }))
+    : compactCategoryRows(demandSpreadsheetSummaries, ['produto']).slice(0, 8)
+  const stockFamilyRows = driveBusinessFacts?.stock_available?.by_family?.length
+    ? driveBusinessFacts.stock_available.by_family.slice(0, 8).map((item) => ({ valor: item.familia, linhas: Number(item.estoque_kg || 0) / 1000, campo: 'Toneladas', origem: 'fato_estoque_disponivel' }))
+    : compactCategoryRows(stockSpreadsheetSummaries, ['familia']).slice(0, 8)
+  const compactStockProductRows = [
+    ...compactCategoryRows(stockAvailableSpreadsheetSummaries, ['descricao']),
+    ...compactCategoryRows(stockAgingSpreadsheetSummaries, ['desc']),
+  ].slice(0, 8)
+  const stockProductRows = driveBusinessFacts?.stock_available?.products?.length
+    ? driveBusinessFacts.stock_available.products.slice(0, 8).map((item) => ({ valor: item.produto, linhas: Number(item.estoque_kg || 0) / 1000, campo: 'Toneladas', origem: item.codigo || 'fato_estoque_disponivel' }))
+    : compactStockProductRows
+  const allSpreadsheetSummaries = Object.values(driveSpreadsheetCache).filter(Boolean) as DriveSpreadsheetSummary[]
   const marketAvailableTabsKey = (market?.available_tabs ?? ['market-overview']).join('|')
   const activeTabs = useMemo(() => {
     const tabs = TABS_BY_MACRO[macroArea]
@@ -1334,6 +1474,7 @@ function App() {
     },
   ]
   const activeTemporalContext = temporalContext(macroArea, intelligenceTab, dateFrom, dateTo, useDailyExecutiveComparison)
+  const showGlobalDateRange = usesGlobalDateRange(macroArea, intelligenceTab)
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -1382,16 +1523,25 @@ function App() {
             <Search size={16} />
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={filterCopy.search} />
           </div>
-          <label className="control date-control">
-            <CalendarDays size={16} />
-            <span>De</span>
-            <input type="date" value={dateFrom} max={dateTo} onChange={(event) => setDateFrom(event.target.value)} />
-          </label>
-          <label className="control date-control">
-            <CalendarDays size={16} />
-            <span>Ate</span>
-            <input type="date" value={dateTo} min={dateFrom} onChange={(event) => setDateTo(event.target.value)} />
-          </label>
+          {showGlobalDateRange ? (
+            <>
+              <label className="control date-control">
+                <CalendarDays size={16} />
+                <span>De</span>
+                <input type="date" value={dateFrom} max={dateTo} onChange={(event) => setDateFrom(event.target.value)} />
+              </label>
+              <label className="control date-control">
+                <CalendarDays size={16} />
+                <span>Ate</span>
+                <input type="date" value={dateTo} min={dateFrom} onChange={(event) => setDateTo(event.target.value)} />
+              </label>
+            </>
+          ) : (
+            <div className="control static-control" data-tooltip="Esta aba usa a ultima posicao carregada do Drive. Alterar calendario global nao mudaria estes indicadores.">
+              <CalendarDays size={16} />
+              <span>Snapshot atual</span>
+            </div>
+          )}
           <label className="control">
             <Filter size={16} />
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
@@ -1483,6 +1633,13 @@ function App() {
 
       {intelligenceTab === 'executive' && (
         <>
+          <section className="kpi-grid sales-kpis">
+            <Kpi title="Estoque disponivel" displayValue={stockTon.value ? formatNumber(stockTon.value) : 'Sem dados'} detail={stockTon.field ?? 'Aguardando estoque'} icon={<Boxes />} tooltip="Snapshot do arquivo de estoque mais recente no Drive. Enquanto a unidade oficial nao estiver modelada, o card exibe o campo numerico mais aderente encontrado no arquivo." />
+            <Kpi title="Valor em estoque" displayValue={stockValue.value ? money(stockValue.value) : 'Sem dados'} detail={stockValue.field ?? 'Aguardando valor'} icon={<CircleDollarSign />} tooltip="Valor financeiro detectado nos arquivos de estoque/envelhecimento. Deve ser lido como snapshot do arquivo, nao como periodo do calendario." />
+            <Kpi title="Cotacoes no radar" displayValue={quoteCount.count ? formatNumber(quoteCount.count) : formatNumber(demandSpreadsheetSummaries.reduce((sum, sheet) => sum + Number(sheet.row_count || sheet.payload?.rows || 0), 0))} detail="Linhas/cotacoes reconhecidas" icon={<TableProperties />} tooltip="Contagem operacional baseada na planilha de cotacoes reconhecida no Drive. A conversao por cotacao unica ainda depende de materializar ID/status final no backend." />
+            <Kpi title="Valor cotado" displayValue={quoteValue.value ? money(quoteValue.value) : 'Sem dados'} detail={quoteValue.field ?? 'Aguardando cotacoes'} icon={<Gauge />} tooltip="Soma do campo de valor mais aderente encontrado na planilha de cotacoes. Pode conter aberto, pedido, faturado ou perdido ate existir fato de cotacao normalizado." />
+          </section>
+
           <section className="executive-delta-grid" aria-label="Comparacao executiva">
             {executiveDeltaCards.map((item) => (
               <ExecutiveMetricCard key={item.label} label={item.label} value={item.value} detail={item.detail} tone={item.tone} tooltip={item.tooltip} onClick={() => setIntelligenceTab(item.target)} />
@@ -2268,10 +2425,10 @@ function App() {
       {intelligenceTab === 'forecast' && (
         <>
           <section className="kpi-grid">
-            <Kpi title="Forecast proximo mes" displayValue={`${formatNumber(forecastNextKg / 1000)} t`} detail="Media ponderada recente ajustada por sazonalidade" icon={<Gauge />} />
-            <Kpi title="Variacao vs mes atual" displayValue={`${forecastChange >= 0 ? '+' : ''}${forecastChange.toFixed(1)}%`} detail="Comparado ao ultimo mes da base" icon={<LineChartIcon />} />
-            <Kpi title="Cotacoes no periodo" displayValue={`${formatNumber(quotedKg / 1000)} t`} detail="Radar antecipado de demanda" icon={<TableProperties />} />
-            <Kpi title="Historico disponivel" displayValue={`${formatNumber(sortedMonthlySales.length)} meses`} detail="Base usada para tendencia e sazonalidade" icon={<CalendarDays />} />
+            <Kpi title="Forecast proximo mes" displayValue={`${formatNumber(forecastNextKg / 1000)} t`} detail="Media ponderada recente ajustada por sazonalidade" icon={<Gauge />} tooltip="Projecao provisoria no frontend: media ponderada dos ultimos meses carregados, ajustada pela sazonalidade historica do mes seguinte. Nao e soma do calendario global." />
+            <Kpi title="Variacao vs mes atual" displayValue={`${forecastChange >= 0 ? '+' : ''}${forecastChange.toFixed(1)}%`} detail="Comparado ao ultimo mes da base" icon={<LineChartIcon />} tooltip="Compara o forecast estimado com o ultimo mes disponivel da base. Deve ser lido como alerta direcional ate existir forecast oficial no backend." />
+            <Kpi title="Cotacoes no periodo" displayValue={`${formatNumber(quotedKg / 1000)} t`} detail="Radar antecipado de demanda" icon={<TableProperties />} tooltip="Ainda usa proxy de cotacao derivado do ERP vendido/perdido. A fonte correta sera a planilha oficial de cotacoes do Drive." />
+            <Kpi title="Historico disponivel" displayValue={`${formatNumber(sortedMonthlySales.length)} meses`} detail="Base usada para tendencia e sazonalidade" icon={<CalendarDays />} tooltip="Quantidade de meses com vendas liquidas disponiveis na consulta atual. Quanto menor o historico, menor a confiabilidade do forecast." />
           </section>
 
           <section className="dashboard-grid">
@@ -2387,15 +2544,67 @@ function App() {
       )}
 
       {macroArea === 'business' && intelligenceTab === 'stock' && (
-        <SpreadsheetBackedTab title="Estoque" sheets={stockSpreadsheetSummaries} />
+        <StockDecisionTab
+          sheets={stockSpreadsheetSummaries}
+          stockTon={stockTon}
+          stockValue={stockValue}
+          agingTon={agingTon}
+          agingValue={agingValue}
+          familyRows={stockFamilyRows}
+          productRows={stockProductRows}
+        />
+      )}
+
+      {macroArea === 'business' && intelligenceTab === 'demand' && (
+        <DemandDecisionTab
+          sheets={demandSpreadsheetSummaries}
+          quoteValue={quoteValue}
+          quoteWeight={quoteWeight}
+          quoteCount={quoteCount}
+          statusRows={quoteStatusRows}
+          productRows={quoteProductRows}
+        />
+      )}
+
+      {macroArea === 'business' && intelligenceTab === 'stock-demand' && (
+        <StockDemandDecisionTab
+          stockSheets={stockSpreadsheetSummaries}
+          demandSheets={demandSpreadsheetSummaries}
+          stockProducts={stockProductRows}
+          demandProducts={quoteProductRows}
+          stockValue={stockValue}
+          quoteValue={quoteValue}
+        />
       )}
 
       {macroArea === 'business' && intelligenceTab === 'purchases' && (
-        <SpreadsheetBackedTab title="Compras" sheets={purchaseSpreadsheetSummaries} />
+        <SpreadsheetBackedTab title="Compras e reposicao" sheets={purchaseSpreadsheetSummaries} />
       )}
 
       {macroArea === 'business' && intelligenceTab === 'logistics' && (
         <SpreadsheetBackedTab title="Logistica" sheets={logisticsSpreadsheetSummaries} />
+      )}
+
+      {macroArea === 'business' && intelligenceTab === 'sellers' && (
+        <section className="dashboard-grid">
+          <Panel title="Vendedores" icon={<TableProperties size={17} />} wide>
+            <DataTable
+              columns={['Vendedor', 'Receita', 'Perdido', 'Ton', 'Conversao']}
+              rows={sellerRows.map((item) => [
+                item.name,
+                money(item.valor_numero),
+                money(item.perdido_numero),
+                `${formatNumber(item.peso_numero / 1000)} t`,
+                percent(item.conversao_numero),
+              ])}
+              empty="Sem vendas por vendedor no periodo"
+            />
+          </Panel>
+        </section>
+      )}
+
+      {macroArea === 'business' && intelligenceTab === 'data-update' && (
+        <SpreadsheetBackedTab title="Dados e atualizacao" sheets={allSpreadsheetSummaries} />
       )}
 
       {macroArea === 'market' && (
@@ -3079,9 +3288,9 @@ function SpreadsheetBackedTab({ title, sheets }: { title: string; sheets: DriveS
   return (
     <>
       <section className="kpi-grid">
-        <Kpi title="Planilhas lidas" value={sheets.length} detail="Fontes reconhecidas no Drive" icon={<Database />} />
-        <Kpi title="Linhas analisadas" value={totalRows} detail="Resumo compacto, sem bruto no banco" icon={<TableProperties />} />
-        <Kpi title="Arquivo mais recente" displayValue={dateTimeLabel(latest?.drive_modified_time)} detail={latest?.drive_file_name ?? 'Sem arquivo'} icon={<CalendarDays />} />
+        <Kpi title="Planilhas lidas" value={sheets.length} detail="Fontes reconhecidas no Drive" icon={<Database />} tooltip="Quantidade de tipos de planilha reconhecidos no cache do Drive para esta aba. Nao depende do calendario global." />
+        <Kpi title="Linhas analisadas" value={totalRows} detail="Resumo compacto, sem bruto no banco" icon={<TableProperties />} tooltip="Soma das linhas lidas nas planilhas reconhecidas. O banco guarda resumo compacto; o bruto permanece no Drive/archive." />
+        <Kpi title="Arquivo mais recente" displayValue={dateTimeLabel(latest?.drive_modified_time)} detail={latest?.drive_file_name ?? 'Sem arquivo'} icon={<CalendarDays />} tooltip="Data de modificacao do arquivo mais recente usado como snapshot da aba. Esta e a data correta para estoque/compras/logistica, nao o calendario global." />
       </section>
 
       <section className="dashboard-grid">
@@ -3169,6 +3378,181 @@ function SpreadsheetBackedTab({ title, sheets }: { title: string; sheets: DriveS
             </details>
           </Panel>
         ))}
+      </section>
+    </>
+  )
+}
+
+function CompactSourceNote({ sheets }: { sheets: DriveSpreadsheetSummary[] }) {
+  const latest = [...sheets].sort((a, b) => String(b.drive_modified_time || '').localeCompare(String(a.drive_modified_time || '')))[0]
+  return (
+    <p className="panel-note">
+      Fonte: {latest?.drive_file_name ?? 'sem arquivo reconhecido'} | posicao {dateTimeLabel(latest?.drive_modified_time)}. Os cards usam resumo compacto das planilhas; metricas de conversao final exigem fato normalizado por cotacao unica.
+    </p>
+  )
+}
+
+function DecisionRowsTable({
+  title,
+  rows,
+  valueLabel = 'Linhas',
+}: {
+  title: string
+  rows: Array<{ valor: string; linhas: number; campo?: string; origem?: string }>
+  valueLabel?: string
+}) {
+  return (
+    <Panel title={title} icon={<TableProperties size={17} />}>
+      <DataTable
+        columns={['Item', valueLabel, 'Campo']}
+        rows={rows.map((item) => [item.valor, formatNumber(item.linhas), item.campo ?? item.origem ?? 'Resumo'])}
+        empty="Sem ranking reconhecido neste arquivo"
+      />
+    </Panel>
+  )
+}
+
+function StockDecisionTab({
+  sheets,
+  stockTon,
+  stockValue,
+  agingTon,
+  agingValue,
+  familyRows,
+  productRows,
+}: {
+  sheets: DriveSpreadsheetSummary[]
+  stockTon: { value: number; count: number; field: string | null; source: string | null }
+  stockValue: { value: number; count: number; field: string | null; source: string | null }
+  agingTon: { value: number; count: number; field: string | null; source: string | null }
+  agingValue: { value: number; count: number; field: string | null; source: string | null }
+  familyRows: Array<{ valor: string; linhas: number; campo?: string; origem?: string }>
+  productRows: Array<{ valor: string; linhas: number; campo?: string; origem?: string }>
+}) {
+  if (!sheets.length && !stockTon.count && !stockValue.count) return <UnavailableTab title="Estoque" />
+
+  return (
+    <>
+      <section className="kpi-grid">
+        <Kpi title="Estoque disponivel" displayValue={stockTon.value ? formatNumber(stockTon.value) : 'Sem dados'} detail={stockTon.field ?? 'Campo nao identificado'} icon={<Boxes />} tooltip="Snapshot da planilha de estoque disponivel/envelhecimento. A unidade exibida depende do campo numerico reconhecido no arquivo." />
+        <Kpi title="Valor total em estoque" displayValue={stockValue.value ? money(stockValue.value) : 'Sem dados'} detail={stockValue.field ?? 'Campo nao identificado'} icon={<CircleDollarSign />} tooltip="Soma do campo financeiro mais aderente encontrado nas planilhas de estoque. Nao depende do calendario global." />
+        <Kpi title="Estoque envelhecido" displayValue={agingTon.value ? formatNumber(agingTon.value) : 'Sem dados'} detail={agingTon.field ?? 'Aging pendente'} icon={<Gauge />} tooltip="Indicador provisório baseado no arquivo de envelhecimento. A separacao por faixas 0-29, 30-59, 60+ e 360+ exige agregacao por coluna de aging no backend." />
+        <Kpi title="Capital parado" displayValue={agingValue.value ? money(agingValue.value) : 'Sem dados'} detail={agingValue.field ?? 'Aging pendente'} icon={<AlertTriangle />} tooltip="Valor financeiro associado ao estoque envelhecido quando o arquivo traz campo de valor. Deve ser substituido por faixas oficiais de aging na proxima camada." />
+      </section>
+
+      <section className="dashboard-grid">
+        <Panel title="Alertas de estoque" icon={<AlertTriangle size={17} />} wide>
+          <div className="executive-intelligence-items">
+            <button type="button">
+              <strong>{stockValue.value ? `${money(stockValue.value)} em estoque mapeado` : 'Valor de estoque ainda nao mapeado'}</strong>
+              <span>Priorizar normalizacao de valor, deposito, familia e faixa de aging.</span>
+            </button>
+            <button type="button">
+              <strong>{familyRows[0]?.valor ?? 'Familia critica pendente'}</strong>
+              <span>{familyRows[0] ? `Maior concentracao por ocorrencias no arquivo: ${formatNumber(familyRows[0].linhas)} linhas.` : 'Falta campo de familia reconhecido.'}</span>
+            </button>
+          </div>
+          <CompactSourceNote sheets={sheets} />
+        </Panel>
+
+        <DecisionRowsTable title="Ranking por familia" rows={familyRows} />
+        <DecisionRowsTable title="Ranking operacional por produto" rows={productRows} />
+      </section>
+    </>
+  )
+}
+
+function DemandDecisionTab({
+  sheets,
+  quoteValue,
+  quoteWeight,
+  quoteCount,
+  statusRows,
+  productRows,
+}: {
+  sheets: DriveSpreadsheetSummary[]
+  quoteValue: { value: number; count: number; field: string | null; source: string | null }
+  quoteWeight: { value: number; count: number; field: string | null; source: string | null }
+  quoteCount: { value: number; count: number; field: string | null; source: string | null }
+  statusRows: Array<{ valor: string; linhas: number; campo?: string; origem?: string }>
+  productRows: Array<{ valor: string; linhas: number; campo?: string; origem?: string }>
+}) {
+  if (!sheets.length && !quoteCount.count) return <UnavailableTab title="Demanda" />
+  const totalRows = sheets.reduce((sum, sheet) => sum + Number(sheet.row_count || sheet.payload?.rows || 0), 0)
+
+  return (
+    <>
+      <section className="kpi-grid">
+        <Kpi title="Cotacoes unicas" displayValue={quoteCount.count ? formatNumber(quoteCount.count) : formatNumber(totalRows)} detail="Proxy ate ID unico" icon={<TableProperties />} tooltip="Contagem provisoria pela quantidade de linhas ou campo de cotacao reconhecido. Conversao correta exige agrupar por cotacao unica e status final." />
+        <Kpi title="Valor total cotado" displayValue={quoteValue.value ? money(quoteValue.value) : 'Sem dados'} detail={quoteValue.field ?? 'Campo nao identificado'} icon={<CircleDollarSign />} tooltip="Soma do campo financeiro mais aderente da planilha de cotacoes. Pode misturar status ate a normalizacao oficial." />
+        <Kpi title="Peso total cotado" displayValue={quoteWeight.value ? formatNumber(quoteWeight.value) : 'Sem dados'} detail={quoteWeight.field ?? 'Campo nao identificado'} icon={<Boxes />} tooltip="Soma do campo de peso/quantidade mais aderente da planilha de cotacoes." />
+        <Kpi title="Conversao oficial" displayValue="Pendente" detail="Depende de status final" icon={<Gauge />} tooltip="Nao calculado de proposito: precisa de cotacao unica, etapa final e ligacao com pedido/faturamento para nao inflar conversao." />
+      </section>
+
+      <section className="dashboard-grid">
+        <DecisionRowsTable title="Cotacoes por status" rows={statusRows} />
+        <DecisionRowsTable title="Produtos mais cotados" rows={productRows} />
+        <Panel title="Alertas de demanda" icon={<AlertTriangle size={17} />} wide>
+          <div className="executive-intelligence-items">
+            <button type="button">
+              <strong>{productRows[0]?.valor ?? 'Produto prioritario pendente'}</strong>
+              <span>{productRows[0] ? `Produto com maior presenca em cotacoes: ${formatNumber(productRows[0].linhas)} linhas.` : 'Falta campo de produto reconhecido.'}</span>
+            </button>
+            <button type="button">
+              <strong>Conversao ainda nao oficial</strong>
+              <span>Proxima etapa: criar fato de cotacoes com ID unico, valor, peso, status, vendedor, cliente, produto e datas.</span>
+            </button>
+          </div>
+          <CompactSourceNote sheets={sheets} />
+        </Panel>
+      </section>
+    </>
+  )
+}
+
+function StockDemandDecisionTab({
+  stockSheets,
+  demandSheets,
+  stockProducts,
+  demandProducts,
+  stockValue,
+  quoteValue,
+}: {
+  stockSheets: DriveSpreadsheetSummary[]
+  demandSheets: DriveSpreadsheetSummary[]
+  stockProducts: Array<{ valor: string; linhas: number; campo?: string; origem?: string }>
+  demandProducts: Array<{ valor: string; linhas: number; campo?: string; origem?: string }>
+  stockValue: { value: number; count: number; field: string | null; source: string | null }
+  quoteValue: { value: number; count: number; field: string | null; source: string | null }
+}) {
+  if (!stockSheets.length && !demandSheets.length && !stockProducts.length && !demandProducts.length) return <UnavailableTab title="Estoque x Demanda" />
+  const stockNames = new Set(stockProducts.map((item) => normalizeMetricText(item.valor)))
+  const overlap = demandProducts.filter((item) => stockNames.has(normalizeMetricText(item.valor))).slice(0, 8)
+
+  return (
+    <>
+      <section className="kpi-grid">
+        <Kpi title="Produtos com demanda" displayValue={formatNumber(demandProducts.length)} detail="Ranking da planilha de cotacoes" icon={<TableProperties />} tooltip="Produtos encontrados no resumo compacto da planilha de cotacoes." />
+        <Kpi title="Produtos em estoque" displayValue={formatNumber(stockProducts.length)} detail="Ranking de estoque" icon={<Boxes />} tooltip="Produtos encontrados no resumo compacto das planilhas de estoque." />
+        <Kpi title="Intersecao inicial" displayValue={formatNumber(overlap.length)} detail="Mesmo nome nos rankings" icon={<CheckCircle2 />} tooltip="Cruzamento textual provisório entre produtos cotados e produtos em estoque. A matriz oficial exige chave de produto normalizada." />
+        <Kpi title="Capital x demanda" displayValue={stockValue.value && quoteValue.value ? `${money(stockValue.value)} / ${money(quoteValue.value)}` : 'Parcial'} detail="Snapshot estoque / cotado" icon={<Gauge />} tooltip="Comparacao de alto nivel entre valor em estoque e valor cotado. Ainda nao substitui analise por produto." />
+      </section>
+
+      <section className="dashboard-grid">
+        <DecisionRowsTable title="Alta demanda com estoque mapeado" rows={overlap} />
+        <DecisionRowsTable title="Demanda para investigar" rows={demandProducts.filter((item) => !stockNames.has(normalizeMetricText(item.valor))).slice(0, 8)} />
+        <Panel title="Matriz de decisao" icon={<BarChart3 size={17} />} wide>
+          <DataTable
+            columns={['Situacao', 'Interpretacao', 'Decisao']}
+            rows={[
+              ['Alta demanda + baixo estoque', 'Risco de perda de venda', 'Comprar ou produzir'],
+              ['Alta demanda + estoque alto', 'Oportunidade imediata', 'Priorizar comercialmente'],
+              ['Baixa demanda + estoque alto', 'Capital parado', 'Criar acao de venda'],
+              ['Alta cotacao + alta perda', 'Problema comercial ou preco', 'Investigar'],
+            ]}
+            empty="Sem matriz"
+          />
+        </Panel>
       </section>
     </>
   )

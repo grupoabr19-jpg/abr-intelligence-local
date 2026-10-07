@@ -220,11 +220,19 @@ h1 {
   flex: 0 0 178px;
 }
 
-.date-control span {
+.date-control span,
+.static-control span {
   color: #526079;
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.static-control {
+  position: relative;
+  flex: 0 0 210px;
+  color: #253575;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .control input,
@@ -591,6 +599,7 @@ h1 {
 
 .kpi-card[data-tooltip]::after,
 .executive-metric-card[data-tooltip]::after,
+.control[data-tooltip]::after,
 th[data-tooltip]::after {
   content: attr(data-tooltip);
   position: absolute;
@@ -617,6 +626,7 @@ th[data-tooltip]::after {
 
 .kpi-card[data-tooltip]::before,
 .executive-metric-card[data-tooltip]::before,
+.control[data-tooltip]::before,
 th[data-tooltip]::before {
   content: "";
   position: absolute;
@@ -636,12 +646,16 @@ th[data-tooltip]::before {
 .kpi-card[data-tooltip]:focus-visible::after,
 .executive-metric-card[data-tooltip]:hover::after,
 .executive-metric-card[data-tooltip]:focus-visible::after,
+.control[data-tooltip]:hover::after,
+.control[data-tooltip]:focus-visible::after,
 th[data-tooltip]:hover::after,
 th[data-tooltip]:focus-visible::after,
 .kpi-card[data-tooltip]:hover::before,
 .kpi-card[data-tooltip]:focus-visible::before,
 .executive-metric-card[data-tooltip]:hover::before,
 .executive-metric-card[data-tooltip]:focus-visible::before,
+.control[data-tooltip]:hover::before,
+.control[data-tooltip]:focus-visible::before,
 th[data-tooltip]:hover::before,
 th[data-tooltip]:focus-visible::before {
   opacity: 1;
@@ -651,6 +665,8 @@ th[data-tooltip]:focus-visible::before {
 .kpi-card[data-tooltip]:focus-visible::after,
 .executive-metric-card[data-tooltip]:hover::after,
 .executive-metric-card[data-tooltip]:focus-visible::after,
+.control[data-tooltip]:hover::after,
+.control[data-tooltip]:focus-visible::after,
 th[data-tooltip]:hover::after,
 th[data-tooltip]:focus-visible::after {
   transform: translateY(0);

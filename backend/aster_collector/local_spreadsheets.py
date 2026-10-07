@@ -26,6 +26,13 @@ HEADER_ROWS = {
         "Apoio": 1,
         "Tabela de Preço": 2,
     },
+    "Estoque Disponivel.xlsx": {
+        "Estoque Disponivel": 1,
+    },
+    "Env Estoque.xlsx": {
+        "Env Estoque": 1,
+        "Sheet1": 1,
+    },
 }
 
 

@@ -7,7 +7,7 @@ import os
 import sys
 import unicodedata
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +135,58 @@ def parse_compact_number(value: Any) -> float | None:
         return None
 
 
+def parse_spreadsheet_date(value: Any) -> date | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    candidates = (
+        (text[:10], "%Y-%m-%d"),
+        (text[:10], "%d/%m/%Y"),
+        (text[:10], "%d-%m-%Y"),
+        (text[:19], "%Y-%m-%d %H:%M:%S"),
+        (text[:19], "%d/%m/%Y %H:%M:%S"),
+    )
+    for candidate, fmt in candidates:
+        try:
+            return datetime.strptime(candidate, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def normalized_lookup(payload: dict[str, Any], aliases: tuple[str, ...]) -> Any:
+    normalized_aliases = {normalize_text(alias) for alias in aliases}
+    normalized_payload = {normalize_text(key): value for key, value in payload.items()}
+    for alias in normalized_aliases:
+        if alias in normalized_payload:
+            return normalized_payload[alias]
+    for key, value in normalized_payload.items():
+        if any(alias in key or key in alias for alias in normalized_aliases):
+            return value
+    return None
+
+
+def clean_text_value(value: Any) -> str | None:
+    text = clean_cell(value)
+    return text or None
+
+
+def payload_from_staging(row: dict[str, Any]) -> dict[str, Any]:
+    payload = row.get("dados_transformados")
+    if isinstance(payload, dict):
+        return payload
+    envelope = row.get("payload_original")
+    if isinstance(envelope, dict) and isinstance(envelope.get("data"), dict):
+        return envelope["data"]
+    return {}
+
+
 def file_key(file_info: dict[str, Any]) -> str:
     modified = file_info.get("modifiedTime") or "sem_data"
     return f"{file_info['id']}:{modified}"
@@ -204,11 +256,15 @@ def configured_source_folders(env: dict[str, str], fallback_folder_id: str) -> l
 def already_processed(cur: Any, file_info: dict[str, Any]) -> bool:
     cur.execute(
         """
-        select 1
-        from public.drive_spreadsheet_ingestions
-        where drive_file_id = %s
-          and drive_modified_time = %s::timestamptz
-          and status = 'sucesso'
+        select i.id
+        from public.drive_spreadsheet_ingestions i
+        join public.dashboard_drive_spreadsheet_cache c
+          on c.drive_file_id = i.drive_file_id
+         and c.drive_modified_time = i.drive_modified_time
+        where i.drive_file_id = %s
+          and i.drive_modified_time = %s::timestamptz
+          and i.status = 'sucesso'
+          and coalesce((c.payload->>'compact_schema_version')::int, 0) >= 3
         limit 1
         """,
         (file_info["id"], file_info.get("modifiedTime")),
@@ -299,9 +355,12 @@ def build_compact_summary(
     sample_rows: list[dict[str, Any]] = []
 
     for staging_row in staging_rows:
-        payload = staging_row.get("payload_original") or {}
-        if not isinstance(payload, dict):
+        envelope = staging_row.get("payload_original") or {}
+        if not isinstance(envelope, dict):
             continue
+        payload = envelope.get("data")
+        if not isinstance(payload, dict):
+            payload = envelope
         if len(sample_rows) < 3:
             sample_rows.append({key: payload.get(key) for key in list(payload.keys())[:12]})
         for key, value in payload.items():
@@ -352,6 +411,7 @@ def build_compact_summary(
         "numeric_totals": numeric_rows[:16],
         "top_categories": category_rows[:8],
         "sample_rows": sample_rows,
+        "compact_schema_version": 3,
     }
 
 
@@ -440,7 +500,7 @@ def worksheet_rows(path: Path, *, drive_file_id: str, drive_file_name: str, sync
         if max_row < 1:
             continue
         preview_rows = list(worksheet.iter_rows(min_row=1, max_row=min(12, max_row), values_only=True))
-        header_row = infer_header_row(path.name, worksheet.title, preview_rows)
+        header_row = infer_header_row(drive_file_name, worksheet.title, preview_rows)
         header_values = next(worksheet.iter_rows(min_row=header_row, max_row=header_row, values_only=True), ())
         headers = [clean_cell(value) or f"coluna_{index + 1}" for index, value in enumerate(header_values)]
         rows_in_sheet = 0
@@ -607,6 +667,210 @@ def insert_staging_rows(cur: Any, rows: list[dict[str, Any]]) -> int:
     return inserted
 
 
+def replace_file_fact_rows(cur: Any, table_name: str, file_info: dict[str, Any]) -> None:
+    cur.execute(
+        f"""
+        delete from public.{table_name}
+        where drive_file_id = %s
+          and drive_modified_time = %s::timestamptz
+        """,
+        (file_info["id"], file_info.get("modifiedTime")),
+    )
+
+
+def insert_cotacao_facts(cur: Any, file_info: dict[str, Any], rows: list[dict[str, Any]], sync_id: str) -> int:
+    fact_rows = []
+    for row in rows:
+        payload = payload_from_staging(row)
+        if not payload:
+            continue
+        fact_rows.append(
+            (
+                row["source_id"],
+                file_info["id"],
+                file_info.get("name"),
+                file_info.get("modifiedTime"),
+                sync_id,
+                normalized_lookup(row.get("payload_original", {}), ("row_number", "_row_number")),
+                parse_spreadsheet_date(normalized_lookup(payload, ("DataCotacao", "Data Cotacao", "Data da Cotacao"))),
+                clean_text_value(normalized_lookup(payload, ("NumeroCotacao", "Numero Cotacao", "Cotacao", "Orcamento"))),
+                clean_text_value(normalized_lookup(payload, ("Numero Esboco", "NumeroEsboco", "Esboco"))),
+                clean_text_value(normalized_lookup(payload, ("Chave Esboco", "ChaveEsboco"))),
+                clean_text_value(normalized_lookup(payload, ("Pedido Destino", "PedidoDestino", "Pedido"))),
+                parse_spreadsheet_date(normalized_lookup(payload, ("DataAdicaoPV", "Data Adicao PV", "Data Pedido"))),
+                parse_spreadsheet_date(normalized_lookup(payload, ("DataNF", "Data NF", "Data Nota"))),
+                clean_text_value(normalized_lookup(payload, ("NumeroNF", "Numero NF", "NF"))),
+                clean_text_value(normalized_lookup(payload, ("Status", "Situacao"))),
+                clean_text_value(normalized_lookup(payload, ("Vendedor", "Representante"))),
+                clean_text_value(normalized_lookup(payload, ("Unidade", "Empresa"))),
+                clean_text_value(normalized_lookup(payload, ("CodCliente", "Codigo Cliente", "Cod. Cliente"))),
+                clean_text_value(normalized_lookup(payload, ("Cliente", "Nome Cliente"))),
+                clean_text_value(normalized_lookup(payload, ("Cidade", "Municipio"))),
+                clean_text_value(normalized_lookup(payload, ("UF", "Estado"))),
+                clean_text_value(normalized_lookup(payload, ("TipoFrete", "Tipo Frete", "Frete"))),
+                clean_text_value(normalized_lookup(payload, ("Item_PA", "Item PA", "Codigo Produto", "Item"))),
+                clean_text_value(normalized_lookup(payload, ("Desc_PA", "Desc PA", "Descricao Produto", "Produto", "Descricao"))),
+                clean_text_value(normalized_lookup(payload, ("Familia", "Família"))),
+                parse_compact_number(normalized_lookup(payload, ("QtdPedido", "Qtd Pedido", "Quantidade"))),
+                parse_compact_number(normalized_lookup(payload, ("Peso", "Peso Kg", "Peso KG", "Kg"))),
+                parse_compact_number(normalized_lookup(payload, ("PrecoKg", "Preco Kg", "Preço Kg", "R$/Kg"))),
+                parse_compact_number(normalized_lookup(payload, ("Total", "Valor Total", "Valor"))),
+                parse_spreadsheet_date(normalized_lookup(payload, ("DataEntregaComercial", "Data Entrega Comercial", "Entrega"))),
+                parse_compact_number(normalized_lookup(payload, ("Estoque_PA", "Estoque PA", "Estoque"))),
+                parse_compact_number(normalized_lookup(payload, ("EstoqueConfirmado_PA", "Estoque Confirmado PA", "Estoque Confirmado"))),
+                Json(payload),
+            )
+        )
+    if not fact_rows:
+        return 0
+    replace_file_fact_rows(cur, "fato_cotacao_item", file_info)
+    cur.executemany(
+        """
+        insert into public.fato_cotacao_item(
+          source_id, drive_file_id, drive_file_name, drive_modified_time, sync_id, row_number,
+          data_cotacao, numero_cotacao, numero_esboco, chave_esboco, pedido_destino,
+          data_adicao_pv, data_nf, numero_nf, status_original, vendedor, unidade,
+          cod_cliente, cliente, cidade, uf, tipo_frete, item_pa, desc_pa, familia,
+          qtd_pedido, peso_kg, preco_kg, valor_total, data_entrega_comercial,
+          estoque_pa, estoque_confirmado_pa, payload_original
+        )
+        values (
+          %s, %s, %s, %s::timestamptz, %s, %s,
+          %s, %s, %s, %s, %s,
+          %s, %s, %s, %s, %s, %s,
+          %s, %s, %s, %s, %s, %s, %s, %s,
+          %s, %s, %s, %s, %s,
+          %s, %s, %s::jsonb
+        )
+        on conflict (source_id) do update set
+          drive_file_name = excluded.drive_file_name,
+          drive_modified_time = excluded.drive_modified_time,
+          sync_id = excluded.sync_id,
+          data_cotacao = excluded.data_cotacao,
+          status_original = excluded.status_original,
+          valor_total = excluded.valor_total,
+          peso_kg = excluded.peso_kg,
+          payload_original = excluded.payload_original
+        """,
+        fact_rows,
+    )
+    return len(fact_rows)
+
+
+def insert_estoque_disponivel_facts(cur: Any, file_info: dict[str, Any], rows: list[dict[str, Any]], sync_id: str) -> int:
+    fact_rows = []
+    for row in rows:
+        payload = payload_from_staging(row)
+        if not payload:
+            continue
+        fact_rows.append(
+            (
+                row["source_id"],
+                file_info["id"],
+                file_info.get("name"),
+                file_info.get("modifiedTime"),
+                sync_id,
+                normalized_lookup(row.get("payload_original", {}), ("row_number", "_row_number")),
+                clean_text_value(normalized_lookup(payload, ("Familia", "Família"))),
+                clean_text_value(normalized_lookup(payload, ("SubGrupo", "Subgrupo", "Grupo"))),
+                clean_text_value(normalized_lookup(payload, ("Codigo", "Código", "Cod. material", "Cod Material"))),
+                clean_text_value(normalized_lookup(payload, ("Descricao", "Descrição", "Desc. material", "Desc Material"))),
+                clean_text_value(normalized_lookup(payload, ("Laminação", "Laminacao"))),
+                clean_text_value(normalized_lookup(payload, ("Espessura",))),
+                parse_compact_number(normalized_lookup(payload, ("Estoque Disponivel (Kg)", "Estoque Disponivel Kg", "Estoque Disponível (Kg)", "Estoque"))),
+                clean_text_value(normalized_lookup(payload, ("Deposito", "Depósito"))),
+                clean_text_value(normalized_lookup(payload, ("NomeDeposito", "Nome Deposito", "Descrição - Deposito"))),
+                Json(payload),
+            )
+        )
+    if not fact_rows:
+        return 0
+    replace_file_fact_rows(cur, "fato_estoque_disponivel", file_info)
+    cur.executemany(
+        """
+        insert into public.fato_estoque_disponivel(
+          source_id, drive_file_id, drive_file_name, drive_modified_time, sync_id, row_number,
+          familia, subgrupo, codigo, descricao, laminacao, espessura, estoque_disponivel_kg,
+          deposito, nome_deposito, payload_original
+        )
+        values (%s, %s, %s, %s::timestamptz, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+        on conflict (source_id) do update set
+          drive_file_name = excluded.drive_file_name,
+          drive_modified_time = excluded.drive_modified_time,
+          sync_id = excluded.sync_id,
+          estoque_disponivel_kg = excluded.estoque_disponivel_kg,
+          payload_original = excluded.payload_original
+        """,
+        fact_rows,
+    )
+    return len(fact_rows)
+
+
+def insert_estoque_envelhecimento_facts(cur: Any, file_info: dict[str, Any], rows: list[dict[str, Any]], sync_id: str) -> int:
+    fact_rows = []
+    for row in rows:
+        payload = payload_from_staging(row)
+        if not payload:
+            continue
+        fact_rows.append(
+            (
+                row["source_id"],
+                file_info["id"],
+                file_info.get("name"),
+                file_info.get("modifiedTime"),
+                sync_id,
+                normalized_lookup(row.get("payload_original", {}), ("row_number", "_row_number")),
+                parse_spreadsheet_date(normalized_lookup(payload, ("Dt. Base", "Data Base", "Dt Base"))),
+                clean_text_value(normalized_lookup(payload, ("Unidade", "Empresa"))),
+                clean_text_value(normalized_lookup(payload, ("Cod. material", "Cod Material", "Codigo"))),
+                clean_text_value(normalized_lookup(payload, ("Familia", "Família"))),
+                clean_text_value(normalized_lookup(payload, ("Desc. material", "Desc Material", "Descricao"))),
+                clean_text_value(normalized_lookup(payload, ("Depósito", "Deposito"))),
+                clean_text_value(normalized_lookup(payload, ("Descrição - Deposito", "Descricao Deposito", "NomeDeposito"))),
+                clean_text_value(normalized_lookup(payload, ("Aging", "Faixa Aging", "Idade"))),
+                parse_compact_number(normalized_lookup(payload, ("Quantidade", "Quantidade Kg", "Qtd", "Kg"))),
+                parse_compact_number(normalized_lookup(payload, ("Valor", "Valor Total"))),
+                parse_compact_number(normalized_lookup(payload, ("Custo médio por kg", "Custo medio por kg", "Custo Medio Kg"))),
+                clean_text_value(normalized_lookup(payload, ("Grupo",))),
+                clean_text_value(normalized_lookup(payload, ("Tipo",))),
+                clean_text_value(normalized_lookup(payload, ("Mercado",))),
+                Json(payload),
+            )
+        )
+    if not fact_rows:
+        return 0
+    replace_file_fact_rows(cur, "fato_estoque_envelhecimento", file_info)
+    cur.executemany(
+        """
+        insert into public.fato_estoque_envelhecimento(
+          source_id, drive_file_id, drive_file_name, drive_modified_time, sync_id, row_number,
+          dt_base, unidade, cod_material, familia, desc_material, deposito, descricao_deposito,
+          aging, quantidade_kg, valor, custo_medio_kg, grupo, tipo, mercado, payload_original
+        )
+        values (%s, %s, %s, %s::timestamptz, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+        on conflict (source_id) do update set
+          drive_file_name = excluded.drive_file_name,
+          drive_modified_time = excluded.drive_modified_time,
+          sync_id = excluded.sync_id,
+          quantidade_kg = excluded.quantidade_kg,
+          valor = excluded.valor,
+          payload_original = excluded.payload_original
+        """,
+        fact_rows,
+    )
+    return len(fact_rows)
+
+
+def insert_business_facts(cur: Any, detected_type: str, file_info: dict[str, Any], rows: list[dict[str, Any]], sync_id: str) -> int:
+    if detected_type == "COTACAO":
+        return insert_cotacao_facts(cur, file_info, rows, sync_id)
+    if detected_type == "ESTOQUE_DISPONIVEL":
+        return insert_estoque_disponivel_facts(cur, file_info, rows, sync_id)
+    if detected_type == "ENVELHECIMENTO_ESTOQUE":
+        return insert_estoque_envelhecimento_facts(cur, file_info, rows, sync_id)
+    return 0
+
+
 def download_spreadsheet(token: str, file_info: dict[str, Any], target_dir: Path) -> Path:
     name = file_info.get("name") or file_info["id"]
     mime_type = file_info.get("mimeType")
@@ -625,7 +889,13 @@ def download_spreadsheet(token: str, file_info: dict[str, Any], target_dir: Path
     return destination
 
 
-def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = None, max_depth: int = DEFAULT_SCAN_DEPTH) -> dict[str, Any]:
+def collect_drive_spreadsheets(
+    *,
+    execute: bool = True,
+    max_files: int | None = None,
+    max_depth: int = DEFAULT_SCAN_DEPTH,
+    force: bool = False,
+) -> dict[str, Any]:
     env = load_env()
     config = archive_config(env)
     if config.provider != "google_drive" or not config.drive_folder_id:
@@ -669,7 +939,7 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
                 (source_folders[0]["url"] if source_folders else env.get("ARCHIVE_GOOGLE_DRIVE_FOLDER_URL") or config.drive_folder_id,),
             )
             for file_info in files:
-                if already_processed(cur, file_info):
+                if not force and already_processed(cur, file_info):
                     skipped.append({"file_id": file_info["id"], "name": file_info.get("name"), "reason": "unchanged"})
                     continue
                 local_path: Path | None = None
@@ -702,6 +972,7 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
                     )
                     if execute:
                         upsert_dashboard_cache(cur, file_info, detected, compact_summary)
+                    facts_inserted = insert_business_facts(cur, detected, file_info, staging_rows, sync_id) if execute else 0
                     inserted = insert_staging_rows(cur, staging_rows) if execute and store_raw_rows else 0
                     finish_ingestion(
                         cur,
@@ -721,6 +992,7 @@ def collect_drive_spreadsheets(*, execute: bool = True, max_files: int | None = 
                             "detected_type": detected,
                             "rows_read": len(staging_rows),
                             "rows_inserted": inserted,
+                            "facts_inserted": facts_inserted,
                             "raw_rows_stored": bool(store_raw_rows),
                             "local_path": str(local_path.relative_to(ROOT)),
                         }
@@ -767,9 +1039,10 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Baixa e le planilhas, mas nao insere linhas em staging_dados.")
     parser.add_argument("--max-files", type=int, default=None, help="Limita quantidade de arquivos para diagnostico.")
     parser.add_argument("--max-depth", type=int, default=DEFAULT_SCAN_DEPTH, help="Profundidade maxima de subpastas no Drive.")
+    parser.add_argument("--force", action="store_true", help="Reprocessa arquivos ja vistos para reconstruir caches/fatos.")
     args = parser.parse_args()
 
-    result = collect_drive_spreadsheets(execute=not args.dry_run, max_files=args.max_files, max_depth=args.max_depth)
+    result = collect_drive_spreadsheets(execute=not args.dry_run, max_files=args.max_files, max_depth=args.max_depth, force=args.force)
     print(json.dumps(result, ensure_ascii=False, indent=2, default=json_default))
     if result.get("errors"):
         sys.exit(2)

@@ -177,6 +177,41 @@ def connect_market_database(env: dict[str, str]) -> psycopg.Connection:
     raise SystemExit("Configure DATABASE_MARKET_URL_POOLER ou DATABASE_MARKET_URL para o banco de Mercado.")
 
 
+def ensure_supabase_compatible_roles(cur: psycopg.Cursor) -> None:
+    for role_name in ("anon", "authenticated", "service_role"):
+        cur.execute("select 1 from pg_roles where rolname = %s", (role_name,))
+        if cur.fetchone():
+            continue
+        cur.execute(f"create role {role_name} nologin")
+
+
+def has_storage_buckets(cur: psycopg.Cursor) -> bool:
+    cur.execute(
+        """
+        select 1
+        from information_schema.tables
+        where table_schema = 'storage'
+          and table_name = 'buckets'
+        """
+    )
+    return cur.fetchone() is not None
+
+
+def has_public_function(cur: psycopg.Cursor, function_name: str) -> bool:
+    cur.execute(
+        """
+        select 1
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and p.proname = %s
+        limit 1
+        """,
+        (function_name,),
+    )
+    return cur.fetchone() is not None
+
+
 def main() -> None:
     env = load_env()
     if not (
@@ -195,6 +230,9 @@ def main() -> None:
 
     with connect_database(env) as conn:
         with conn.cursor() as cur:
+            ensure_supabase_compatible_roles(cur)
+            storage_buckets_available = has_storage_buckets(cur)
+            rls_auto_enable_available = has_public_function(cur, "rls_auto_enable")
             cur.execute(
                 """
                 create table if not exists public.abr_migrations_applied (
@@ -213,6 +251,22 @@ def main() -> None:
 
                 print(f"apply {migration.name}")
                 sql = migration.read_text(encoding="utf-8")
+                if "storage.buckets" in sql and not storage_buckets_available:
+                    print(f"skip {migration.name}: storage.buckets indisponivel neste Postgres")
+                    cur.execute(
+                        "insert into public.abr_migrations_applied(name) values (%s)",
+                        (migration.name,),
+                    )
+                    conn.commit()
+                    continue
+                if "public.rls_auto_enable()" in sql and not rls_auto_enable_available:
+                    print(f"skip {migration.name}: public.rls_auto_enable() indisponivel neste Postgres")
+                    cur.execute(
+                        "insert into public.abr_migrations_applied(name) values (%s)",
+                        (migration.name,),
+                    )
+                    conn.commit()
+                    continue
                 cur.execute(sql)
                 cur.execute(
                     "insert into public.abr_migrations_applied(name) values (%s)",

@@ -64,6 +64,41 @@ export type DashboardSummary = {
       refreshed_at: string | null
     }>
   }
+  drive_business_facts?: {
+    available: boolean
+    error?: string
+    stock_available?: {
+      rows: number
+      skus: number
+      deposits: number
+      estoque_kg: string
+      estoque_ton: string
+      latest_file_modified_time: string | null
+      by_family: Array<{ familia: string; linhas: number; estoque_kg: string }>
+      products: Array<{ produto: string; codigo: string; familia: string; estoque_kg: string }>
+    }
+    stock_aging?: {
+      rows: number
+      quantidade_kg: string
+      valor: string
+      aging_60_kg: string
+      aging_60_valor: string
+      dt_base: string | null
+      latest_file_modified_time: string | null
+      buckets: Array<{ aging: string; linhas: number; quantidade_kg: string; valor: string }>
+    }
+    quotes?: {
+      rows: number
+      cotacoes: number
+      clientes: number
+      valor_total: string
+      peso_kg: string
+      latest_quote_date: string | null
+      latest_file_modified_time: string | null
+      by_status: Array<{ status: string; linhas: number; cotacoes: number; valor_total: string; peso_kg: string }>
+      products: Array<{ produto: string; codigo: string; familia: string; linhas: number; cotacoes: number; valor_total: string; peso_kg: string }>
+    }
+  }
   recent_history: Array<{
     entidade: string
     sync_id: string

@@ -4,7 +4,7 @@ import json
 import hashlib
 import re
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
@@ -199,7 +199,7 @@ def sales_period_summary(date_from: date | None = None, date_to: date | None = N
 
 
 def sales_summary_cache_key(date_from: date | None = None, date_to: date | None = None) -> str:
-    return f"aster_report_d0a4d301:v2_net_sales:{date_from.isoformat() if date_from else 'all'}:{date_to.isoformat() if date_to else 'all'}"
+    return f"aster_report_d0a4d301:v3_time_policy:{date_from.isoformat() if date_from else 'all'}:{date_to.isoformat() if date_to else 'all'}"
 
 
 def read_sales_summary_cache(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any] | None:
@@ -224,10 +224,11 @@ def read_sales_summary_cache(date_from: date | None = None, date_to: date | None
                         from public.dashboard_sales_summary_cache
                         where date_from = %s
                           and date_to <= %s
+                          and cache_key like %s
                         order by date_to desc nulls last, refreshed_at desc
                         limit 1
                         """,
-                        (date_from, date_to),
+                        (date_from, date_to, f"aster_report_d0a4d301:v3_time_policy:{date_from.isoformat()}:%"),
                     )
                     fallback_row = cur.fetchone()
                     if fallback_row:
@@ -574,6 +575,30 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                     select *
                     from sales_all
                     where coalesce(tipo, '') <> 'CPerd'
+                ),
+                sales_history as materialized (
+                    select
+                      sale_date,
+                      valor_total,
+                      receita_liquida,
+                      lucro_bruto,
+                      margem_contribuicao,
+                      peso_total,
+                      cliente_codigo,
+                      cliente,
+                      item,
+                      produto,
+                      familia,
+                      segmento,
+                      cidade,
+                      estado,
+                      vendedor,
+                      tipo,
+                      nota_fiscal,
+                      valor_perdido,
+                      motivo_perda
+                    from public.dashboard_sales_fact
+                    where coalesce(tipo, '') <> 'CPerd'
                 )
                 select
                   count(*)::int as linhas,
@@ -656,7 +681,12 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                     select coalesce(jsonb_agg(to_jsonb(drop_rows) order by drop_rows.queda_peso desc), '[]'::jsonb)
                     from (
                       with bounds as (
-                        select date_trunc('month', max(sale_date))::date as latest_month
+                        select
+                          case
+                            when max(sale_date) >= (date_trunc('month', max(sale_date)) + interval '1 month - 1 day')::date
+                              then date_trunc('month', max(sale_date))::date
+                            else (date_trunc('month', max(sale_date)) - interval '1 month')::date
+                          end as latest_month
                         from sales
                         where sale_date is not null
                       ),
@@ -689,11 +719,12 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                       with client_rfm as (
                         select
                           cliente,
-                          (select max(sale_date) from sales) - max(sale_date) as recencia_dias,
+                          (select coalesce(max(sale_date), (select max(sale_date) from sales_history)) from sales) - max(sale_date) as recencia_dias,
                           count(*)::int as frequencia,
                           coalesce(sum(valor_total), 0) as valor_total
-                        from sales
+                        from sales_history
                         where sale_date is not null
+                          and sale_date <= (select coalesce(max(sale_date), (select max(sale_date) from sales_history)) from sales)
                         group by 1
                       )
                       select
@@ -715,9 +746,10 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                       with client_last_purchase as (
                         select
                           cliente,
-                          (select max(sale_date) from sales) - max(sale_date) as recencia_dias
-                        from sales
+                          (select coalesce(max(sale_date), (select max(sale_date) from sales_history)) from sales) - max(sale_date) as recencia_dias
+                        from sales_history
                         where sale_date is not null
+                          and sale_date <= (select coalesce(max(sale_date), (select max(sale_date) from sales_history)) from sales)
                         group by 1
                       )
                       select
@@ -1624,17 +1656,25 @@ def attendance_summary_from_facts(date_from: date | None = None, date_to: date |
                     }
                     for row in cur.fetchall()
                 ]
-                cur.execute(
-                    """
+                origin_query = """
                     select o.origem, count(*) as leads
                     from public.fato_atendimento_lead f
                     left join public.dim_atendimento_origem o on o.origem_key = f.origem_key
                     where f.excluido = false
+                """
+                origin_params: list[Any] = []
+                if date_from:
+                    origin_query += " and (f.created_at_kommo is null or f.created_at_kommo::date >= %s)"
+                    origin_params.append(date_from)
+                if date_to:
+                    origin_query += " and (f.created_at_kommo is null or f.created_at_kommo::date <= %s)"
+                    origin_params.append(date_to)
+                origin_query += """
                     group by o.origem
                     order by leads desc, o.origem
                     limit 12
-                    """
-                )
+                """
+                cur.execute(origin_query, origin_params)
                 origin_rows = [{"origem": row[0] or "Sem origem", "leads": row[1]} for row in cur.fetchall()]
                 cur.execute(
                     """
@@ -5660,6 +5700,139 @@ def market_summary(
     }
 
 
+DRIVE_NUMERIC_COLUMN_HINTS = (
+    "valor",
+    "total",
+    "qtd",
+    "quant",
+    "saldo",
+    "estoque",
+    "peso",
+    "kg",
+    "ton",
+    "preco",
+    "custo",
+)
+DRIVE_CATEGORY_COLUMN_HINTS = (
+    "produto",
+    "familia",
+    "grupo",
+    "vendedor",
+    "cliente",
+    "status",
+    "situacao",
+    "cidade",
+    "uf",
+    "deposito",
+    "empresa",
+)
+
+
+def drive_normalize_text(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    return "".join(char for char in normalized if not unicodedata.combining(char)).lower().strip()
+
+
+def drive_parse_number(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if number == number and number not in (float("inf"), float("-inf")) else None
+    cleaned = "".join(char for char in str(value).strip() if char.isdigit() or char in ",.-")
+    if not cleaned or cleaned in {"-", ".", ","}:
+        return None
+    if "," in cleaned:
+        cleaned = cleaned.replace(".", "").replace(",", ".")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def drive_cache_payload_looks_technical(payload: dict[str, Any]) -> bool:
+    if int(payload.get("compact_schema_version") or 0) >= 2:
+        return False
+    header_names = {str(item.get("campo") or "") for item in payload.get("headers", []) if isinstance(item, dict)}
+    return bool({"data", "drive_file_id", "drive_file_name", "tipo_planilha"} & header_names)
+
+
+def rebuild_drive_spreadsheet_summary_from_staging(
+    cur: Any,
+    payload: dict[str, Any],
+    detected_type: str,
+) -> dict[str, Any] | None:
+    drive_file_id = payload.get("drive_file_id")
+    if not drive_file_id:
+        return None
+    cur.execute(
+        """
+        select coalesce(payload_original->'data', dados_transformados)
+        from public.staging_dados
+        where coalesce(ativo, true) = true
+          and (
+            (payload_original->>'drive_file_id' = %s and payload_original->>'tipo_planilha' = %s)
+            or (source_id like %s and entidade = %s)
+          )
+        order by source_id
+        """,
+        (drive_file_id, detected_type, f"{drive_file_id}:%", f"planilha_{detected_type.lower()}"),
+    )
+    data_rows = [row[0] for row in cur.fetchall() if isinstance(row[0], dict)]
+    if not data_rows:
+        return None
+
+    header_counter: Counter[str] = Counter()
+    numeric_totals: dict[str, dict[str, float | int]] = {}
+    category_counts: dict[str, Counter[str]] = {}
+    sample_rows: list[dict[str, Any]] = []
+    for data in data_rows:
+        if len(sample_rows) < 3:
+            sample_rows.append({key: data.get(key) for key in list(data.keys())[:12]})
+        for key, value in data.items():
+            header_counter[key] += 1
+            normalized_key = drive_normalize_text(key)
+            if any(hint in normalized_key for hint in DRIVE_NUMERIC_COLUMN_HINTS):
+                number = drive_parse_number(value)
+                if number is not None:
+                    stats = numeric_totals.setdefault(key, {"sum": 0.0, "count": 0})
+                    stats["sum"] = float(stats["sum"]) + number
+                    stats["count"] = int(stats["count"]) + 1
+            if any(hint in normalized_key for hint in DRIVE_CATEGORY_COLUMN_HINTS):
+                text = str(value or "").strip()
+                if text:
+                    category_counts.setdefault(key, Counter())[text[:120]] += 1
+
+    numeric_rows = [
+        {"campo": key, "soma": round(float(value["sum"]), 2), "preenchidos": int(value["count"])}
+        for key, value in numeric_totals.items()
+        if int(value["count"]) > 0
+    ]
+    numeric_rows.sort(key=lambda item: abs(float(item["soma"])), reverse=True)
+    category_rows = [
+        {
+            "campo": key,
+            "valores": [{"valor": value, "linhas": count} for value, count in counter.most_common(8)],
+        }
+        for key, counter in category_counts.items()
+        if counter
+    ]
+    category_rows.sort(key=lambda item: sum(value["linhas"] for value in item["valores"]), reverse=True)
+    rebuilt = dict(payload)
+    rebuilt.update(
+        {
+            "rows": len(data_rows),
+            "headers": [{"campo": key, "linhas": count} for key, count in header_counter.most_common(30)],
+            "numeric_totals": numeric_rows[:16],
+            "top_categories": category_rows[:8],
+            "sample_rows": sample_rows,
+            "compact_schema_version": 3,
+            "rebuilt_from_staging": True,
+        }
+    )
+    return rebuilt
+
+
 def drive_spreadsheet_dashboard_cache() -> dict[str, Any]:
     env = load_env()
     try:
@@ -5673,6 +5846,15 @@ def drive_spreadsheet_dashboard_cache() -> dict[str, Any]:
                     """
                 )
                 rows = cur.fetchall()
+                repaired_rows = []
+                for detected_type, file_name, modified_time, row_count, payload, refreshed_at in rows:
+                    payload_dict = payload if isinstance(payload, dict) else {}
+                    if payload_dict and drive_cache_payload_looks_technical(payload_dict):
+                        rebuilt = rebuild_drive_spreadsheet_summary_from_staging(cur, payload_dict, str(detected_type))
+                        if rebuilt:
+                            payload_dict = rebuilt
+                    repaired_rows.append((detected_type, file_name, modified_time, row_count, payload_dict, refreshed_at))
+                rows = repaired_rows
     except Exception:
         return {"available": False, "latest_by_type": {}, "history": []}
 
@@ -5694,6 +5876,252 @@ def drive_spreadsheet_dashboard_cache() -> dict[str, Any]:
         "available": bool(latest_by_type),
         "latest_by_type": latest_by_type,
         "history": history[:20],
+    }
+
+
+def drive_business_facts_summary() -> dict[str, Any]:
+    env = load_env()
+    try:
+        with connect_database(env) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    with latest as (
+                      select drive_file_id, max(drive_modified_time) as drive_modified_time
+                      from public.fato_estoque_disponivel
+                      group by drive_file_id
+                    )
+                    select
+                      count(*)::int,
+                      count(distinct codigo)::int,
+                      count(distinct deposito)::int,
+                      coalesce(sum(estoque_disponivel_kg), 0),
+                      max(e.drive_modified_time)
+                    from public.fato_estoque_disponivel e
+                    join latest l using (drive_file_id, drive_modified_time)
+                    """
+                )
+                stock_row = cur.fetchone() or (0, 0, 0, Decimal("0"), None)
+
+                cur.execute(
+                    """
+                    with latest as (
+                      select drive_file_id, max(drive_modified_time) as drive_modified_time
+                      from public.fato_estoque_disponivel
+                      group by drive_file_id
+                    )
+                    select coalesce(familia, 'Sem familia') as familia,
+                           count(*)::int as linhas,
+                           coalesce(sum(estoque_disponivel_kg), 0) as estoque_kg
+                    from public.fato_estoque_disponivel e
+                    join latest l using (drive_file_id, drive_modified_time)
+                    group by 1
+                    order by estoque_kg desc nulls last
+                    limit 12
+                    """
+                )
+                stock_by_family = [
+                    {"familia": row[0], "linhas": row[1], "estoque_kg": f"{Decimal(str(row[2] or 0)):.2f}"}
+                    for row in cur.fetchall()
+                ]
+
+                cur.execute(
+                    """
+                    with latest as (
+                      select drive_file_id, max(drive_modified_time) as drive_modified_time
+                      from public.fato_estoque_disponivel
+                      group by drive_file_id
+                    )
+                    select coalesce(descricao, codigo, 'Sem produto') as produto,
+                           coalesce(codigo, '') as codigo,
+                           coalesce(familia, 'Sem familia') as familia,
+                           coalesce(sum(estoque_disponivel_kg), 0) as estoque_kg
+                    from public.fato_estoque_disponivel e
+                    join latest l using (drive_file_id, drive_modified_time)
+                    group by 1, 2, 3
+                    order by estoque_kg desc nulls last
+                    limit 12
+                    """
+                )
+                stock_products = [
+                    {"produto": row[0], "codigo": row[1], "familia": row[2], "estoque_kg": f"{Decimal(str(row[3] or 0)):.2f}"}
+                    for row in cur.fetchall()
+                ]
+
+                cur.execute(
+                    """
+                    with latest as (
+                      select drive_file_id, max(drive_modified_time) as drive_modified_time
+                      from public.fato_estoque_envelhecimento
+                      group by drive_file_id
+                    )
+                    select
+                      count(*)::int,
+                      coalesce(sum(quantidade_kg), 0),
+                      coalesce(sum(valor), 0),
+                      max(dt_base),
+                      max(e.drive_modified_time)
+                    from public.fato_estoque_envelhecimento e
+                    join latest l using (drive_file_id, drive_modified_time)
+                    """
+                )
+                aging_row = cur.fetchone() or (0, Decimal("0"), Decimal("0"), None, None)
+
+                cur.execute(
+                    """
+                    with latest as (
+                      select drive_file_id, max(drive_modified_time) as drive_modified_time
+                      from public.fato_estoque_envelhecimento
+                      group by drive_file_id
+                    )
+                    select coalesce(aging, 'Sem aging') as aging,
+                           count(*)::int,
+                           coalesce(sum(quantidade_kg), 0),
+                           coalesce(sum(valor), 0)
+                    from public.fato_estoque_envelhecimento e
+                    join latest l using (drive_file_id, drive_modified_time)
+                    group by 1
+                    order by 1
+                    """
+                )
+                aging_buckets = [
+                    {
+                        "aging": row[0],
+                        "linhas": row[1],
+                        "quantidade_kg": f"{Decimal(str(row[2] or 0)):.2f}",
+                        "valor": f"{Decimal(str(row[3] or 0)):.2f}",
+                    }
+                    for row in cur.fetchall()
+                ]
+                aging_60_value = Decimal("0")
+                aging_60_kg = Decimal("0")
+                for bucket in aging_buckets:
+                    label = drive_normalize_text(bucket["aging"])
+                    is_fresh = "0 a 29" in label or "30 a 59" in label
+                    if not is_fresh:
+                        aging_60_value += Decimal(str(bucket["valor"] or 0))
+                        aging_60_kg += Decimal(str(bucket["quantidade_kg"] or 0))
+
+                cur.execute(
+                    """
+                    with latest as (
+                      select drive_file_id, max(drive_modified_time) as drive_modified_time
+                      from public.fato_cotacao_item
+                      group by drive_file_id
+                    )
+                    select
+                      count(*)::int,
+                      count(distinct nullif(numero_cotacao, ''))::int,
+                      count(distinct nullif(cod_cliente, ''))::int,
+                      coalesce(sum(valor_total), 0),
+                      coalesce(sum(peso_kg), 0),
+                      max(data_cotacao),
+                      max(c.drive_modified_time)
+                    from public.fato_cotacao_item c
+                    join latest l using (drive_file_id, drive_modified_time)
+                    """
+                )
+                quote_row = cur.fetchone() or (0, 0, 0, Decimal("0"), Decimal("0"), None, None)
+
+                cur.execute(
+                    """
+                    with latest as (
+                      select drive_file_id, max(drive_modified_time) as drive_modified_time
+                      from public.fato_cotacao_item
+                      group by drive_file_id
+                    )
+                    select coalesce(status_original, 'Sem status') as status,
+                           count(*)::int as linhas,
+                           count(distinct nullif(numero_cotacao, ''))::int as cotacoes,
+                           coalesce(sum(valor_total), 0) as valor_total,
+                           coalesce(sum(peso_kg), 0) as peso_kg
+                    from public.fato_cotacao_item c
+                    join latest l using (drive_file_id, drive_modified_time)
+                    group by 1
+                    order by linhas desc
+                    limit 12
+                    """
+                )
+                quote_by_status = [
+                    {
+                        "status": row[0],
+                        "linhas": row[1],
+                        "cotacoes": row[2],
+                        "valor_total": f"{Decimal(str(row[3] or 0)):.2f}",
+                        "peso_kg": f"{Decimal(str(row[4] or 0)):.2f}",
+                    }
+                    for row in cur.fetchall()
+                ]
+
+                cur.execute(
+                    """
+                    with latest as (
+                      select drive_file_id, max(drive_modified_time) as drive_modified_time
+                      from public.fato_cotacao_item
+                      group by drive_file_id
+                    )
+                    select coalesce(desc_pa, item_pa, 'Sem produto') as produto,
+                           coalesce(item_pa, '') as codigo,
+                           coalesce(familia, 'Sem familia') as familia,
+                           count(*)::int as linhas,
+                           count(distinct nullif(numero_cotacao, ''))::int as cotacoes,
+                           coalesce(sum(valor_total), 0) as valor_total,
+                           coalesce(sum(peso_kg), 0) as peso_kg
+                    from public.fato_cotacao_item c
+                    join latest l using (drive_file_id, drive_modified_time)
+                    group by 1, 2, 3
+                    order by valor_total desc nulls last
+                    limit 12
+                    """
+                )
+                quote_products = [
+                    {
+                        "produto": row[0],
+                        "codigo": row[1],
+                        "familia": row[2],
+                        "linhas": row[3],
+                        "cotacoes": row[4],
+                        "valor_total": f"{Decimal(str(row[5] or 0)):.2f}",
+                        "peso_kg": f"{Decimal(str(row[6] or 0)):.2f}",
+                    }
+                    for row in cur.fetchall()
+                ]
+    except Exception as exc:
+        return {"available": False, "error": f"{type(exc).__name__}: {str(exc)[:180]}"}
+
+    return {
+        "available": bool(stock_row[0] or aging_row[0] or quote_row[0]),
+        "stock_available": {
+            "rows": stock_row[0],
+            "skus": stock_row[1],
+            "deposits": stock_row[2],
+            "estoque_kg": f"{Decimal(str(stock_row[3] or 0)):.2f}",
+            "estoque_ton": f"{(Decimal(str(stock_row[3] or 0)) / Decimal('1000')):.2f}",
+            "latest_file_modified_time": stock_row[4].isoformat() if stock_row[4] else None,
+            "by_family": stock_by_family,
+            "products": stock_products,
+        },
+        "stock_aging": {
+            "rows": aging_row[0],
+            "quantidade_kg": f"{Decimal(str(aging_row[1] or 0)):.2f}",
+            "valor": f"{Decimal(str(aging_row[2] or 0)):.2f}",
+            "aging_60_kg": f"{aging_60_kg:.2f}",
+            "aging_60_valor": f"{aging_60_value:.2f}",
+            "dt_base": aging_row[3].isoformat() if aging_row[3] else None,
+            "latest_file_modified_time": aging_row[4].isoformat() if aging_row[4] else None,
+            "buckets": aging_buckets,
+        },
+        "quotes": {
+            "rows": quote_row[0],
+            "cotacoes": quote_row[1] or quote_row[0],
+            "clientes": quote_row[2],
+            "valor_total": f"{Decimal(str(quote_row[3] or 0)):.2f}",
+            "peso_kg": f"{Decimal(str(quote_row[4] or 0)):.2f}",
+            "latest_quote_date": quote_row[5].isoformat() if quote_row[5] else None,
+            "latest_file_modified_time": quote_row[6].isoformat() if quote_row[6] else None,
+            "by_status": quote_by_status,
+            "products": quote_products,
+        },
     }
 
 
@@ -5723,6 +6151,7 @@ def internal_dashboard_summary(
     history: list[dict[str, Any]] = []
     staging_by_entity: list[dict[str, Any]] = []
     drive_spreadsheets: dict[str, Any] = {"available": False, "latest_by_type": {}, "history": []}
+    drive_business_facts: dict[str, Any] = {"available": False}
     env = load_env()
     core_error = core_database_error(env)
     if core_error:
@@ -5782,6 +6211,12 @@ def internal_dashboard_summary(
             drive_spreadsheets = drive_spreadsheet_dashboard_cache()
         except BaseException as exc:
             warnings.append(f"Resumo de planilhas do Drive indisponivel: {type(exc).__name__}: {str(exc)[:160]}")
+        try:
+            drive_business_facts = drive_business_facts_summary()
+            if drive_business_facts.get("error"):
+                warnings.append(f"Fatos das planilhas indisponiveis: {drive_business_facts['error']}")
+        except BaseException as exc:
+            warnings.append(f"Fatos das planilhas indisponiveis: {type(exc).__name__}: {str(exc)[:160]}")
 
     regions: list[dict[str, Any]] = []
     sales_summary: dict[str, Any] = {}
@@ -5841,6 +6276,7 @@ def internal_dashboard_summary(
         "external_spreadsheet_sources": requirements["external_spreadsheet_sources"],
         "staging_by_entity": staging_by_entity,
         "drive_spreadsheets": drive_spreadsheets,
+        "drive_business_facts": drive_business_facts,
         "recent_history": history,
         "sales_summary": sales_summary,
         "business_channels": business_channels,
