@@ -2939,8 +2939,8 @@ function BusinessChannelTab({
   return (
     <>
       <section className="kpi-grid sales-kpis">
-        <Kpi title="Toneladas" displayValue={`${formatNumber(channelSummary.toneladas)} t`} detail={`${formatNumber(channelSummary.linhas)} registros`} icon={<Boxes />} tooltip="Volume vendido do canal no periodo filtrado. Formula: SUM(peso_total) / 1000." />
-        <Kpi title="Receita liquida" displayValue={money(channelSummary.receita_liquida)} detail="ERP, nao valor Kommo" icon={<CircleDollarSign />} tooltip="Receita liquida somada dos registros ERP classificados neste canal. Formula: SUM(receita_liquida)." />
+        <Kpi title="Toneladas" displayValue={`${formatNumber(channelSummary.toneladas)} t`} detail={`${formatNumber(channelSummary.linhas)} registros`} icon={<Boxes />} tooltip="Volume vendido liquido do canal no periodo filtrado. Formula: SUM(peso_total) / 1000 apenas para registros de venda/devolucao; cotacoes perdidas ficam fora deste card." />
+        <Kpi title="Receita liquida" displayValue={money(channelSummary.receita_liquida)} detail="ERP, nao valor Kommo" icon={<CircleDollarSign />} tooltip="Receita liquida dos registros ERP classificados neste canal, excluindo cotacoes perdidas. Devolucoes continuam como abatimento da venda liquida." />
         <Kpi title="MCII %" displayValue={percent(channelSummary.mcii_pct)} detail={money(channelSummary.margem_contribuicao)} icon={<LineChartIcon />} tooltip="Margem de contribuição II percentual do canal. Formula: SUM(margem_contribuicao) / SUM(receita_liquida) x 100; nao e media simples das linhas." />
         <Kpi title="Preco medio R$/kg" displayValue={money(channelSummary.preco_medio_kg)} detail="SUM receita / SUM kg" icon={<BarChart3 />} tooltip="Preço medio ponderado pelo volume. Formula: SUM(receita_liquida) / SUM(peso_total em kg)." />
         <Kpi title="Clientes ativos" value={channelSummary.clientes} detail="Clientes distintos no periodo" icon={<CheckCircle2 />} tooltip="Quantidade de clientes distintos com venda no periodo filtrado dentro deste canal." />
@@ -2949,7 +2949,7 @@ function BusinessChannelTab({
           displayValue={channel === 'ATACADO' ? `${formatNumber(channelSummary.ton_pedido)} t` : `${formatNumber(channelSummary.kg_cliente)} kg`}
           detail={channel === 'ATACADO' ? `${formatNumber(channelSummary.pedidos)} pedidos` : 'SUM kg / clientes'}
           icon={<Gauge />}
-          tooltip={channel === 'ATACADO' ? 'Tamanho medio do pedido atacado. Formula: toneladas vendidas / pedidos distintos.' : 'Volume medio por cliente no varejo. Formula: SUM(peso_total em kg) / clientes distintos.'}
+          tooltip={channel === 'ATACADO' ? 'Tamanho medio do pedido atacado. Formula: toneladas vendidas liquidas / pedidos distintos, sem cotacoes perdidas.' : 'Volume medio por cliente no varejo. Formula: SUM(peso_total em kg de venda/devolucao) / clientes distintos, sem cotacoes perdidas.'}
         />
       </section>
 

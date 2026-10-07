@@ -199,7 +199,7 @@ def sales_period_summary(date_from: date | None = None, date_to: date | None = N
 
 
 def sales_summary_cache_key(date_from: date | None = None, date_to: date | None = None) -> str:
-    return f"aster_report_d0a4d301:{date_from.isoformat() if date_from else 'all'}:{date_to.isoformat() if date_to else 'all'}"
+    return f"aster_report_d0a4d301:v2_net_sales:{date_from.isoformat() if date_from else 'all'}:{date_to.isoformat() if date_to else 'all'}"
 
 
 def read_sales_summary_cache(date_from: date | None = None, date_to: date | None = None) -> dict[str, Any] | None:
@@ -314,6 +314,9 @@ def business_channel_summary(date_from: date | None = None, date_to: date | None
                 ),
                 mapped as (
                   select * from classified where canal in ('VAREJO', 'ATACADO')
+                ),
+                sales_mapped as (
+                  select * from mapped where coalesce(tipo, '') <> 'CPerd'
                 )
                 select
                   coalesce(jsonb_object_agg(canal, to_jsonb(kpi_rows)), '{{}}'::jsonb) as channels,
@@ -328,7 +331,7 @@ def business_channel_summary(date_from: date | None = None, date_to: date | None
                         coalesce(sum(receita_liquida), 0) as receita_liquida,
                         coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
                         count(distinct cliente)::int as clientes
-                      from mapped
+                      from sales_mapped
                       where sale_date is not null
                       group by 1, 2
                     ) row
@@ -344,7 +347,7 @@ def business_channel_summary(date_from: date | None = None, date_to: date | None
                         coalesce(sum(receita_liquida), 0) as receita_liquida,
                         coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
                         count(distinct cliente)::int as clientes
-                      from mapped
+                      from sales_mapped
                       where canal = 'VAREJO'
                       group by 1, 2
                     ) row
@@ -361,7 +364,7 @@ def business_channel_summary(date_from: date | None = None, date_to: date | None
                         coalesce(sum(receita_liquida), 0) as receita_liquida,
                         coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
                         count(distinct cliente)::int as clientes
-                      from mapped
+                      from sales_mapped
                       where canal = 'VAREJO'
                       group by 1, 2, 3
                     ) row
@@ -375,7 +378,7 @@ def business_channel_summary(date_from: date | None = None, date_to: date | None
                         coalesce(sum(peso_total), 0) as peso_total,
                         coalesce(sum(receita_liquida), 0) as receita_liquida,
                         coalesce(sum(margem_contribuicao), 0) as margem_contribuicao
-                      from mapped
+                      from sales_mapped
                       where canal = 'VAREJO'
                       group by 1
                       limit 20
@@ -393,7 +396,7 @@ def business_channel_summary(date_from: date | None = None, date_to: date | None
                         coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
                         count(distinct cliente)::int as clientes,
                         count(distinct nota_fiscal) filter (where nota_fiscal is not null)::int as pedidos
-                      from mapped
+                      from sales_mapped
                       where canal = 'ATACADO'
                       group by 1, 2
                     ) row
@@ -407,7 +410,7 @@ def business_channel_summary(date_from: date | None = None, date_to: date | None
                         coalesce(sum(peso_total), 0) as peso_total,
                         coalesce(sum(receita_liquida), 0) as receita_liquida,
                         coalesce(sum(margem_contribuicao), 0) as margem_contribuicao
-                      from mapped
+                      from sales_mapped
                       where canal = 'ATACADO'
                       group by 1
                       order by peso_total desc
@@ -423,7 +426,7 @@ def business_channel_summary(date_from: date | None = None, date_to: date | None
                         coalesce(sum(peso_total), 0) as peso_total,
                         coalesce(sum(receita_liquida), 0) as receita_liquida,
                         coalesce(sum(margem_contribuicao), 0) as margem_contribuicao
-                      from mapped
+                      from sales_mapped
                       where canal = 'ATACADO'
                       group by 1
                       limit 20
@@ -453,7 +456,7 @@ def business_channel_summary(date_from: date | None = None, date_to: date | None
                     coalesce(sum(margem_contribuicao), 0) as margem_contribuicao,
                     count(distinct cliente)::int as clientes,
                     count(distinct nota_fiscal) filter (where nota_fiscal is not null)::int as pedidos
-                  from mapped
+                  from sales_mapped
                   group by 1
                 ) kpi_rows
                 """,
@@ -543,7 +546,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                with sales as materialized (
+                with sales_all as materialized (
                     select
                       sale_date,
                       valor_total,
@@ -566,6 +569,11 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                       motivo_perda
                     from public.dashboard_sales_fact
                     {sales_where_sql}
+                ),
+                sales as materialized (
+                    select *
+                    from sales_all
+                    where coalesce(tipo, '') <> 'CPerd'
                 )
                 select
                   count(*)::int as linhas,
@@ -924,7 +932,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                         motivo_perda as motivo,
                         count(*)::int as linhas,
                         coalesce(sum(valor_perdido), 0) as valor_perdido
-                      from sales
+                      from sales_all
                       where sale_date is not null
                       group by 1
                       having coalesce(sum(valor_perdido), 0) > 0
@@ -958,7 +966,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                         coalesce(sum(valor_perdido) filter (where tipo = 'CPerd'), 0) as valor_perdido,
                         coalesce(sum(valor_total) filter (where tipo = 'NFS'), 0)
                           + coalesce(sum(valor_perdido) filter (where tipo = 'CPerd'), 0) as valor_cotado
-                      from sales
+                      from sales_all
                       where sale_date is not null
                       group by 1
                     ) quote_month_rows
@@ -973,7 +981,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                         coalesce(sum(peso_total) filter (where tipo in ('NFS', 'CPerd')), 0) as kg_cotado,
                         coalesce(sum(valor_total) filter (where tipo = 'NFS'), 0) as valor_vendido,
                         coalesce(sum(valor_perdido) filter (where tipo = 'CPerd'), 0) as valor_perdido
-                      from sales
+                      from sales_all
                       group by 1
                       having coalesce(sum(peso_total) filter (where tipo in ('NFS', 'CPerd')), 0) > 0
                       order by kg_cotado desc
@@ -984,13 +992,13 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
                     select coalesce(jsonb_agg(to_jsonb(funnel_rows) order by funnel_rows.ordem), '[]'::jsonb)
                     from (
                       select 1 as ordem, 'Cotado' as etapa, coalesce(sum(peso_total) filter (where tipo in ('NFS', 'CPerd')), 0) as kg_total
-                      from sales
+                      from sales_all
                       union all
                       select 2 as ordem, 'Vendido' as etapa, coalesce(sum(peso_total) filter (where tipo = 'NFS'), 0) as kg_total
-                      from sales
+                      from sales_all
                       union all
                       select 3 as ordem, 'Perdido' as etapa, coalesce(sum(peso_total) filter (where tipo = 'CPerd'), 0) as kg_total
-                      from sales
+                      from sales_all
                     ) funnel_rows
                   ) as quote_funnel,
                   (
@@ -1051,7 +1059,7 @@ def compute_sales_period_summary(date_from_text: str, date_to_text: str) -> dict
 
     average_price_kg = Decimal("0")
     if peso:
-        average_price_kg = total / peso
+        average_price_kg = liquida / peso
 
     monthly = [
         {
