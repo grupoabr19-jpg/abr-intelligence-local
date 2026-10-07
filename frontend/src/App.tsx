@@ -229,7 +229,7 @@ function temporalContext(
       label: executiveUsesDailyComparison ? 'Comparativo diario' : 'Comparativo mensal',
       detail: executiveUsesDailyComparison
         ? `Filtro dentro de ${dateFrom.slice(5, 7)}/${dateFrom.slice(0, 4)}: cards executivos comparam ultimo dia com dados contra dia anterior disponivel.`
-        : 'Filtro cruza meses ou nao tem dias suficientes: cards executivos comparam ultimo mes com dados contra mes anterior disponivel.',
+        : 'Filtro cruza meses ou nao tem dias suficientes: cards executivos comparam meses fechados. Se o ultimo mes estiver incompleto, ele fica fora da variacao para evitar distorcao.',
     }
   }
   if (tab === 'forecast') {
@@ -285,6 +285,12 @@ function addMonths(value: string, amount: number) {
   if (!year || !month) return value
   const date = new Date(year, month - 1 + amount, 1)
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function daysInMonth(monthKey: string) {
+  const [year, month] = monthKey.split('-').map(Number)
+  if (!year || !month) return 31
+  return new Date(year, month, 0).getDate()
 }
 
 function abbreviateLabel(value: string, maxLength = 18) {
@@ -986,14 +992,27 @@ function App() {
     }
   })
   const useDailyExecutiveComparison = sameCalendarMonth(dateFrom, dateTo) && executiveDailyRows.length >= 2
-  const executiveComparisonRows = useDailyExecutiveComparison ? executiveDailyRows : executiveMonthlyRows
+  const latestDailyDate = [...dailySales].sort((a, b) => String(a.dia).localeCompare(String(b.dia))).at(-1)?.dia
+  const latestDailyMonth = latestDailyDate?.slice(0, 7)
+  const latestDailyDay = latestDailyDate ? Number(latestDailyDate.slice(8, 10)) : null
+  const latestMonthIsIncomplete = Boolean(
+    !useDailyExecutiveComparison &&
+    latestDailyMonth &&
+    latestDailyDay &&
+    latestDailyDay < daysInMonth(latestDailyMonth) &&
+    executiveMonthlyRows.at(-1)?.period_label === monthLabel(latestDailyMonth),
+  )
+  const executiveClosedMonthRows = latestMonthIsIncomplete ? executiveMonthlyRows.slice(0, -1) : executiveMonthlyRows
+  const executiveComparisonRows = useDailyExecutiveComparison ? executiveDailyRows : executiveClosedMonthRows
   const executiveTrendRows = useDailyBusinessCharts ? executiveDailyRows : executiveMonthlyRows
   const currentExecutivePeriod = executiveComparisonRows.at(-1)
   const previousExecutivePeriod = executiveComparisonRows.at(-2)
-  const executiveComparisonLabel = useDailyExecutiveComparison ? 'vs dia anterior' : 'vs mes anterior'
+  const executiveComparisonLabel = useDailyExecutiveComparison ? 'vs dia anterior' : latestMonthIsIncomplete ? 'vs mes fechado anterior' : 'vs mes anterior'
   const executiveComparisonTooltipSuffix = useDailyExecutiveComparison
     ? 'Quando o filtro esta dentro de um unico mes, a comparacao executiva usa o ultimo dia com dados contra o dia anterior disponivel.'
-    : 'Quando o filtro cobre mais de um mes, a comparacao executiva usa o ultimo mes com dados contra o mes anterior disponivel.'
+    : latestMonthIsIncomplete
+      ? 'Como o ultimo mes do filtro ainda esta incompleto, a comparacao executiva ignora esse mes parcial e compara o ultimo mes fechado contra o mes fechado anterior.'
+      : 'Quando o filtro cobre mais de um mes e o ultimo mes esta fechado, a comparacao executiva usa o ultimo mes com dados contra o mes anterior disponivel.'
   const currentMcii = marginMonthly.length
     ? marginMonthly.reduce((sum, item) => sum + item.mcii_numero, 0)
     : Number(summary?.sales_summary?.lucro_bruto ?? 0)
